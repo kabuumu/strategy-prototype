@@ -1,0 +1,5 @@
+# Godot 4 cache (auto-generated, not needed in source control)
+.godot/
+
+# Build output
+build/
