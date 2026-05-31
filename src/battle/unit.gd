@@ -298,6 +298,7 @@ func get_attack_range() -> int:
 	for u in upgrades:
 		if u == "eagle_eye":
 			v += 1
+	v += GameManager.relic_range_bonus()
 	if enraged:
 		v += int(udata.get("enrage_range_bonus", 0))
 	return mini(v, 4)

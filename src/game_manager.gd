@@ -89,6 +89,42 @@ const UNIT_TYPES: Dictionary = {
 		"color": Color(0.20, 0.82, 0.70),
 		# Field Heal: restore HP to a nearby ally
 		"ability": {"id": "heal_ally", "name": "Field Heal", "desc": "Heal a nearby ally for 35"}
+	},
+	# --- Advanced recruits (found via gain-unit nodes / the shop) -------------
+	# These reuse the boss sprite art (sprite_unit) and existing ability ids,
+	# so they slot into the 2D battle and the 3D skirmish with no new plumbing.
+	"knight": {
+		"name": "Knight",
+		"max_hp": 130,
+		"move_range": 3,
+		"attack_range": 1,
+		"damage": 32,
+		"color": Color(0.78, 0.80, 0.88),
+		"sprite_unit": "warlord",
+		# Charge: dash a second time to close the gap before striking
+		"ability": {"id": "dash", "name": "Charge", "desc": "Move a second time this turn"}
+	},
+	"mage": {
+		"name": "Battlemage",
+		"max_hp": 70,
+		"move_range": 2,
+		"attack_range": 3,
+		"damage": 28,
+		"color": Color(0.70, 0.45, 0.95),
+		"sprite_unit": "pyromancer",
+		# Arcane Lance: pierces the target and whatever stands behind it
+		"ability": {"id": "pierce", "name": "Arcane Lance", "desc": "Hits the target and the unit behind it"}
+	},
+	"guardian": {
+		"name": "Guardian",
+		"max_hp": 165,
+		"move_range": 2,
+		"attack_range": 1,
+		"damage": 24,
+		"color": Color(0.55, 0.42, 0.72),
+		"sprite_unit": "juggernaut",
+		# Crushing Blow: heavy melee hit that stuns the target
+		"ability": {"id": "bash", "name": "Crushing Blow", "desc": "Melee hit that stuns the target"}
 	}
 }
 
@@ -100,6 +136,7 @@ const HEAL_ABILITY_AMOUNT: int = 35
 const UNIT_AP: Dictionary = {
 	"soldier": 2, "archer": 2, "scout": 3, "healer": 2,
 	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
+	"knight": 3, "mage": 2, "guardian": 2,
 }
 
 func ap_for(unit_type: String) -> int:
@@ -193,6 +230,8 @@ const RELICS: Dictionary = {
 	"plating":   {"name": "Plating",       "desc": "+20 max HP to all your units"},
 	"venom":     {"name": "Venom Coating",  "desc": "Your melee hits poison the target"},
 	"medkit":    {"name": "Field Kit",     "desc": "Units start each battle +15 HP"},
+	"longbow":   {"name": "War Bow",       "desc": "+1 attack range to all your units"},
+	"coffer":    {"name": "Gilded Coffer", "desc": "+20 gold after every battle"},
 }
 
 # Set before switching to the battle scene
@@ -441,10 +480,14 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 		return [boss_id, "archer", "soldier"] as Array[String]
 	var rng := RandomNumberGenerator.new()
 	rng.seed = tier * 31 + (13 if elite else 7)
-	# Enemy healers start appearing from the mid tiers for variety
+	# Tougher unit types join the enemy pool as the run deepens, for variety.
 	var pool: Array[String] = ["soldier", "archer", "scout"]
 	if tier >= 2:
 		pool.append("healer")
+		pool.append("knight")
+	if tier >= 3:
+		pool.append("mage")
+		pool.append("guardian")
 	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 5)
 	var result: Array[String] = []
 	for _i in range(count):
@@ -519,7 +562,7 @@ func random_upgrade_choices(count: int) -> Array[String]:
 # ---------------------------------------------------------------------------
 # Gold rewarded for winning a battle, scaling with tier and elite status.
 func battle_gold_reward(tier: int, elite: bool) -> int:
-	return 25 + tier * 10 + (25 if elite else 0)
+	return 25 + tier * 10 + (25 if elite else 0) + (20 if has_relic("coffer") else 0)
 
 func add_gold(amount: int) -> void:
 	gold += amount
@@ -566,3 +609,6 @@ func relic_move_bonus() -> int:
 
 func relic_max_hp_bonus() -> int:
 	return 20 if has_relic("plating") else 0
+
+func relic_range_bonus() -> int:
+	return 1 if has_relic("longbow") else 0

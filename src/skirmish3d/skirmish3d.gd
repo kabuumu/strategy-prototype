@@ -90,6 +90,17 @@ const REGIMENT_TYPES: Dictionary = {
 		"soldier_count": 18, "hp_per_soldier": 20, "damage_per_attack": 13,
 		"attack_cooldown": 1.1, "attack_range_px": 120.0, "move_speed_px": 52.0,
 	},
+	# Advanced campaign recruits (mirror GameManager.UNIT_TYPES knight/mage/guardian).
+	"mage": {
+		"name": "Battlemages", "sprite_key": "archer",
+		"soldier_count": 10, "hp_per_soldier": 15, "damage_per_attack": 16,
+		"attack_cooldown": 1.4, "attack_range_px": 210.0, "move_speed_px": 56.0,
+	},
+	"guardian": {
+		"name": "Guardians", "sprite_key": "healer",
+		"soldier_count": 14, "hp_per_soldier": 30, "damage_per_attack": 14,
+		"attack_cooldown": 1.3, "attack_range_px": 55.0, "move_speed_px": 42.0,
+	},
 }
 
 # Enemy regiment composition by biome (campaign 3D battles). Picks count by
