@@ -58,7 +58,20 @@ func _ready() -> void:
 		GameManager.save_run()
 	else:
 		GameManager.clear_run()
+	# Exit to the main menu (the run is already saved above, so Continue resumes)
+	add_child(UITheme.button("Exit to Menu", Vector2(1108.0, 22.0), Vector2(150.0, 38.0),
+		Color(0.45, 0.30, 0.34), _on_exit_to_menu, 15))
 	_refresh()
+
+func _on_exit_to_menu() -> void:
+	if GameManager.current_tier < GameManager.MAP_TIERS:
+		GameManager.save_run()   # keep the run resumable
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		if _popup == null:   # don't exit if a popup (shop/unit pick) is open
+			_on_exit_to_menu()
 
 func _draw() -> void:
 	# Background
