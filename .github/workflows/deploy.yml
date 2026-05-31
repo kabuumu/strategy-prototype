@@ -61,6 +61,19 @@ jobs:
             -o build/web/coi-serviceworker.js
           sed -i 's|</head>|<script src="coi-serviceworker.js"></script></head>|' build/web/index.html
 
+      - name: Cache-bust asset URLs
+        # Appends ?v=<short-sha> to every Godot asset URL so browsers always
+        # fetch the latest files after each deploy instead of serving stale cache.
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          sed -i \
+            -e "s|\.wasm\"|.wasm?v=${SHORT_SHA}\"|g" \
+            -e "s|\.pck\"|.pck?v=${SHORT_SHA}\"|g" \
+            -e "s|index\.js\"|index.js?v=${SHORT_SHA}\"|g" \
+            -e "s|\.worker\.js\"|.worker.js?v=${SHORT_SHA}\"|g" \
+            -e "s|\.audio\.worklet\.js\"|.audio.worklet.js?v=${SHORT_SHA}\"|g" \
+            build/web/index.html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
