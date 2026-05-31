@@ -32,19 +32,24 @@ func _build_ui() -> void:
 	# Continue (only when a run is saved) + New Game buttons
 	# -----------------------------------------------------------------------
 	var has_save: bool = GameManager.has_saved_run()
-	var new_game_y: float = 360.0
+	var y: float = 300.0
 	if has_save:
-		_add_menu_button("Continue Run", Vector2(490.0, 318.0), Vector2(300.0, 64.0),
+		_add_menu_button("Continue Run", Vector2(490.0, y), Vector2(300.0, 60.0),
 			Color(0.20, 0.55, 0.32), _on_continue)
-		new_game_y = 396.0
-	_add_menu_button("New Game", Vector2(490.0, new_game_y), Vector2(300.0, 64.0),
-		Color(0.18, 0.36, 0.65), _on_new_game)
+		y += 70.0
+
+	# New run — pick how campaign battles are fought
+	_add_menu_button("New Game · 2D Turn-Based", Vector2(490.0, y), Vector2(300.0, 58.0),
+		Color(0.18, 0.36, 0.65), _on_new_game_2d)
+	y += 64.0
+	_add_menu_button("New Game · 3D Real-Time", Vector2(490.0, y), Vector2(300.0, 58.0),
+		Color(0.36, 0.26, 0.60), _on_new_game_3d)
+	y += 78.0
 
 	# Skirmishes are self-contained battle modes, no campaign state touched.
-	var skirmish_y: float = new_game_y + 84.0
-	_add_menu_button("Skirmish 3D", Vector2(490.0, skirmish_y), Vector2(145.0, 56.0),
+	_add_menu_button("Skirmish 3D", Vector2(490.0, y), Vector2(145.0, 54.0),
 		Color(0.45, 0.30, 0.62), _on_skirmish_3d)
-	_add_menu_button("Skirmish 2D", Vector2(645.0, skirmish_y), Vector2(145.0, 56.0),
+	_add_menu_button("Skirmish 2D", Vector2(645.0, y), Vector2(145.0, 54.0),
 		Color(0.32, 0.40, 0.55), _on_skirmish_2d)
 
 	var hint := Label.new()
@@ -84,10 +89,17 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 	s.border_color = color.lightened(0.3)
 	return s
 
-func _on_new_game() -> void:
+func _start_new_game(mode: String) -> void:
 	GameManager.clear_run()   # discard any in-progress run
 	GameManager.reset()
+	GameManager.battle_mode = mode   # "2d" hex turn-based or "3d" real-time
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+func _on_new_game_2d() -> void:
+	_start_new_game("2d")
+
+func _on_new_game_3d() -> void:
+	_start_new_game("3d")
 
 func _on_continue() -> void:
 	if GameManager.load_run():

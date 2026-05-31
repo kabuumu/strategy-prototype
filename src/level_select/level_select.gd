@@ -346,9 +346,12 @@ func _on_node_pressed(tier: int, index: int) -> void:
 		"battle", "elite_battle":
 			GameManager.pending_battle_tier  = tier
 			GameManager.pending_battle_elite = node_data["type"] == "elite_battle"
-			# Campaign battles are fought as 3D skirmishes using your roster.
-			GameManager.pending_skirmish = true
-			get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
+			# Route to the run's chosen battle style.
+			if GameManager.battle_mode == "3d":
+				GameManager.pending_skirmish = true
+				get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
+			else:
+				get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":
 			_show_unit_select_popup()
 		"shop":

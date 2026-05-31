@@ -163,6 +163,7 @@ const MAP_TIERS: int = 5
 var player_roster: Array[Dictionary] = []
 var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
+var battle_mode: String = "2d"   # how campaign battles play: "2d" hex turn-based / "3d" real-time
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -285,6 +286,7 @@ func save_run() -> void:
 	cfg.set_value("run", "map_data", map_data)
 	cfg.set_value("run", "battles_won", battles_won)
 	cfg.set_value("run", "boss_id", boss_id)
+	cfg.set_value("run", "battle_mode", battle_mode)
 	cfg.save(RUN_SAVE_PATH)
 
 # Load a saved run into the live state. Returns false if no valid save exists.
@@ -308,6 +310,7 @@ func load_run() -> bool:
 	map_data          = raw_map
 	battles_won       = int(cfg.get_value("run", "battles_won", 0))
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
+	battle_mode       = str(cfg.get_value("run", "battle_mode", "2d"))
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true
