@@ -60,6 +60,9 @@ var objectives: Array[Dictionary] = []
 # Terrain — mountain cells block all movement through and onto them
 # ---------------------------------------------------------------------------
 var mountains: Array[Vector2i] = []
+# Forest cells are PASSABLE but defenders on a forest tile take less damage
+var forests: Array[Vector2i] = []
+const FOREST_DMG_MULT: float = 0.75
 
 # ---------------------------------------------------------------------------
 # UI
@@ -171,6 +174,27 @@ func _generate_terrain() -> void:
 			if not candidates.is_empty():
 				mountains.append(candidates[rng.randi() % candidates.size()])
 
+	# Forests — passable terrain that grants 25% damage reduction to its
+	# defender. Placed AFTER mountains, never overlapping them or reserved
+	# cells. 2–4 small clusters in cols 1–8.
+	forests.clear()
+	var f_cluster_count := rng.randi_range(2, 4)
+	for _c in range(f_cluster_count):
+		var seed_cell := Vector2i(rng.randi_range(1, 8), rng.randi_range(0, GRID_ROWS - 1))
+		if seed_cell not in reserved and seed_cell not in mountains and seed_cell not in forests:
+			forests.append(seed_cell)
+		var growth := rng.randi_range(1, 3)
+		for _g in range(growth):
+			var candidates: Array = []
+			for fc: Vector2i in forests:
+				for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var adj := fc + dir
+					if _valid_cell(adj) and adj.x >= 1 and adj.x <= 8 \
+							and adj not in mountains and adj not in forests and adj not in reserved:
+						candidates.append(adj)
+			if not candidates.is_empty():
+				forests.append(candidates[rng.randi() % candidates.size()])
+
 # ---------------------------------------------------------------------------
 # Custom drawing — grid tiles + objective highlights
 # ---------------------------------------------------------------------------
@@ -238,6 +262,29 @@ func _draw() -> void:
 			]),
 			PackedColorArray([Color(0.88, 0.88, 0.93)]))
 
+	# Forest tiles — passable, defenders here take 25% less damage
+	for f: Vector2i in forests:
+		var fx: float = GRID_OFFSET.x + f.x * TILE_SIZE
+		var fy: float = GRID_OFFSET.y + f.y * TILE_SIZE
+		# Mossy ground tint
+		draw_rect(Rect2(Vector2(fx, fy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)),
+				Color(0.12, 0.28, 0.14, 0.85))
+		# Three little pine triangles
+		var trees := [Vector2(fx + 14, fy + 50), Vector2(fx + 35, fy + 56), Vector2(fx + 52, fy + 48)]
+		var sizes := [12.0, 14.0, 11.0]
+		for i in range(trees.size()):
+			var c: Vector2 = trees[i]
+			var s: float = sizes[i]
+			draw_polygon(
+				PackedVector2Array([
+					Vector2(c.x - s,       c.y),
+					Vector2(c.x + s,       c.y),
+					Vector2(c.x,           c.y - s * 1.7),
+				]),
+				PackedColorArray([Color(0.18, 0.48, 0.22)]))
+			draw_rect(Rect2(Vector2(c.x - 1.5, c.y), Vector2(3.0, 5.0)),
+					Color(0.30, 0.20, 0.12))
+
 	# Objectives drawn on top of the tiles (only while uncaptured)
 	for obj: Dictionary in objectives:
 		if int(obj["owner"]) != -1:
@@ -269,12 +316,16 @@ func _draw() -> void:
 	# preview below adds that detail during the attack phase.
 	if selected_unit and phase in [Phase.PLAYER_SELECT_ATTACK, Phase.PLAYER_SELECT_ABILITY]:
 		var cells := attack_cells if phase == Phase.PLAYER_SELECT_ATTACK else ability_cells
-		var dmg := selected_unit.get_damage()
+		var dmg_base := selected_unit.get_damage()
 		for t: Unit in enemy_units:
 			if not t.is_alive() or t.grid_pos not in cells:
 				continue
+			var has_cover: bool = t.grid_pos in forests
+			var dmg: int = int(round(float(dmg_base) * (FOREST_DMG_MULT if has_cover else 1.0)))
 			var lethal: bool = t.hp <= dmg
 			var txt: String = "KILL" if lethal else "-%d" % dmg
+			if has_cover and not lethal:
+				txt += " ♣"
 			var col: Color = Color(1.0, 0.35, 0.3) if lethal else Color(1.0, 0.92, 0.4)
 			var base := GRID_OFFSET + Vector2(t.grid_pos.x * TILE_SIZE + 6.0, t.grid_pos.y * TILE_SIZE + 18.0)
 			draw_string(ThemeDB.fallback_font, base + Vector2(1, 1), txt,
@@ -571,18 +622,24 @@ func _draw_damage_preview() -> void:
 	if target == null:
 		return
 
-	# Use base damage + flank only — don't leak the random crit roll into preview
+	# Use base damage + flank + cover — don't leak the random crit roll
 	var base := selected_unit.get_damage()
 	var flank := _is_flanking(selected_unit, target)
-	var dmg: int = int(round(base * (FLANK_MULT if flank else 1.0)))
+	var cover: bool = target.grid_pos in forests
+	var mult: float = (FLANK_MULT if flank else 1.0) * (FOREST_DMG_MULT if cover else 1.0)
+	var dmg: int = int(round(base * mult))
 	var lethal := dmg >= target.hp
 
 	var line1 := "%d dmg → HP %d/%d" % [dmg, max(0, target.hp - dmg), target.max_hp]
 	var line2 := ""
 	if lethal:
 		line2 = "LETHAL"
+	elif flank and cover:
+		line2 = "FLANKED in COVER"
 	elif flank:
 		line2 = "FLANKED!"
+	elif cover:
+		line2 = "IN COVER (−25%)"
 
 	var origin := GRID_OFFSET + Vector2(_hover_cell.x * TILE_SIZE, _hover_cell.y * TILE_SIZE)
 	# Position tooltip above the tile, or below if near top edge
@@ -775,8 +832,10 @@ func _is_flanking(attacker: Unit, defender: Unit) -> bool:
 			return true
 	return false
 
-# Returns { "damage": int, "crit": bool, "flank": bool }. Crit and flank don't
-# stack — crit takes precedence so the spotlight moments stay distinct.
+# Returns { "damage": int, "crit": bool, "flank": bool, "cover": bool }.
+# Crit and flank don't stack — crit takes precedence so the spotlight
+# moments stay distinct. Forest cover stacks multiplicatively with any
+# bonus so flanking still hits harder than a straight shot, just less.
 func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	var base := attacker.get_damage()
 	var crit := randf() < CRIT_CHANCE
@@ -786,7 +845,15 @@ func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 		mult = CRIT_MULT
 	elif flank:
 		mult = FLANK_MULT
-	return {"damage": int(round(base * mult)), "crit": crit, "flank": flank and not crit}
+	var cover: bool = defender.grid_pos in forests
+	if cover:
+		mult *= FOREST_DMG_MULT
+	return {
+		"damage": int(round(base * mult)),
+		"crit":   crit,
+		"flank":  flank and not crit,
+		"cover":  cover,
+	}
 
 func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var res := _resolve_damage(attacker, defender)
@@ -810,6 +877,9 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	else:
 		_log_event("%s hits %s for %d" % [_unit_label(attacker), _unit_label(defender), dmg])
 		_shake_grid(2.5)
+	# Cover tag — shown alongside whatever main combat label fired
+	if res["cover"] and not (res["crit"]):
+		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
@@ -1241,6 +1311,11 @@ func _score_cell(ai_unit: Unit, cell: Vector2i, is_ranged: bool) -> float:
 	for obj: Dictionary in objectives:
 		if obj["grid_pos"] == cell and int(obj["owner"]) != ai_unit.team:
 			score += 60.0
+	# Forest cover is universally useful — defenders take 25% less, so
+	# every personality prefers ending its turn in a forest (small bonus,
+	# big enough to break ties but not enough to skip a clean attack)
+	if cell in forests:
+		score += 15.0
 
 	var personality: String = ai_unit.unit_type
 	# Boss never kites and never camps objectives — it hunts the party.
