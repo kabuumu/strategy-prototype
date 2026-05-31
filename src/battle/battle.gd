@@ -240,6 +240,12 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font, Vector2(GRID_OFFSET.x + 250.0, 48.0),
 			biome_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.65, 0.65, 0.72, 0.7))
 
+	# Plain-ground checker colours derived from the biome background so the
+	# board itself reads as forest / highland / volcanic ground, not flat green.
+	var bg2: Color = _biome.get("bg", Color(0.07, 0.08, 0.07))
+	var tile_a := bg2.lightened(0.11)
+	var tile_b := bg2.lightened(0.05)
+
 	# Grid tiles
 	for x in range(GRID_COLS):
 		for y in range(GRID_ROWS):
@@ -249,6 +255,7 @@ func _draw() -> void:
 				Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)
 			)
 			var color: Color
+			var plain := false
 			if cell in ability_cells:
 				color = Color(0.52, 0.30, 0.78, 0.85)
 			elif cell in attack_cells:
@@ -256,11 +263,18 @@ func _draw() -> void:
 			elif cell in move_cells:
 				color = Color(0.16, 0.36, 0.65, 0.80)
 			elif (x + y) % 2 == 0:
-				color = Color(0.15, 0.21, 0.14)
+				color = tile_a; plain = true
 			else:
-				color = Color(0.10, 0.14, 0.09)
+				color = tile_b; plain = true
 			draw_rect(rect, color)
-			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.85), false, 1.5)
+			# Deterministic speckle so plain ground has a little texture
+			if plain:
+				var sd := x * 73 + y * 149
+				for k in range(3):
+					var sx := rect.position.x + 6.0 + float((sd * (k + 2)) % 56)
+					var sy := rect.position.y + 6.0 + float((sd * (k + 5)) % 56)
+					draw_rect(Rect2(Vector2(sx, sy), Vector2(3.0, 3.0)), color.darkened(0.16))
+			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.45), false, 1.5)
 
 			# Enemy threat overlay — faint red tint on tiles within reach of
 			# alive enemies. Stacks with multiple threats up to a cap so the
@@ -1213,6 +1227,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var res := _resolve_damage(attacker, defender)
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
+	_spawn_attack_vfx(attacker, defender)
 	defender.take_damage(dmg)
 	# Stat tracking — bucket by attacker identity so we can pick an MVP later
 	var aid: int = attacker.get_instance_id()
@@ -1307,6 +1322,74 @@ func _shake_grid(amount: float) -> void:
 		tw.tween_property(_grid_node, "position",
 			GRID_OFFSET + Vector2(randf_range(-amount, amount), randf_range(-amount, amount)), 0.03)
 	tw.tween_property(_grid_node, "position", GRID_OFFSET, 0.04)
+
+# ---------------------------------------------------------------------------
+# Attack VFX — ranged units fire a travelling projectile, melee units get a
+# slash arc; both end in an impact burst at the target. Added under _grid_node
+# (same space as units) and self-free, so they're pure visual flair.
+# ---------------------------------------------------------------------------
+func _spawn_attack_vfx(attacker: Unit, defender: Unit) -> void:
+	var fiery: bool = attacker.unit_type == "pyromancer" \
+			or int(GameManager.UNIT_TYPES.get(attacker.unit_type, {}).get("attack_burn", 0)) > 0
+	if attacker.get_attack_range() >= 2:
+		_spawn_projectile(attacker.position, defender.position, fiery)
+	else:
+		_spawn_slash(defender.position)
+		_spawn_impact(defender.position, fiery)
+
+func _spawn_projectile(from: Vector2, to: Vector2, fiery: bool) -> void:
+	var p := Polygon2D.new()
+	if fiery:
+		p.color = Color(1.0, 0.55, 0.15)
+		p.polygon = PackedVector2Array([Vector2(-5, 0), Vector2(0, -5), Vector2(5, 0), Vector2(0, 5)])
+	else:
+		p.color = Color(0.85, 0.85, 0.9)
+		p.polygon = PackedVector2Array([Vector2(-7, -1.5), Vector2(7, 0), Vector2(-7, 1.5)])
+	p.position = from
+	p.rotation = (to - from).angle()
+	p.z_index = 90
+	_grid_node.add_child(p)
+	var tw := create_tween()
+	tw.tween_property(p, "position", to, maxf(0.08, from.distance_to(to) / 1400.0))
+	tw.tween_callback(func() -> void:
+		_spawn_impact(to, fiery)
+		p.queue_free())
+
+func _spawn_slash(at: Vector2) -> void:
+	var arc := Line2D.new()
+	arc.width = 3.0
+	arc.default_color = Color(1.0, 1.0, 1.0, 0.9)
+	var pts := PackedVector2Array()
+	for i in range(7):
+		var a := lerpf(-1.0, 1.0, float(i) / 6.0)
+		pts.append(Vector2(sin(a) * 22.0, -cos(a) * 22.0 + 6.0))
+	arc.points = pts
+	arc.position = at
+	arc.z_index = 95
+	_grid_node.add_child(arc)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(arc, "rotation", 0.6, 0.18)
+	tw.tween_property(arc, "modulate:a", 0.0, 0.18)
+	tw.chain().tween_callback(arc.queue_free)
+
+func _spawn_impact(at: Vector2, fiery: bool) -> void:
+	var ring := Polygon2D.new()
+	ring.color = Color(1.0, 0.6, 0.2) if fiery else Color(1.0, 0.95, 0.7)
+	var pts := PackedVector2Array()
+	for i in range(8):
+		var a := TAU * float(i) / 8.0
+		pts.append(Vector2(cos(a), sin(a)) * 7.0)
+	ring.polygon = pts
+	ring.position = at
+	ring.z_index = 96
+	ring.scale = Vector2(0.4, 0.4)
+	_grid_node.add_child(ring)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(ring, "scale", Vector2(2.2, 2.2), 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(ring, "modulate:a", 0.0, 0.22)
+	tw.chain().tween_callback(ring.queue_free)
 
 # Red flash over the grid when the player takes a hit. Intensity scales
 # with the proportion of max-HP just lost (capped) so chip damage barely
