@@ -144,7 +144,7 @@ func _refresh() -> void:
 		var node_data: Dictionary = GameManager.map_data[tier][index]
 
 		var is_reachable := tier == cur_tier and index in reachable
-		var is_visited := node_data["visited"]
+		var is_visited: bool = node_data["visited"]
 		btn.disabled = not is_reachable
 
 		var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
