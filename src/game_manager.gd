@@ -218,6 +218,55 @@ func mark_tutorial_seen() -> void:
 		_save_meta()
 
 # ---------------------------------------------------------------------------
+# Run save / resume — persists the whole in-progress run (roster, gold, relics,
+# map, position). All values are primitives so ConfigFile round-trips cleanly.
+# Deliberately NOT touched by reset(), so launching the game never wipes a save.
+# ---------------------------------------------------------------------------
+const RUN_SAVE_PATH: String = "user://run_save.cfg"
+
+func has_saved_run() -> bool:
+	return FileAccess.file_exists(RUN_SAVE_PATH)
+
+func save_run() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("run", "roster", player_roster)
+	cfg.set_value("run", "gold", gold)
+	cfg.set_value("run", "relics", relics)
+	cfg.set_value("run", "current_tier", current_tier)
+	cfg.set_value("run", "last_chosen_index", last_chosen_index)
+	cfg.set_value("run", "map_data", map_data)
+	cfg.set_value("run", "battles_won", battles_won)
+	cfg.save(RUN_SAVE_PATH)
+
+# Load a saved run into the live state. Returns false if no valid save exists.
+func load_run() -> bool:
+	var cfg := ConfigFile.new()
+	if cfg.load(RUN_SAVE_PATH) != OK:
+		return false
+	var raw_map: Array = cfg.get_value("run", "map_data", [])
+	if raw_map.is_empty():
+		return false
+	player_roster = []
+	for e in cfg.get_value("run", "roster", []):
+		if e is Dictionary:
+			player_roster.append(e)
+	relics = []
+	for r in cfg.get_value("run", "relics", []):
+		relics.append(str(r))
+	gold              = int(cfg.get_value("run", "gold", 0))
+	current_tier      = int(cfg.get_value("run", "current_tier", 0))
+	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
+	map_data          = raw_map
+	battles_won       = int(cfg.get_value("run", "battles_won", 0))
+	pending_battle_tier = 0
+	pending_battle_elite = false
+	return true
+
+func clear_run() -> void:
+	if FileAccess.file_exists(RUN_SAVE_PATH):
+		DirAccess.remove_absolute(RUN_SAVE_PATH)
+
+# ---------------------------------------------------------------------------
 # Map generation
 # ---------------------------------------------------------------------------
 func _generate_map() -> void:

@@ -29,26 +29,32 @@ func _build_ui() -> void:
 	add_child(sub)
 
 	# -----------------------------------------------------------------------
-	# New Game button
+	# Continue (only when a run is saved) + New Game buttons
 	# -----------------------------------------------------------------------
+	var has_save: bool = GameManager.has_saved_run()
+	var new_game_y: float = 360.0
+	if has_save:
+		_add_menu_button("Continue Run", Vector2(490.0, 318.0), Vector2(300.0, 64.0),
+			Color(0.20, 0.55, 0.32), _on_continue)
+		new_game_y = 396.0
+	_add_menu_button("New Game", Vector2(490.0, new_game_y), Vector2(300.0, 64.0),
+		Color(0.18, 0.36, 0.65), _on_new_game)
+
+	if not has_save:
+		_build_meta_panel()
+
+func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable) -> void:
 	var btn := Button.new()
-	btn.text     = "New Game"
-	btn.position = Vector2(490.0, 360.0)
-	btn.size     = Vector2(300.0, 70.0)
-	btn.add_theme_font_size_override("font_size", 28)
-
-	var style_normal := _btn_style(Color(0.18, 0.36, 0.65))
-	var style_hover  := _btn_style(Color(0.28, 0.50, 0.85))
-	var style_press  := _btn_style(Color(0.12, 0.26, 0.50))
-	btn.add_theme_stylebox_override("normal",  style_normal)
-	btn.add_theme_stylebox_override("hover",   style_hover)
-	btn.add_theme_stylebox_override("pressed", style_press)
-	btn.add_theme_stylebox_override("focus",   style_normal)
-
-	btn.pressed.connect(_on_new_game)
+	btn.text     = text
+	btn.position = pos
+	btn.size     = sz
+	btn.add_theme_font_size_override("font_size", 26)
+	btn.add_theme_stylebox_override("normal",  _btn_style(color))
+	btn.add_theme_stylebox_override("hover",   _btn_style(color.lightened(0.18)))
+	btn.add_theme_stylebox_override("pressed", _btn_style(color.darkened(0.25)))
+	btn.add_theme_stylebox_override("focus",   _btn_style(color))
+	btn.pressed.connect(cb)
 	add_child(btn)
-
-	_build_meta_panel()
 
 	# -----------------------------------------------------------------------
 	# Controls hint
@@ -75,8 +81,18 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 	return s
 
 func _on_new_game() -> void:
+	GameManager.clear_run()   # discard any in-progress run
 	GameManager.reset()
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+func _on_continue() -> void:
+	if GameManager.load_run():
+		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	else:
+		# Corrupt/empty save — fall back to a fresh run
+		GameManager.clear_run()
+		GameManager.reset()
+		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the

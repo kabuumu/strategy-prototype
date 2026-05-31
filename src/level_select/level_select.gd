@@ -46,6 +46,12 @@ var _preview_label: Label = null
 func _ready() -> void:
 	_build_node_buttons()
 	_build_hud()
+	# Checkpoint the run between battles so it can be resumed. Once the run is
+	# over (boss cleared), drop the save instead.
+	if GameManager.current_tier < GameManager.MAP_TIERS:
+		GameManager.save_run()
+	else:
+		GameManager.clear_run()
 	_refresh()
 
 func _draw() -> void:

@@ -2199,6 +2199,7 @@ func _persist_roster() -> void:
 
 func _trigger_loss() -> void:
 	phase = Phase.BATTLE_LOST
+	GameManager.clear_run()   # permadeath — the run is over, no resume
 	Sfx.play("lose")
 	_update_ui()
 	_show_result_overlay(false)
