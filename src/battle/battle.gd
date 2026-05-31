@@ -85,6 +85,12 @@ var _threat_cells: Dictionary = {}
 # Player can toggle the overlay with the T key
 var _show_threat: bool = true
 
+# Speed control — F toggles between 1× and 2×. Implemented via
+# Engine.time_scale so every tween and create_timer respects it.
+var _fast_mode: bool = false
+const FAST_MULT: float = 2.0
+var _speed_badge: Label
+
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	_build_ui()
@@ -290,6 +296,12 @@ func _build_ui() -> void:
 	_phase_label          = _make_label(22, Color(0.95, 0.90, 0.50))
 	_phase_label.position = Vector2(PANEL_X + 20.0, 22.0)
 	add_child(_phase_label)
+
+	# Speed badge sits in the top-right of the side panel
+	_speed_badge          = _make_label(14, Color(0.70, 0.70, 0.75))
+	_speed_badge.text     = "▶ 1×"
+	_speed_badge.position = Vector2(1280.0 - 60.0, 26.0)
+	add_child(_speed_badge)
 
 	_unit_info_label               = _make_label(14, Color(0.80, 0.90, 0.80))
 	_unit_info_label.position      = Vector2(PANEL_X + 20.0, 66.0)
@@ -631,6 +643,24 @@ func _handle_key(keycode: int) -> void:
 			_show_toast("Threat overlay: " + ("ON" if _show_threat else "OFF"),
 					Color(0.85, 0.55, 0.55))
 			queue_redraw()
+		KEY_F:
+			_set_fast_mode(not _fast_mode)
+
+# Apply the speed multiplier engine-wide so AI timers, attack lunges and
+# move tweens all fast-forward together. Reset on scene exit.
+func _set_fast_mode(on: bool) -> void:
+	_fast_mode = on
+	Engine.time_scale = FAST_MULT if on else 1.0
+	if _speed_badge:
+		_speed_badge.text = "▶▶ 2×" if on else "▶ 1×"
+		_speed_badge.modulate = (Color(1.0, 0.85, 0.30) if on
+				else Color(0.70, 0.70, 0.75))
+	_show_toast("Game speed: " + ("2×" if on else "1×"),
+			Color(1.0, 0.85, 0.30) if on else Color(0.70, 0.70, 0.75))
+
+func _exit_tree() -> void:
+	# Never leave the engine in fast mode when the scene unloads
+	Engine.time_scale = 1.0
 
 func _cycle_to_next_unacted_unit() -> void:
 	for u: Unit in player_units:
