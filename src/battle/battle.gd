@@ -31,19 +31,19 @@ const ACTED_TINT := Color(0.58, 0.58, 0.58, 1.0)   # greyed once a unit has acte
 # ---------------------------------------------------------------------------
 # Turn state machine
 # ---------------------------------------------------------------------------
+# Free-form turn model: during PLAYER_TURN the player may act any unit, in any
+# order, spending Action Points (move / attack / ability each cost 1 AP) until
+# AP runs out or they End Turn. Then the whole enemy side takes its AI_TURN.
 enum Phase {
-	PLAYER_SELECT_UNIT,
-	PLAYER_SELECT_MOVE,
-	PLAYER_SELECT_ATTACK,
-	PLAYER_SELECT_ABILITY,
-	AI_ACTING,
+	PLAYER_TURN,
+	AI_TURN,
 	BATTLE_WON,
 	BATTLE_LOST
 }
 
-var phase: Phase = Phase.PLAYER_SELECT_UNIT
+var phase: Phase = Phase.PLAYER_TURN
 var selected_unit: Unit = null
-var _selected_unit_origin: Vector2i = Vector2i.ZERO
+var _ability_targeting: bool = false   # selected unit's ability is picking a target
 var move_cells:    Array[Vector2i] = []
 var attack_cells:  Array[Vector2i] = []
 var ability_cells: Array[Vector2i] = []
@@ -288,7 +288,7 @@ func _draw() -> void:
 
 			# Enemy threat overlay — faint red tint on hexes within enemy reach,
 			# shown only during the player's planning phases.
-			if _show_threat and phase in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
+			if _show_threat and phase == Phase.PLAYER_TURN and not _ability_targeting:
 				var n: int = int(_threat_cells.get(cell, 0))
 				if n > 0:
 					var a: float = min(0.10 + 0.10 * float(n - 1), 0.30)
@@ -359,8 +359,8 @@ func _draw() -> void:
 	# Damage forecast over targetable enemies (attack + ability phases) —
 	# always-on per-tile tag. Note: doesn't show flank bonus, so the hover
 	# preview below adds that detail during the attack phase.
-	if selected_unit and phase in [Phase.PLAYER_SELECT_ATTACK, Phase.PLAYER_SELECT_ABILITY]:
-		var cells := attack_cells if phase == Phase.PLAYER_SELECT_ATTACK else ability_cells
+	if selected_unit and phase == Phase.PLAYER_TURN:
+		var cells := ability_cells if _ability_targeting else attack_cells
 		for t: Unit in enemy_units:
 			if not t.is_alive() or t.grid_pos not in cells:
 				continue
@@ -393,7 +393,7 @@ func _draw() -> void:
 func _draw_enemy_intents() -> void:
 	if not _show_intent:
 		return
-	if phase not in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
+	if phase != Phase.PLAYER_TURN or _ability_targeting:
 		return
 	for intent: Dictionary in _enemy_intents:
 		var u: Unit = intent.get("unit")
@@ -660,8 +660,10 @@ func _build_ability_bar() -> void:
 func _refresh_ability_bar() -> void:
 	if _ability_panel == null:
 		return
-	var show: bool = phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK] \
+	var show: bool = phase == Phase.PLAYER_TURN \
 			and selected_unit != null \
+			and selected_unit.ap > 0 \
+			and not _ability_targeting \
 			and not selected_unit.ability_used
 	if not show:
 		_ability_panel.visible = false
@@ -699,6 +701,7 @@ func _spawn_units() -> void:
 		if GameManager.has_relic("medkit"):
 			u.hp = mini(u.max_hp, u.hp + 15)
 		u._refresh_hp_bar()
+		u.refill_ap()   # player units start turn 1 with full AP
 		player_units.append(u)
 
 	var tier    := GameManager.pending_battle_tier
@@ -793,57 +796,46 @@ func _update_ui() -> void:
 	# Disarm the end-turn confirmation whenever we're not in the unit-select
 	# phase — the user took an action, so the previous "are you sure?" state
 	# should be discarded.
-	if phase != Phase.PLAYER_SELECT_UNIT:
+	if phase != Phase.PLAYER_TURN or selected_unit != null:
 		_end_turn_armed_at = -1.0
+	_skip_btn.visible = false   # retired in the AP model
 	match phase:
-		Phase.PLAYER_SELECT_UNIT:
-			_phase_label.text    = "Your Turn"
-			_instruct_label.text = "Click a unit to select it.\nStep on an objective (★) to capture it."
-			_unit_info_label.text = ""
-			_skip_btn.visible    = false
-			_end_btn.visible     = true
-			_refresh_end_turn_button()
-		Phase.PLAYER_SELECT_MOVE:
-			_phase_label.text    = "Move Unit"
-			_instruct_label.text = "Click a blue tile to move, a red tile to attack from here, or Skip Move.\nRight-click to deselect."
-			_skip_btn.visible    = true
-			_skip_btn.text       = "Skip Move"
-			_end_btn.visible     = true
-			_end_btn.text        = "Forfeit Unit"
-		Phase.PLAYER_SELECT_ATTACK:
-			_phase_label.text    = "Attack"
-			_instruct_label.text = "Click a red tile to attack, use your ability, or Skip Attack.\nRight-click to cancel move."
-			_skip_btn.visible    = true
-			_skip_btn.text       = "Skip Attack"
-			_end_btn.visible     = false
-		Phase.PLAYER_SELECT_ABILITY:
-			var abil_ui: Dictionary = selected_unit.get_ability() if selected_unit else {}
-			_phase_label.text    = abil_ui.get("name", "Ability")
-			_instruct_label.text = "Click a purple tile to use %s.\nRight-click to cancel." % abil_ui.get("name", "ability")
-			_skip_btn.visible    = false
-			_end_btn.visible     = false
-		Phase.AI_ACTING:
+		Phase.PLAYER_TURN:
+			_end_btn.visible = true
+			_end_btn.text    = "End Turn"
+			if selected_unit == null:
+				_phase_label.text    = "Your Turn"
+				_instruct_label.text = "Click a unit to act. Move / attack / ability each cost 1 AP.\nEnd Turn when finished."
+				_unit_info_label.text = ""
+				_refresh_end_turn_button()
+			elif _ability_targeting:
+				var abil_ui: Dictionary = selected_unit.get_ability()
+				_phase_label.text    = abil_ui.get("name", "Ability")
+				_instruct_label.text = "Click a purple tile to use %s.\nRight-click to cancel." % abil_ui.get("name", "ability")
+			else:
+				_phase_label.text    = "%s   AP %d/%d" % [
+					GameManager.UNIT_TYPES[selected_unit.unit_type]["name"],
+					selected_unit.ap, selected_unit.max_ap]
+				_instruct_label.text = "Blue = move, red = attack (1 AP each). Ability below.\nRight-click or pick another unit to switch."
+		Phase.AI_TURN:
 			_phase_label.text    = "Enemy Turn"
 			_instruct_label.text = "Enemy is acting…"
 			_unit_info_label.text = ""
-			_skip_btn.visible    = false
 			_end_btn.visible     = false
 		Phase.BATTLE_WON, Phase.BATTLE_LOST:
-			_skip_btn.visible    = false
 			_end_btn.visible     = false
 
-	# The ability action bar (icon-rich panel below the grid) figures out
-	# its own visibility/disabled state based on the current phase and unit.
+	# The ability action bar figures out its own visibility from the unit/AP.
 	_refresh_ability_bar()
 
-	if selected_unit and phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK]:
+	if selected_unit and phase == Phase.PLAYER_TURN:
 		var udata: Dictionary = GameManager.UNIT_TYPES[selected_unit.unit_type]
 		var ups := selected_unit.upgrade_short_labels()
 		var up_str: String = ("   ✦ " + ", ".join(ups)) if ups.size() > 0 else ""
-		# Show effective stats (post-upgrade), with base in parens when bonused
-		_unit_info_label.text = "[%s]%s\nHP: %d / %d\nMove: %d  ·  Range: %d  ·  Dmg: %d" % [
+		_unit_info_label.text = "[%s]%s\nHP: %d / %d   AP: %d / %d\nMove: %d  ·  Range: %d  ·  Dmg: %d" % [
 			udata["name"], up_str,
 			selected_unit.hp, selected_unit.max_hp,
+			selected_unit.ap, selected_unit.max_ap,
 			selected_unit.get_move_range(),
 			selected_unit.get_attack_range(),
 			selected_unit.get_damage()
@@ -926,7 +918,7 @@ func _is_next_to_act(u: Unit) -> bool:
 	# In AI_ACTING: next is first enemy with !has_acted and alive
 	if u.has_acted or not u.is_alive():
 		return false
-	if phase == Phase.AI_ACTING:
+	if phase == Phase.AI_TURN:
 		for e: Unit in enemy_units:
 			if e.is_alive() and not e.has_acted:
 				return e == u
@@ -947,9 +939,7 @@ func _draw_damage_preview() -> void:
 	# Damage forecast is helpful both when standing in attack-select phase
 	# and when surveying attack targets reachable from the unit's current
 	# cell during the move phase.
-	if phase != Phase.PLAYER_SELECT_ATTACK and phase != Phase.PLAYER_SELECT_MOVE:
-		return
-	if selected_unit == null:
+	if phase != Phase.PLAYER_TURN or selected_unit == null or _ability_targeting:
 		return
 	if _hover_cell == Vector2i(-1, -1) or _hover_cell not in attack_cells:
 		return
@@ -1012,7 +1002,7 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 			_toggle_help()
 		return
-	if phase in [Phase.AI_ACTING, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
+	if phase in [Phase.AI_TURN, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
 		return
 
 	# Mouse motion → track hover cell for the damage preview overlay
@@ -1026,7 +1016,7 @@ func _input(event: InputEvent) -> void:
 			# Hovering over a unit during the unit-select phase pre-fills the
 			# unit info panel so the player can scout enemy stats without
 			# having to commit a selection first.
-			if phase == Phase.PLAYER_SELECT_UNIT:
+			if phase == Phase.PLAYER_TURN and selected_unit == null:
 				_refresh_hover_unit_info()
 		return
 
@@ -1054,10 +1044,10 @@ func _handle_key(keycode: int) -> void:
 		KEY_ESCAPE:
 			_handle_right_click()
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
-			if phase == Phase.PLAYER_SELECT_UNIT:
+			if phase == Phase.PLAYER_TURN and selected_unit == null:
 				_on_end_turn()
 		KEY_TAB:
-			if phase == Phase.PLAYER_SELECT_UNIT:
+			if phase == Phase.PLAYER_TURN:
 				_cycle_to_next_unacted_unit()
 		KEY_T:
 			_show_threat = not _show_threat
@@ -1109,14 +1099,10 @@ func _cycle_to_next_unacted_unit() -> void:
 		var idx: int = pool.find(anchor)
 		if idx != -1:
 			start = (idx + 1) % pool.size()
-	for offset in range(pool.size()):
-		var pick: Unit = pool[(start + offset) % pool.size()]
-		_try_select_unit(pick.grid_pos)
-		if selected_unit == pick:
-			_last_cycled_unit = pick
-			# Brief flash so the eye finds the new selection quickly.
-			_flash_unit(pick)
-			return
+	var pick: Unit = pool[start % pool.size()]
+	_select_unit(pick)
+	# Brief flash so the eye finds the new selection quickly.
+	_flash_unit(pick)
 
 func _flash_unit(u: Unit) -> void:
 	var t := create_tween()
@@ -1133,83 +1119,97 @@ func _valid_cell(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < GRID_COLS and cell.y >= 0 and cell.y < GRID_ROWS
 
 func _handle_left_click(cell: Vector2i) -> void:
-	match phase:
-		Phase.PLAYER_SELECT_UNIT:    _try_select_unit(cell)
-		Phase.PLAYER_SELECT_MOVE:    _try_move_unit(cell)
-		Phase.PLAYER_SELECT_ATTACK:  _try_attack(cell)
-		Phase.PLAYER_SELECT_ABILITY: _try_ability(cell)
+	if phase != Phase.PLAYER_TURN:
+		return
+	if _ability_targeting:
+		_try_ability(cell)
+		return
+	# Clicking one of your own (AP-having) units selects it
+	for u: Unit in player_units:
+		if u.is_alive() and u.grid_pos == cell and u != selected_unit:
+			if u.ap > 0:
+				_select_unit(u)
+			return
+	if selected_unit == null:
+		return
+	# Otherwise act with the selected unit (attack takes precedence over move)
+	if cell in attack_cells:
+		_try_attack(cell)
+	elif cell in move_cells:
+		_try_move_unit(cell)
 
 func _handle_right_click() -> void:
-	match phase:
-		Phase.PLAYER_SELECT_MOVE:
-			selected_unit = null
-			move_cells.clear()
-			attack_cells.clear()
-			ability_cells.clear()
-			phase = Phase.PLAYER_SELECT_UNIT
-			_update_ui()
-		Phase.PLAYER_SELECT_ATTACK:
-			# Restore the unit to where it was before the move and cancel the whole action
-			selected_unit.grid_pos = _selected_unit_origin
-			selected_unit.update_visual_position()
-			selected_unit = null
-			move_cells.clear()
-			attack_cells.clear()
-			ability_cells.clear()
-			phase = Phase.PLAYER_SELECT_UNIT
-			_update_ui()
-		Phase.PLAYER_SELECT_ABILITY:
-			# Cancel ability targeting, back to attack phase
-			ability_cells.clear()
-			attack_cells = _get_attack_cells(selected_unit, enemy_units)
-			phase = Phase.PLAYER_SELECT_ATTACK
-			_update_ui()
+	if phase != Phase.PLAYER_TURN:
+		return
+	if _ability_targeting:
+		_ability_targeting = false
+		ability_cells.clear()
+		_refresh_action_cells()
+		_update_ui()
+	else:
+		_deselect()
 
 # ---------------------------------------------------------------------------
-# Player actions
+# Player actions (AP-based; a unit may act until its AP runs out)
 # ---------------------------------------------------------------------------
-func _try_select_unit(cell: Vector2i) -> void:
-	for u: Unit in player_units:
-		if u.is_alive() and u.grid_pos == cell and not u.has_acted:
-			selected_unit        = u
-			_selected_unit_origin = u.grid_pos
-			move_cells           = _get_move_cells(u)
-			# Surface attack targets reachable from the unit's current cell
-			# so the player can attack without having to commit a move first.
-			attack_cells         = _get_attack_cells(u, enemy_units)
-			phase = Phase.PLAYER_SELECT_MOVE
-			_update_ui()
-			return
+func _select_unit(u: Unit) -> void:
+	selected_unit = u
+	_ability_targeting = false
+	_last_cycled_unit = u
+	_refresh_action_cells()
+	_update_ui()
+
+func _deselect() -> void:
+	selected_unit = null
+	_ability_targeting = false
+	move_cells.clear()
+	attack_cells.clear()
+	ability_cells.clear()
+	_update_ui()
+
+# Recompute the selected unit's move/attack options for its remaining AP.
+func _refresh_action_cells() -> void:
+	move_cells.clear()
+	attack_cells.clear()
+	ability_cells.clear()
+	if selected_unit == null or selected_unit.ap <= 0:
+		return
+	move_cells   = _get_move_cells(selected_unit)
+	attack_cells = _get_attack_cells(selected_unit, enemy_units)
+
+# Shared post-action bookkeeping: win check, AP-based greying, reselect/deselect.
+func _after_player_action() -> void:
+	if _all_dead(enemy_units):
+		_trigger_win()
+		return
+	if selected_unit != null:
+		selected_unit.modulate = ACTED_TINT if selected_unit.ap <= 0 else Color(1, 1, 1, 1)
+	if selected_unit != null and selected_unit.ap <= 0:
+		_deselect()
+	else:
+		_refresh_action_cells()
+		_update_ui()
+	_recompute_threat()   # positions changed → refresh threat + intent telegraph
 
 func _try_move_unit(cell: Vector2i) -> void:
-	# Clicking an in-range enemy from the move phase performs an attack from
-	# the current cell without consuming a move step. Attack cells take
-	# precedence over move cells if they ever overlap (they shouldn't, since
-	# enemies block movement, but defend against it anyway).
-	if cell in attack_cells:
-		move_cells.clear()
-		_try_attack(cell)
-		return
-	if cell not in move_cells:
+	if cell not in move_cells or selected_unit.ap <= 0:
 		return
 	if cell != selected_unit.grid_pos:
 		var origin := selected_unit.grid_pos
 		selected_unit.grid_pos = cell
-		# Visually walk along the BFS path. Fire-and-forget — the tween plays
-		# while the player is reading their attack options.
 		_animate_unit_to(selected_unit, origin, cell)
-	move_cells.clear()
-	# Check for objective capture after landing
+	selected_unit.spend_ap(1)
 	_check_capture(selected_unit)
-	attack_cells = _get_attack_cells(selected_unit, enemy_units)
-	phase = Phase.PLAYER_SELECT_ATTACK
-	_update_ui()
+	_after_player_action()
 
 func _try_attack(cell: Vector2i) -> void:
+	if selected_unit == null or selected_unit.ap <= 0:
+		return
 	for target: Unit in enemy_units:
 		if target.is_alive() and target.grid_pos == cell and cell in attack_cells:
 			_do_attack(selected_unit, target)
-			_commit_player_unit_turn()
+			selected_unit.spend_ap(1)
+			_after_player_action()
 			return
 
 # ---------------------------------------------------------------------------
@@ -1465,30 +1465,9 @@ func _kill_punch() -> void:
 	# Only restore if no later call already changed it (best-effort)
 	Engine.time_scale = FAST_MULT if _fast_mode else 1.0
 
-func _commit_player_unit_turn() -> void:
-	selected_unit.has_acted = true
-	selected_unit.modulate  = ACTED_TINT
-	selected_unit           = null
-	move_cells.clear()
-	attack_cells.clear()
-	ability_cells.clear()
-
-	if _all_dead(enemy_units):
-		_trigger_win()
-		return
-
-	_run_one_ai_unit()
-
 func _on_skip_pressed() -> void:
-	match phase:
-		Phase.PLAYER_SELECT_MOVE:
-			# Attack from current cell without moving
-			move_cells.clear()
-			attack_cells = _get_attack_cells(selected_unit, enemy_units)
-			phase = Phase.PLAYER_SELECT_ATTACK
-			_update_ui()
-		Phase.PLAYER_SELECT_ATTACK:
-			_commit_player_unit_turn()
+	# Skip button retired in the AP model; treat as deselect for safety.
+	_deselect()
 
 # ---------------------------------------------------------------------------
 # Abilities (once per battle per unit)
@@ -1521,32 +1500,32 @@ func _ability_target_cells(unit: Unit, id: String) -> Array[Vector2i]:
 	return []
 
 func _on_ability_pressed() -> void:
-	if not selected_unit or selected_unit.ability_used:
+	if selected_unit == null or selected_unit.ability_used or selected_unit.ap <= 0:
 		return
 	var id: String = selected_unit.get_ability().get("id", "")
 	if id == "dash":
-		# Grant a second move immediately
+		# Burst of mobility: grant an extra action point (does not consume one)
 		selected_unit.ability_used = true
+		selected_unit.ap += 1
 		Sfx.play("ability")
-		selected_unit.show_status_popup("DASH!", Color(0.95, 0.85, 0.2))
-		move_cells   = _get_move_cells(selected_unit)
-		attack_cells.clear()
-		ability_cells.clear()
-		phase = Phase.PLAYER_SELECT_MOVE
+		selected_unit.show_status_popup("DASH! +1 AP", Color(0.95, 0.85, 0.2))
+		selected_unit.modulate = Color(1, 1, 1, 1)
+		_refresh_action_cells()
 		_update_ui()
-	else:
-		# Targeted abilities: enter ability-targeting phase
-		ability_cells = _ability_target_cells(selected_unit, id)
-		attack_cells.clear()
-		phase = Phase.PLAYER_SELECT_ABILITY
-		_update_ui()
+		return
+	# Targeted abilities: enter ability-targeting mode
+	var cells := _ability_target_cells(selected_unit, id)
+	if cells.is_empty():
+		return
+	ability_cells = cells
+	_ability_targeting = true
+	_update_ui()
 
 func _try_ability(cell: Vector2i) -> void:
-	if cell not in ability_cells:
+	if cell not in ability_cells or selected_unit == null or selected_unit.ap <= 0:
 		return
 	var id: String = selected_unit.get_ability().get("id", "")
 
-	# Healer targets a friendly unit
 	if id == "heal_ally":
 		for a: Unit in player_units:
 			if a.is_alive() and a.grid_pos == cell:
@@ -1555,65 +1534,59 @@ func _try_ability(cell: Vector2i) -> void:
 				a.show_status_popup("+%d" % GameManager.HEAL_ABILITY_AMOUNT, Color(0.4, 0.95, 0.5))
 				Sfx.play("heal")
 				break
-		selected_unit.ability_used = true
-		ability_cells.clear()
-		_commit_player_unit_turn()
-		return
-
-	var target: Unit = null
-	for t: Unit in enemy_units:
-		if t.is_alive() and t.grid_pos == cell:
-			target = t
-			break
-	if target == null:
-		return
-
-	match id:
-		"pierce":
-			_do_attack(selected_unit, target)
-			# Hit the unit directly behind the target (same direction)
-			var d := target.grid_pos - selected_unit.grid_pos
-			var step := Vector2i(signi(d.x), signi(d.y))
-			var behind := target.grid_pos + step
-			for t: Unit in enemy_units:
-				if t.is_alive() and t.grid_pos == behind:
-					_do_attack(selected_unit, t)
-					break
-		"bash":
-			_do_attack(selected_unit, target)
-			if target.is_alive():
-				target.stunned = true
-				target.show_status_popup("STUNNED!", STUN_COLOR)
-				Sfx.play("stun")
-				_recompute_threat()   # stunned enemy no longer threatens
+	else:
+		var target: Unit = null
+		for t: Unit in enemy_units:
+			if t.is_alive() and t.grid_pos == cell:
+				target = t
+				break
+		if target == null:
+			return
+		match id:
+			"pierce":
+				_do_attack(selected_unit, target)
+				var d := target.grid_pos - selected_unit.grid_pos
+				var step := Vector2i(signi(d.x), signi(d.y))
+				var behind := target.grid_pos + step
+				for t: Unit in enemy_units:
+					if t.is_alive() and t.grid_pos == behind:
+						_do_attack(selected_unit, t)
+						break
+			"bash":
+				_do_attack(selected_unit, target)
+				if target.is_alive():
+					target.stunned = true
+					target.show_status_popup("STUNNED!", STUN_COLOR)
+					Sfx.play("stun")
 
 	selected_unit.ability_used = true
+	selected_unit.spend_ap(1)
+	_ability_targeting = false
 	ability_cells.clear()
-	_commit_player_unit_turn()
+	_after_player_action()
 
 func _on_end_turn() -> void:
 	# Confirmation gate — if there are still units that haven't acted, first
 	# press just arms the button. The next press within END_TURN_ARM_WINDOW
 	# actually skips them.
+	if phase != Phase.PLAYER_TURN:
+		return
 	var unacted: int = _unacted_player_count()
-	if unacted > 0 and phase == Phase.PLAYER_SELECT_UNIT:
+	if unacted > 0 and selected_unit == null:
 		var now: float = Time.get_ticks_msec() / 1000.0
 		if now - _end_turn_armed_at > END_TURN_ARM_WINDOW:
 			_end_turn_armed_at = now
 			_refresh_end_turn_button()
 			_show_toast(
-				"%d unit%s still ready — press End Turn again to skip them" % [
+				"%d unit%s still have AP — press End Turn again to end anyway" % [
 					unacted, "" if unacted == 1 else "s"
 				],
 				Color(0.95, 0.75, 0.30)
 			)
 			return
 	_end_turn_armed_at = -1.0
-
-	if selected_unit:
-		selected_unit.has_acted = true
-		selected_unit.modulate  = ACTED_TINT
-		selected_unit           = null
+	selected_unit = null
+	_ability_targeting = false
 	move_cells.clear()
 	attack_cells.clear()
 	ability_cells.clear()
@@ -1622,8 +1595,7 @@ func _on_end_turn() -> void:
 		_trigger_win()
 		return
 
-	_mark_all_acted(player_units)
-	_run_all_remaining_ai_units()
+	_begin_enemy_turn()
 
 func _unacted_player_count() -> int:
 	var n := 0
@@ -1705,115 +1677,127 @@ func _spawn_reinforcement(team: int) -> void:
 # ---------------------------------------------------------------------------
 # AI — one unit responds after each player unit action
 # ---------------------------------------------------------------------------
-func _run_one_ai_unit() -> void:
-	phase = Phase.AI_ACTING
-	_update_ui()
-	_execute_one_ai_unit()
-
-func _execute_one_ai_unit() -> void:
-	await get_tree().create_timer(0.35).timeout
-
-	if _all_dead(enemy_units):
-		_trigger_win()
+# Start-of-turn upkeep for one unit: status DoT, then refill AP (or lose the
+# turn to stun). Greys stunned/dead units.
+func _start_turn_for(u: Unit) -> void:
+	if not u.is_alive():
 		return
-
-	var ai_unit: Unit = null
-	for u: Unit in enemy_units:
-		if u.is_alive() and not u.has_acted:
-			ai_unit = u
-			break
-
-	if ai_unit == null:
-		# All alive enemies have acted for this round — check full-round completion
-		_check_round_complete()
+	_tick_statuses(u)               # poison/burn/lava — may kill
+	if not u.is_alive():
+		u.modulate = DEATH_TINT
 		return
-
-	# Stunned units lose this activation (it counts as their turn)
-	if _consume_stun(ai_unit):
-		_check_round_complete()
-		return
-
-	await _ai_act(ai_unit)
-	ai_unit.has_acted = true
-	ai_unit.modulate  = ACTED_TINT
-	queue_redraw()
-
-	if _all_dead(player_units):
-		_trigger_loss()
-		return
-
-	_check_round_complete()
-
-# ---------------------------------------------------------------------------
-# AI — all remaining enemy units act (after "End Turn")
-# ---------------------------------------------------------------------------
-func _run_all_remaining_ai_units() -> void:
-	phase = Phase.AI_ACTING
-	_update_ui()
-	_execute_remaining_ai_units()
-
-func _execute_remaining_ai_units() -> void:
-	var unacted: Array[Unit] = []
-	for u: Unit in enemy_units:
-		if u.is_alive() and not u.has_acted:
-			unacted.append(u)
-
-	if unacted.is_empty():
-		_start_new_round()
-		return
-
-	await get_tree().create_timer(0.35).timeout
-
-	var ai_unit: Unit = unacted[0]
-	if _consume_stun(ai_unit):
-		_execute_remaining_ai_units()
-		return
-
-	await _ai_act(ai_unit)
-	ai_unit.has_acted = true
-	ai_unit.modulate  = ACTED_TINT
-	queue_redraw()
-
-	if _all_dead(player_units):
-		_trigger_loss()
-		return
-
-	_execute_remaining_ai_units()
-
-# ---------------------------------------------------------------------------
-# Round completion helpers
-# ---------------------------------------------------------------------------
-func _start_new_round() -> void:
-	_round_count += 1
-	_reset_acted_flags(player_units)
-	_reset_acted_flags(enemy_units)
-	_recompute_threat()   # stuns cleared at round start may re-enable threats
-	phase = Phase.PLAYER_SELECT_UNIT
-	_update_ui()
-
-func _check_round_complete() -> void:
-	if _all_dead(enemy_units):
-		_trigger_win()
-		return
-	if _all_dead(player_units):
-		_trigger_loss()
-		return
-
-	var player_done := not player_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted)
-	var enemy_done  := not enemy_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted)
-
-	if player_done and enemy_done:
-		_start_new_round()
-	elif player_done:
-		# Player exhausted; remaining enemies finish the round
-		_show_toast("All your units have acted — enemy continues…", Color(0.90, 0.82, 0.25))
-		phase = Phase.AI_ACTING
-		_update_ui()
-		_execute_remaining_ai_units()
+	if u.stunned:
+		u.stunned   = false
+		u.ap        = 0
+		u.has_acted = true
+		u.modulate  = ACTED_TINT
+		u.show_status_popup("STUNNED!", STUN_COLOR)
 	else:
-		# Player still has units to act
-		phase = Phase.PLAYER_SELECT_UNIT
-		_update_ui()
+		u.refill_ap()
+		u.modulate = Color(1, 1, 1, 1)
+
+func _begin_player_turn() -> void:
+	_round_count += 1
+	for u: Unit in player_units:
+		_start_turn_for(u)
+	selected_unit = null
+	_ability_targeting = false
+	move_cells.clear(); attack_cells.clear(); ability_cells.clear()
+	phase = Phase.PLAYER_TURN
+	_recompute_threat()
+	_update_ui()
+	if _all_dead(player_units):
+		_trigger_loss()
+
+func _begin_enemy_turn() -> void:
+	for u: Unit in enemy_units:
+		_start_turn_for(u)
+	phase = Phase.AI_TURN
+	_update_ui()
+	_recompute_threat()
+	_execute_ai_turn()
+
+# Each enemy spends its full AP, one action at a time, then the player's turn
+# begins. `await`s between actions so the player can follow what's happening.
+func _execute_ai_turn() -> void:
+	for u: Unit in enemy_units:
+		if not u.is_alive():
+			continue
+		var guard := 0
+		while u.is_alive() and u.ap > 0 and guard < 12:
+			guard += 1
+			if _all_dead(player_units):
+				_trigger_loss()
+				return
+			await get_tree().create_timer(0.30).timeout
+			var acted: bool = await _ai_one_action(u)
+			queue_redraw()
+			if not acted:
+				break
+		if u.is_alive():
+			u.modulate = ACTED_TINT
+	if _all_dead(player_units):
+		_trigger_loss()
+		return
+	if _all_dead(enemy_units):
+		_trigger_win()
+		return
+	_begin_player_turn()
+
+# One AI action for a unit (spends 1 AP). Returns false when it can't do
+# anything useful, so the turn loop stops early.
+func _ai_one_action(u: Unit) -> bool:
+	# Healer: heal a wounded ally in range, else step toward one
+	if u.get_ability().get("id", "") == "heal_ally" and not u.ability_used:
+		var w := _most_wounded_ally(u, enemy_units)
+		if w != null:
+			if _chebyshev(u.grid_pos, w.grid_pos) <= 2:
+				w.hp = mini(w.max_hp, w.hp + GameManager.HEAL_ABILITY_AMOUNT)
+				w._refresh_hp_bar()
+				w.show_status_popup("+%d" % GameManager.HEAL_ABILITY_AMOUNT, Color(0.4, 0.95, 0.5))
+				Sfx.play("heal")
+				u.ability_used = true
+				u.spend_ap(1)
+				return true
+			var hc := _best_move_to_cell(u, w.grid_pos)
+			if hc != u.grid_pos:
+				await _ai_step(u, hc)
+				return true
+
+	# Best move+attack pairing
+	var plan := _best_attack_plan(u)
+	if plan["target"] != null:
+		if plan["cell"] == u.grid_pos:
+			_do_attack(u, plan["target"])
+			u.spend_ap(1)
+			return true
+		await _ai_step(u, plan["cell"])
+		return true
+
+	# Fallback: close on the nearest objective or enemy
+	var ct := _nearest_alive(u, player_units)
+	var oc := _nearest_capturable_obj(u)
+	var tcell := Vector2i(-1, -1)
+	if oc != Vector2i(-1, -1):
+		var od := _manhattan(u.grid_pos, oc)
+		var ed: int = 9999 if ct == null else _manhattan(u.grid_pos, ct.grid_pos)
+		tcell = oc if od <= ed else ct.grid_pos
+	elif ct != null:
+		tcell = ct.grid_pos
+	if tcell != Vector2i(-1, -1):
+		var c := _best_move_to_cell(u, tcell)
+		if c != u.grid_pos:
+			await _ai_step(u, c)
+			return true
+	return false
+
+# Move an AI unit one step of its plan (animated), spend 1 AP, check capture.
+func _ai_step(u: Unit, dest: Vector2i) -> void:
+	var origin := u.grid_pos
+	u.grid_pos = dest
+	await _animate_unit_to(u, origin, dest).finished
+	_check_capture(u)
+	u.spend_ap(1)
 
 # ---------------------------------------------------------------------------
 # AI decision-making (objectives + combat)
