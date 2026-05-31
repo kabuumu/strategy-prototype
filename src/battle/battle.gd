@@ -115,6 +115,10 @@ var _hover_cell: Vector2i = Vector2i(-1, -1)
 var _threat_cells: Dictionary = {}
 # Player can toggle the overlay with the T key
 var _show_threat: bool = true
+# Predicted enemy intents (destination + target) for the next-move telegraph,
+# recomputed alongside threat. Toggled with the E key.
+var _enemy_intents: Array = []
+var _show_intent: bool = true
 
 # Speed control — F toggles between 1× and 2×. Implemented via
 # Engine.time_scale so every tween and create_timer respects it.
@@ -408,6 +412,35 @@ func _draw() -> void:
 
 	# Initiative strip — shows who has and hasn't acted this round
 	_draw_initiative_strip()
+
+	# Enemy next-move telegraph
+	_draw_enemy_intents()
+
+# Telegraph each enemy's predicted move: a marker on its destination tile and a
+# line to who it intends to hit (red) or heal (green). Planning phases only.
+func _draw_enemy_intents() -> void:
+	if not _show_intent:
+		return
+	if phase not in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
+		return
+	var half := Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0)
+	for intent: Dictionary in _enemy_intents:
+		var u: Unit = intent.get("unit")
+		if u == null or not u.is_alive():
+			continue
+		var cell: Vector2i = intent["cell"]
+		var dest := GRID_OFFSET + Vector2(cell.x * TILE_SIZE, cell.y * TILE_SIZE)
+		# Destination marker
+		draw_rect(Rect2(dest + Vector2(4, 4), Vector2(TILE_SIZE - 9, TILE_SIZE - 9)),
+			Color(1.0, 0.55, 0.15, 0.85), false, 2.0)
+		var target: Unit = intent.get("target")
+		if target != null and target.is_alive():
+			var dc := dest + half
+			var tc := GRID_OFFSET + Vector2(target.grid_pos.x * TILE_SIZE, target.grid_pos.y * TILE_SIZE) + half
+			var col: Color = Color(0.40, 0.92, 0.50, 0.85) if intent.get("kind") == "heal" \
+				else Color(1.0, 0.40, 0.30, 0.90)
+			draw_line(dc, tc, col, 2.0)
+			draw_circle(tc, 5.0, col)
 
 # ---------------------------------------------------------------------------
 # Build UI
@@ -714,6 +747,7 @@ func _spawn_units() -> void:
 # Recompute which cells are currently within attack reach of any alive enemy.
 # Cheap (O(enemies × range²)) and only called when the situation changes.
 func _recompute_threat() -> void:
+	_recompute_intents()
 	_threat_cells.clear()
 	for u: Unit in enemy_units:
 		if not u.is_alive() or u.stunned:
@@ -727,6 +761,44 @@ func _recompute_threat() -> void:
 				if not _valid_cell(c):
 					continue
 				_threat_cells[c] = int(_threat_cells.get(c, 0)) + 1
+
+# Predict each alive, not-yet-acted enemy's next move for the telegraph.
+func _recompute_intents() -> void:
+	_enemy_intents.clear()
+	for u: Unit in enemy_units:
+		if not u.is_alive() or u.stunned or u.has_acted:
+			continue
+		var intent := _predict_intent(u)
+		intent["unit"] = u
+		_enemy_intents.append(intent)
+
+# Read-only mirror of _ai_act's decision: { cell, target, kind }.
+func _predict_intent(ai_unit: Unit) -> Dictionary:
+	# Healer: move toward and heal the most-wounded ally
+	if ai_unit.get_ability().get("id", "") == "heal_ally" and not ai_unit.ability_used:
+		var w := _most_wounded_ally(ai_unit, enemy_units)
+		if w != null:
+			var hc := ai_unit.grid_pos
+			if _chebyshev(ai_unit.grid_pos, w.grid_pos) > 2:
+				hc = _best_move_to_cell(ai_unit, w.grid_pos)
+			return {"cell": hc, "target": w, "kind": "heal"}
+	var plan := _best_attack_plan(ai_unit)
+	if plan["target"] != null:
+		return {"cell": plan["cell"], "target": plan["target"], "kind": "attack"}
+	# Fallback: close on the nearest objective or enemy
+	var combat_target := _nearest_alive(ai_unit, player_units)
+	var obj_cell := _nearest_capturable_obj(ai_unit)
+	var target_cell := Vector2i(-1, -1)
+	if obj_cell != Vector2i(-1, -1):
+		var od := _manhattan(ai_unit.grid_pos, obj_cell)
+		var ed: int = 9999 if combat_target == null else _manhattan(ai_unit.grid_pos, combat_target.grid_pos)
+		target_cell = obj_cell if od <= ed else combat_target.grid_pos
+	elif combat_target != null:
+		target_cell = combat_target.grid_pos
+	var cell := ai_unit.grid_pos
+	if target_cell != Vector2i(-1, -1):
+		cell = _best_move_to_cell(ai_unit, target_cell)
+	return {"cell": cell, "target": null, "kind": "move"}
 
 func _distribute_rows(count: int) -> Array[int]:
 	var rows: Array[int] = []
@@ -1020,6 +1092,11 @@ func _handle_key(keycode: int) -> void:
 			_show_threat = not _show_threat
 			_show_toast("Threat overlay: " + ("ON" if _show_threat else "OFF"),
 					Color(0.85, 0.55, 0.55))
+			queue_redraw()
+		KEY_E:
+			_show_intent = not _show_intent
+			_show_toast("Enemy intent: " + ("ON" if _show_intent else "OFF"),
+					Color(1.0, 0.62, 0.30))
 			queue_redraw()
 		KEY_F:
 			_set_fast_mode(not _fast_mode)
@@ -1780,45 +1857,47 @@ func _check_round_complete() -> void:
 #   • Ranged units staying away from melee threats (kiting)
 #   • Standing on a capturable objective (capture bonus)
 # ---------------------------------------------------------------------------
-func _ai_act(ai_unit: Unit) -> void:
-	# Healers prioritise patching up wounded allies
-	if _try_ai_heal(ai_unit):
-		return
-
+# Pure, side-effect-free: pick the best (move_cell, attack_target) pair for a
+# unit. target is null when no player is reachable from any move cell. Shared by
+# _ai_act (which then executes) and the enemy-intent telegraph.
+func _best_attack_plan(ai_unit: Unit) -> Dictionary:
 	var damage := ai_unit.get_damage()
 	var range_val := ai_unit.get_attack_range()
 	var is_ranged := range_val >= 2
-
-	# All cells this unit could move to (plus staying in place)
 	var move_options: Array[Vector2i] = _get_move_cells(ai_unit)
 	move_options.append(ai_unit.grid_pos)
 
 	var best_score: float = -INF
 	var best_cell: Vector2i = ai_unit.grid_pos
 	var best_target: Unit = null
-
 	for cell: Vector2i in move_options:
-		# Score this cell on its own merits (capture / kiting), independent of attack
 		var cell_value: float = _score_cell(ai_unit, cell, is_ranged)
-
 		for t: Unit in player_units:
 			if not t.is_alive():
 				continue
 			if _chebyshev(cell, t.grid_pos) > range_val:
 				continue
 			var hit_score: float = cell_value + 1000.0
-			# Hitting a low-HP target is better; killing is best of all
 			if damage >= t.hp:
-				hit_score += 2000.0 + t.max_hp  # finishing high-HP targets is extra valuable
+				hit_score += 2000.0 + t.max_hp
 			else:
 				hit_score += float(damage) - float(t.hp) * 0.4
-			# Per-class target preference (scouts/archers snipe the wounded)
 			hit_score += _target_priority(ai_unit, t)
-
 			if hit_score > best_score:
 				best_score  = hit_score
 				best_cell   = cell
 				best_target = t
+	return {"cell": best_cell, "target": best_target}
+
+func _ai_act(ai_unit: Unit) -> void:
+	# Healers prioritise patching up wounded allies
+	if _try_ai_heal(ai_unit):
+		return
+
+	var range_val := ai_unit.get_attack_range()
+	var plan := _best_attack_plan(ai_unit)
+	var best_cell: Vector2i = plan["cell"]
+	var best_target: Unit = plan["target"]
 
 	# Execute chosen move (only if we actually have a target — otherwise leave
 	# movement to the fallback so we don't end up moving twice)
@@ -2180,7 +2259,7 @@ func _show_toast(text: String, color: Color) -> void:
 const HELP_TEXT := """[ CONTROLS ]
 Left-click a unit to select.  Click a blue tile to move, a red tile to attack.
 Right-click / Esc cancels.   Tab = next unit.   Enter = end turn.
-Q = ability.   T = threat overlay.   F = fast-forward.   H = toggle this help.
+Q = ability.   T = threat overlay.   E = enemy intent.   F = fast-forward.   H = toggle this help.
 
 [ COMBAT ]
 Each unit moves then attacks once per round; you can attack diagonally.

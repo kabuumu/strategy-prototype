@@ -65,7 +65,7 @@ func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb:
 	# Controls hint
 	# -----------------------------------------------------------------------
 	var hint := Label.new()
-	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  F fast-forward  ·  Press H in battle for full help"
+	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.40, 0.40, 0.45)
 	hint.position = Vector2(60.0, 680.0)
