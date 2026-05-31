@@ -84,8 +84,9 @@ var _ai_timer: float = 0.0
 var _fight_intro_timer: float = 0.0
 var _rng := RandomNumberGenerator.new()
 var _result_text: String = ""
-var _shop_message: String = "Buy units into your team. Duplicates merge for XP and stronger fights."
+var _shop_message: String = "Click a shop unit to buy it into your hotbar."
 var _fight_label: Label
+var _freeze_mode: bool = false
 
 func _ready() -> void:
 	_rng.randomize()
@@ -125,17 +126,17 @@ func _draw() -> void:
 	if phase == Phase.FIGHT and _fight_intro_timer > 0.0:
 		draw_rect(FIELD_RECT, Color(0.02, 0.03, 0.04, 0.22))
 	for i in range(TEAM_SIZE):
-		var x := 170.0 + float(i) * 105.0
+		var slot_rect := Rect2(_slot_pos(i), _slot_size())
 		var slot_color := Color(0.10, 0.12, 0.16)
 		if selected_slot == i:
 			slot_color = Color(0.26, 0.36, 0.30)
-		draw_rect(Rect2(x, 535.0, 86.0, 86.0), slot_color, false, 2.0)
+		draw_rect(slot_rect, slot_color, false, 2.0)
 	for i in range(SHOP_SIZE):
-		var x := 705.0 + float(i) * 130.0
+		var shop_rect := Rect2(_shop_pos(i), _shop_size())
 		var shop_color := Color(0.14, 0.12, 0.16)
 		if selected_shop == i:
 			shop_color = Color(0.26, 0.22, 0.34)
-		draw_rect(Rect2(x, 535.0, 112.0, 86.0), shop_color, false, 2.0)
+		draw_rect(shop_rect, shop_color, false, 2.0)
 
 func _rebuild_ui() -> void:
 	for n: Node in _ui_nodes:
@@ -149,17 +150,19 @@ func _rebuild_ui() -> void:
 
 	if phase == Phase.SHOP:
 		_add_label(_shop_message, 14, UITheme.TEXT_MUTED, Vector2(300.0, 46.0), Vector2(650.0, 22.0))
-		_add_label("TEAM", 15, UITheme.TEXT_MUTED, Vector2(170.0, 505.0), Vector2(260.0, 22.0))
+		_add_label("HOTBAR", 15, UITheme.TEXT_MUTED, Vector2(170.0, 505.0), Vector2(260.0, 22.0))
 		_add_label("SHOP", 15, UITheme.TEXT_MUTED, Vector2(705.0, 505.0), Vector2(260.0, 22.0))
-		_add_label("Slot 1 deploys at the front. Swap units to tune the formation.",
-				13, UITheme.TEXT_MUTED, Vector2(170.0, 622.0), Vector2(450.0, 20.0))
+		_add_label("Slot 1 deploys at the front. Select a hotbar unit, then move or swap it.",
+				13, UITheme.TEXT_MUTED, Vector2(170.0, 626.0), Vector2(450.0, 18.0))
 		for i in range(TEAM_SIZE):
 			_add_slot_button(i)
 		for i in range(SHOP_SIZE):
 			_add_shop_button(i)
-		_add_button("Sell +1", Vector2(485.0, 640.0), Vector2(96.0, 42.0), Color(0.34, 0.25, 0.22), _on_sell)
-		_add_button("Freeze", Vector2(602.0, 640.0), Vector2(96.0, 42.0), Color(0.22, 0.32, 0.42), _on_freeze)
-		_add_button("Roll -1", Vector2(719.0, 640.0), Vector2(110.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
+		_add_button("Move <", Vector2(342.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.28, 0.40), _on_move_left)
+		_add_button("Move >", Vector2(448.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.28, 0.40), _on_move_right)
+		_add_button("Sell +1", Vector2(554.0, 640.0), Vector2(92.0, 42.0), Color(0.34, 0.25, 0.22), _on_sell)
+		_add_button("Freeze", Vector2(660.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.32, 0.42), _on_freeze)
+		_add_button("Roll -1", Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
 		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
@@ -190,18 +193,114 @@ func _add_button(text: String, pos: Vector2, size: Vector2, color: Color, cb: Ca
 	_ui_nodes.append(btn)
 	return btn
 
+func _slot_pos(index: int) -> Vector2:
+	return Vector2(160.0 + float(index) * 108.0, 528.0)
+
+func _slot_size() -> Vector2:
+	return Vector2(96.0, 96.0)
+
+func _shop_pos(index: int) -> Vector2:
+	return Vector2(700.0 + float(index) * 138.0, 520.0)
+
+func _shop_size() -> Vector2:
+	return Vector2(126.0, 112.0)
+
+func _decorate_unit_card(card_button: Button, card: Dictionary, is_shop_card: bool, index: int) -> void:
+	card_button.clip_contents = true
+	var size := card_button.size
+	if _is_empty_card(card):
+		_add_card_label(card_button, "EMPTY", Vector2(0.0, 30.0), size, 13, UITheme.TEXT_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+		_add_card_label(card_button, "SLOT %d" % (index + 1), Vector2(0.0, 52.0), size, 10, UITheme.TEXT_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+
+	var unit_id := _card_id(card)
+	var stats := _card_stats(card)
+	_add_unit_portrait(card_button, card, Vector2((size.x - 56.0) * 0.5, 8.0), Vector2(56.0, 48.0))
+	_add_card_label(card_button, _unit_name(unit_id), Vector2(6.0, 56.0), Vector2(size.x - 12.0, 18.0),
+			12, UITheme.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
+	_add_badge(card_button, "L%d" % int(card.get("level", 1)), Vector2(6.0, 7.0),
+			Vector2(30.0, 18.0), UITheme.GOLD.darkened(0.25), UITheme.GOLD)
+	_add_badge(card_button, "ATK %d" % int(stats["damage"]), Vector2(8.0, size.y - 25.0),
+			Vector2(size.x * 0.45, 18.0), Color(0.36, 0.16, 0.16), Color(1.0, 0.66, 0.48))
+	_add_badge(card_button, "HP %d" % int(stats["hp"]), Vector2(size.x * 0.52, size.y - 25.0),
+			Vector2(size.x * 0.40, 18.0), Color(0.14, 0.27, 0.18), Color(0.60, 1.0, 0.68))
+
+	if is_shop_card:
+		_add_badge(card_button, "%dG" % BUY_COST, Vector2(size.x - 38.0, 7.0),
+				Vector2(30.0, 18.0), Color(0.30, 0.22, 0.08), UITheme.GOLD)
+		if bool(card.get("frozen", false)):
+			_add_badge(card_button, "FROZEN", Vector2(8.0, 30.0),
+					Vector2(52.0, 18.0), Color(0.08, 0.22, 0.32), Color(0.62, 0.90, 1.0))
+
+func _add_unit_portrait(parent: Control, card: Dictionary, pos: Vector2, size: Vector2) -> void:
+	var tex := _unit_texture(card, 0)
+	if tex == null:
+		return
+	var portrait_bg := ColorRect.new()
+	portrait_bg.position = pos
+	portrait_bg.size = size
+	portrait_bg.color = Color(0.04, 0.05, 0.07, 0.38)
+	portrait_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(portrait_bg)
+
+	var image := TextureRect.new()
+	image.texture = tex
+	image.position = pos
+	image.size = size
+	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(image)
+
+func _add_badge(parent: Control, text: String, pos: Vector2, size: Vector2, bg_color: Color, text_color: Color) -> void:
+	var bg := ColorRect.new()
+	bg.position = pos
+	bg.size = size
+	bg.color = bg_color
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(bg)
+	_add_card_label(parent, text, pos + Vector2(2.0, 2.0), size - Vector2(4.0, 2.0), 10, text_color, HORIZONTAL_ALIGNMENT_CENTER)
+
+func _add_card_label(
+		parent: Control,
+		text: String,
+		pos: Vector2,
+		size: Vector2,
+		font_size: int,
+		color: Color,
+		align: HorizontalAlignment
+) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.position = pos
+	label.size = size
+	label.add_theme_font_size_override("font_size", font_size)
+	label.modulate = color
+	label.horizontal_alignment = align
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(label)
+	return label
+
+func _unit_texture(card: Dictionary, team_id: int) -> Texture2D:
+	if _is_empty_card(card):
+		return null
+	var unit_id := _card_id(card)
+	var stats: Dictionary = UNIT_TYPES[unit_id]
+	var sprite_key := String(stats.get("sprite_key", unit_id))
+	var team_name := "player" if team_id == 0 else "enemy"
+	return load("res://assets/units/%s_%s.png" % [sprite_key, team_name])
+
 func _add_slot_button(index: int) -> void:
-	var text := "Empty"
 	var color := Color(0.18, 0.22, 0.30)
 	var card: Dictionary = team[index]
 	if not _is_empty_card(card):
-		text = _card_button_text(card, false)
 		color = Color(0.20, 0.36, 0.46)
 	if selected_slot == index:
 		color = color.lightened(0.18)
-	var btn := _add_button(text, Vector2(170.0 + float(index) * 105.0, 535.0),
-			Vector2(86.0, 86.0), color, Callable(self, "_on_slot").bind(index), 12)
-	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var btn := _add_button("", _slot_pos(index), _slot_size(),
+			color, Callable(self, "_on_slot").bind(index), 12)
+	_decorate_unit_card(btn, card, false, index)
 
 func _add_shop_button(index: int) -> void:
 	var card: Dictionary = shop[index]
@@ -210,49 +309,27 @@ func _add_shop_button(index: int) -> void:
 		color = Color(0.22, 0.34, 0.42)
 	if selected_shop == index:
 		color = color.lightened(0.18)
-	var label := "%s\n%d gold" % [_card_button_text(card, true), BUY_COST]
-	if bool(card.get("frozen", false)):
-		label += "\nFrozen"
-	var btn := _add_button(label,
-			Vector2(705.0 + float(index) * 130.0, 535.0), Vector2(112.0, 86.0),
+	var btn := _add_button("", _shop_pos(index), _shop_size(),
 			color, Callable(self, "_on_shop").bind(index), 12)
-	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_decorate_unit_card(btn, card, true, index)
 
 func _on_shop(index: int) -> void:
-	selected_shop = -1 if selected_shop == index else index
-	selected_slot = -1
-	if selected_shop >= 0:
-		var card: Dictionary = shop[selected_shop]
-		_shop_message = "%s: %s" % [_unit_name(_card_id(card)), String(UNIT_TYPES[_card_id(card)].get("role", ""))]
+	if _freeze_mode:
+		selected_shop = index
+		_toggle_freeze(index)
+		_freeze_mode = false
+		_rebuild_ui()
+		return
+	var target_slot := _find_buy_slot(index)
+	if target_slot < 0:
+		_shop_message = "No hotbar room. Sell a unit, or click a duplicate to merge."
+	else:
+		_try_buy_shop_to_slot(index, target_slot)
 	_rebuild_ui()
 
 func _on_slot(index: int) -> void:
 	var slot_card: Dictionary = team[index]
-	if selected_shop >= 0:
-		if gold < BUY_COST:
-			_shop_message = "Not enough gold."
-			_rebuild_ui()
-			return
-		var shop_card: Dictionary = shop[selected_shop]
-		if _is_empty_card(slot_card):
-			team[index] = _copy_card(shop_card)
-			gold -= BUY_COST
-			_after_shop_card_bought(selected_shop)
-			selected_slot = index
-			_shop_message = "Bought %s." % _unit_name(_card_id(shop_card))
-		elif _card_id(slot_card) == _card_id(shop_card) and int(slot_card.get("level", 1)) < MAX_LEVEL:
-			gold -= BUY_COST
-			var leveled := _add_xp_to_slot(index, 1)
-			_after_shop_card_bought(selected_shop)
-			selected_slot = index
-			_shop_message = "%s merged%s." % [
-				_unit_name(_card_id(slot_card)),
-				" and leveled up" if leveled else ""
-			]
-		else:
-			_shop_message = "Pick an empty slot, or merge into the same unit."
-		selected_shop = -1
-	elif not _is_empty_card(slot_card):
+	if not _is_empty_card(slot_card):
 		if selected_slot >= 0 and selected_slot != index and not _is_empty_card(team[selected_slot]):
 			var tmp: Dictionary = team[selected_slot]
 			team[selected_slot] = team[index]
@@ -270,7 +347,7 @@ func _on_slot(index: int) -> void:
 
 func _on_sell() -> void:
 	if selected_slot < 0 or selected_slot >= TEAM_SIZE or _is_empty_card(team[selected_slot]):
-		_shop_message = "Select a team unit to sell."
+		_shop_message = "Select a hotbar unit to sell."
 		_rebuild_ui()
 		return
 	var refund := SELL_REFUND + int(team[selected_slot].get("level", 1)) - 1
@@ -281,15 +358,44 @@ func _on_sell() -> void:
 	_rebuild_ui()
 
 func _on_freeze() -> void:
-	if selected_shop < 0 or selected_shop >= shop.size():
-		_shop_message = "Select a shop unit to freeze."
+	if selected_shop >= 0 and selected_shop < shop.size():
+		_toggle_freeze(selected_shop)
 		_rebuild_ui()
 		return
-	shop[selected_shop]["frozen"] = not bool(shop[selected_shop].get("frozen", false))
+	_freeze_mode = true
+	_shop_message = "Freeze mode: click a shop unit to freeze or unfreeze it."
+	_rebuild_ui()
+
+func _toggle_freeze(index: int) -> void:
+	if index < 0 or index >= shop.size():
+		return
+	shop[index]["frozen"] = not bool(shop[index].get("frozen", false))
 	_shop_message = "%s %s." % [
-		_unit_name(_card_id(shop[selected_shop])),
-		"frozen" if bool(shop[selected_shop].get("frozen", false)) else "unfrozen"
+		_unit_name(_card_id(shop[index])),
+		"frozen" if bool(shop[index].get("frozen", false)) else "unfrozen"
 	]
+
+func _on_move_left() -> void:
+	_move_selected_slot(-1)
+
+func _on_move_right() -> void:
+	_move_selected_slot(1)
+
+func _move_selected_slot(direction: int) -> void:
+	if selected_slot < 0 or selected_slot >= TEAM_SIZE or _is_empty_card(team[selected_slot]):
+		_shop_message = "Select a hotbar unit to reorder."
+		_rebuild_ui()
+		return
+	var target := selected_slot + direction
+	if target < 0 or target >= TEAM_SIZE:
+		_shop_message = "That unit is already at the edge of the hotbar."
+		_rebuild_ui()
+		return
+	var tmp: Dictionary = team[target]
+	team[target] = team[selected_slot]
+	team[selected_slot] = tmp
+	selected_slot = target
+	_shop_message = "Hotbar order changed."
 	_rebuild_ui()
 
 func _on_roll() -> void:
@@ -300,6 +406,7 @@ func _on_roll() -> void:
 	gold -= ROLL_COST
 	_roll_shop(false)
 	selected_shop = -1
+	_freeze_mode = false
 	_shop_message = "Shop rolled. Frozen units stayed."
 	_rebuild_ui()
 
@@ -337,6 +444,55 @@ func _roll_shop(_initial: bool) -> void:
 			shop.append(previous[i])
 		else:
 			shop.append(_make_shop_card(_random_unit_id()))
+
+func _try_buy_shop_to_slot(shop_index: int, slot_index: int) -> bool:
+	if shop_index < 0 or shop_index >= shop.size() or slot_index < 0 or slot_index >= TEAM_SIZE:
+		return false
+	if gold < BUY_COST:
+		_shop_message = "Not enough gold."
+		return false
+	var shop_card: Dictionary = shop[shop_index]
+	var slot_card: Dictionary = team[slot_index]
+	if _is_empty_card(slot_card):
+		team[slot_index] = _copy_card(shop_card)
+		gold -= BUY_COST
+		_after_shop_card_bought(shop_index)
+		selected_shop = -1
+		selected_slot = slot_index
+		_shop_message = "Bought %s into hotbar slot %d." % [_unit_name(_card_id(shop_card)), slot_index + 1]
+		return true
+	if _card_id(slot_card) == _card_id(shop_card) and int(slot_card.get("level", 1)) < MAX_LEVEL:
+		gold -= BUY_COST
+		var leveled := _add_xp_to_slot(slot_index, 1)
+		_after_shop_card_bought(shop_index)
+		selected_shop = -1
+		selected_slot = slot_index
+		_shop_message = "%s merged%s." % [
+			_unit_name(_card_id(slot_card)),
+			" and leveled up" if leveled else ""
+		]
+		return true
+	_shop_message = "That slot is occupied. Pick an empty slot, or merge into the same unit."
+	return false
+
+func _find_buy_slot(shop_index: int) -> int:
+	if shop_index < 0 or shop_index >= shop.size():
+		return -1
+	var shop_id := _card_id(shop[shop_index])
+	if selected_slot >= 0 and selected_slot < TEAM_SIZE:
+		var selected_card: Dictionary = team[selected_slot]
+		if _is_empty_card(selected_card):
+			return selected_slot
+		if _card_id(selected_card) == shop_id and int(selected_card.get("level", 1)) < MAX_LEVEL:
+			return selected_slot
+	for i in range(TEAM_SIZE):
+		var card: Dictionary = team[i]
+		if not _is_empty_card(card) and _card_id(card) == shop_id and int(card.get("level", 1)) < MAX_LEVEL:
+			return i
+	for i in range(TEAM_SIZE):
+		if _is_empty_card(team[i]):
+			return i
+	return -1
 
 func _has_team() -> bool:
 	for card: Dictionary in team:
