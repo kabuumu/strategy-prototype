@@ -232,8 +232,17 @@ func _generate_terrain() -> void:
 	_place.call(lava, int(_biome["lava"]))
 
 # ---------------------------------------------------------------------------
-# Custom drawing — grid tiles + objective highlights
+# Custom drawing — hex grid + terrain + overlays
 # ---------------------------------------------------------------------------
+# Screen-space centre of a cell (battle-node coords, includes GRID_OFFSET).
+func _hex_center(cell: Vector2i) -> Vector2:
+	return GRID_OFFSET + Hex.center_v(cell)
+
+func _draw_hex_outline(pts: PackedVector2Array, col: Color, w: float) -> void:
+	var loop := pts.duplicate()
+	loop.append(pts[0])
+	draw_polyline(loop, col, w)
+
 func _draw() -> void:
 	# Background — tinted by the current biome, beneath the grid and objectives
 	var bg: Color = _biome.get("bg", Color(0.07, 0.08, 0.07))
@@ -250,14 +259,12 @@ func _draw() -> void:
 	var tile_a := bg2.lightened(0.11)
 	var tile_b := bg2.lightened(0.05)
 
-	# Grid tiles
+	# Grid tiles (hexagons)
 	for x in range(GRID_COLS):
 		for y in range(GRID_ROWS):
 			var cell := Vector2i(x, y)
-			var rect := Rect2(
-				GRID_OFFSET + Vector2(x * TILE_SIZE, y * TILE_SIZE),
-				Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)
-			)
+			var ctr := _hex_center(cell)
+			var pts := Hex.corners(ctr)
 			var color: Color
 			var plain := false
 			if cell in ability_cells:
@@ -270,119 +277,84 @@ func _draw() -> void:
 				color = tile_a; plain = true
 			else:
 				color = tile_b; plain = true
-			draw_rect(rect, color)
+			draw_colored_polygon(pts, color)
 			# Deterministic speckle so plain ground has a little texture
 			if plain:
 				var sd := x * 73 + y * 149
 				for k in range(3):
-					var sx := rect.position.x + 6.0 + float((sd * (k + 2)) % 56)
-					var sy := rect.position.y + 6.0 + float((sd * (k + 5)) % 56)
-					draw_rect(Rect2(Vector2(sx, sy), Vector2(3.0, 3.0)), color.darkened(0.16))
-			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.45), false, 1.5)
+					var off := Vector2(float((sd * (k + 2)) % 40) - 20.0, float((sd * (k + 5)) % 40) - 20.0)
+					draw_rect(Rect2(ctr + off, Vector2(3.0, 3.0)), color.darkened(0.16))
+			_draw_hex_outline(pts, Color(0.45, 0.54, 0.40, 0.45), 1.5)
 
-			# Enemy threat overlay — faint red tint on tiles within reach of
-			# alive enemies. Stacks with multiple threats up to a cap so the
-			# danger zone is unmistakable. Only shown during the player's
-			# planning phases (not during attack-targeting / AI / end states).
+			# Enemy threat overlay — faint red tint on hexes within enemy reach,
+			# shown only during the player's planning phases.
 			if _show_threat and phase in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
 				var n: int = int(_threat_cells.get(cell, 0))
 				if n > 0:
 					var a: float = min(0.10 + 0.10 * float(n - 1), 0.30)
-					draw_rect(rect, Color(0.95, 0.18, 0.18, a))
+					draw_colored_polygon(pts, Color(0.95, 0.18, 0.18, a))
 
-	# Mountain tiles — drawn over the grid, block all movement
+	# Mountain hexes — block all movement
 	for m: Vector2i in mountains:
-		var bx: float = GRID_OFFSET.x + m.x * TILE_SIZE
-		var by: float = GRID_OFFSET.y + m.y * TILE_SIZE
-		draw_rect(Rect2(Vector2(bx, by), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)),
-				Color(0.18, 0.16, 0.14))
-		# Mountain body — double-peaked silhouette
+		var c := _hex_center(m)
+		draw_colored_polygon(Hex.corners(c), Color(0.18, 0.16, 0.14))
 		draw_polygon(
 			PackedVector2Array([
-				Vector2(bx + 3,  by + 64),
-				Vector2(bx + 22, by + 20),
-				Vector2(bx + 38, by + 36),
-				Vector2(bx + 50, by + 12),
-				Vector2(bx + 66, by + 64),
-			]),
+				c + Vector2(-26, 24), c + Vector2(-8, -10), c + Vector2(4, 6),
+				c + Vector2(14, -16), c + Vector2(30, 24)]),
 			PackedColorArray([Color(0.50, 0.46, 0.40)]))
-		# Snow caps
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(bx + 17, by + 32), Vector2(bx + 22, by + 20), Vector2(bx + 27, by + 32)
-			]),
+		draw_polygon(PackedVector2Array([c + Vector2(-13, -2), c + Vector2(-8, -10), c + Vector2(-3, -2)]),
 			PackedColorArray([Color(0.88, 0.88, 0.93)]))
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(bx + 44, by + 24), Vector2(bx + 50, by + 12), Vector2(bx + 56, by + 24)
-			]),
+		draw_polygon(PackedVector2Array([c + Vector2(8, -8), c + Vector2(14, -16), c + Vector2(20, -8)]),
 			PackedColorArray([Color(0.88, 0.88, 0.93)]))
 
-	# Forest tiles — passable, defenders here take less damage
+	# Forest hexes — cover
 	for f: Vector2i in forests:
-		var fx: float = GRID_OFFSET.x + f.x * TILE_SIZE
-		var fy: float = GRID_OFFSET.y + f.y * TILE_SIZE
-		# Mossy ground tint
-		draw_rect(Rect2(Vector2(fx, fy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)),
-				Color(0.12, 0.28, 0.14, 0.85))
-		# Three little pine triangles
-		var trees := [Vector2(fx + 14, fy + 50), Vector2(fx + 35, fy + 56), Vector2(fx + 52, fy + 48)]
-		var sizes := [12.0, 14.0, 11.0]
-		for i in range(trees.size()):
-			var c: Vector2 = trees[i]
-			var s: float = sizes[i]
-			draw_polygon(
-				PackedVector2Array([
-					Vector2(c.x - s,       c.y),
-					Vector2(c.x + s,       c.y),
-					Vector2(c.x,           c.y - s * 1.7),
-				]),
+		var c := _hex_center(f)
+		draw_colored_polygon(Hex.corners(c), Color(0.12, 0.28, 0.14, 0.95))
+		for t_off: Vector2 in [Vector2(-16, 14), Vector2(2, 18), Vector2(16, 12)]:
+			var tc := c + t_off
+			var sz := 11.0
+			draw_polygon(PackedVector2Array([
+				tc + Vector2(-sz, 0), tc + Vector2(sz, 0), tc + Vector2(0, -sz * 1.7)]),
 				PackedColorArray([Color(0.18, 0.48, 0.22)]))
-			draw_rect(Rect2(Vector2(c.x - 1.5, c.y), Vector2(3.0, 5.0)),
-					Color(0.30, 0.20, 0.12))
-	# Hill tiles — high ground, occupant deals more damage
-	for h: Vector2i in hills:
-		var hx: float = GRID_OFFSET.x + h.x * TILE_SIZE
-		var hy: float = GRID_OFFSET.y + h.y * TILE_SIZE
-		draw_rect(Rect2(Vector2(hx, hy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.28, 0.23, 0.13))
-		draw_polygon(PackedVector2Array([
-			Vector2(hx + 6, hy + 58), Vector2(hx + 35, hy + 24), Vector2(hx + 64, hy + 58)]),
-			PackedColorArray([Color(0.55, 0.45, 0.28)]))
-		draw_string(ThemeDB.fallback_font, Vector2(hx + 4, hy + 16), "↑",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.5))
-	# Lava tiles — burns the occupant each round
-	for l: Vector2i in lava:
-		var lx: float = GRID_OFFSET.x + l.x * TILE_SIZE
-		var ly: float = GRID_OFFSET.y + l.y * TILE_SIZE
-		draw_rect(Rect2(Vector2(lx, ly), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.55, 0.18, 0.06))
-		draw_rect(Rect2(Vector2(lx + 10, ly + 24), Vector2(48, 20)), Color(0.95, 0.5, 0.1))
-		draw_rect(Rect2(Vector2(lx + 20, ly + 30), Vector2(28, 9)), Color(1.0, 0.82, 0.2))
+			draw_rect(Rect2(tc + Vector2(-1.5, 0), Vector2(3.0, 5.0)), Color(0.30, 0.20, 0.12))
 
-	# Objectives drawn on top of the tiles (only while uncaptured)
+	# Hill hexes — high ground
+	for h: Vector2i in hills:
+		var c := _hex_center(h)
+		draw_colored_polygon(Hex.corners(c), Color(0.28, 0.23, 0.13))
+		draw_polygon(PackedVector2Array([
+			c + Vector2(-26, 22), c + Vector2(0, -12), c + Vector2(26, 22)]),
+			PackedColorArray([Color(0.55, 0.45, 0.28)]))
+		draw_string(ThemeDB.fallback_font, c + Vector2(-22, -16), "↑",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.5))
+
+	# Lava hexes — burn the occupant
+	for l: Vector2i in lava:
+		var c := _hex_center(l)
+		draw_colored_polygon(Hex.corners(c), Color(0.55, 0.18, 0.06))
+		draw_circle(c, 16.0, Color(0.95, 0.5, 0.1))
+		draw_circle(c, 8.0, Color(1.0, 0.82, 0.2))
+
+	# Objectives (only while uncaptured) — inner hex marker
 	for obj: Dictionary in objectives:
 		if int(obj["owner"]) != -1:
 			continue
-		var gx: int = obj["grid_pos"].x
-		var gy: int = obj["grid_pos"].y
-		var pad := 6.0
-		var obj_rect := Rect2(
-			GRID_OFFSET + Vector2(gx * TILE_SIZE + pad, gy * TILE_SIZE + pad),
-			Vector2(TILE_SIZE - pad * 2.0 - 1.0, TILE_SIZE - pad * 2.0 - 1.0)
-		)
+		var c := _hex_center(obj["grid_pos"])
+		var inner := PackedVector2Array()
+		for cp: Vector2 in Hex.corners(c):
+			inner.append(c + (cp - c) * 0.6)
 		var fill: Color
 		match int(obj["owner"]):
-			0:  fill = Color(0.20, 0.45, 0.90, 0.70)   # player blue
-			1:  fill = Color(0.88, 0.20, 0.20, 0.70)   # enemy red
-			_:  fill = Color(0.82, 0.75, 0.18, 0.70)   # neutral gold
-		draw_rect(obj_rect, fill)
-		draw_rect(obj_rect, Color(1.0, 1.0, 1.0, 0.75), false, 2.0)
-
-		# Small icon letter in corner: H = heal, R = reinforce
+			0:  fill = Color(0.20, 0.45, 0.90, 0.70)
+			1:  fill = Color(0.88, 0.20, 0.20, 0.70)
+			_:  fill = Color(0.82, 0.75, 0.18, 0.70)
+		draw_colored_polygon(inner, fill)
+		_draw_hex_outline(inner, Color(1.0, 1.0, 1.0, 0.75), 2.0)
 		var icon: String = "H" if obj["type"] == "heal" else "R"
-		draw_string(ThemeDB.fallback_font, GRID_OFFSET + Vector2(
-			gx * TILE_SIZE + pad + 2.0,
-			gy * TILE_SIZE + TILE_SIZE - pad - 2.0
-		), icon, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.85))
+		draw_string(ThemeDB.fallback_font, c + Vector2(-5, 5), icon,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.9))
 
 	# Damage forecast over targetable enemies (attack + ability phases) —
 	# always-on per-tile tag. Note: doesn't show flank bonus, so the hover
@@ -400,7 +372,7 @@ func _draw() -> void:
 			if has_cover and not lethal:
 				txt += " ♣"
 			var col: Color = Color(1.0, 0.35, 0.3) if lethal else Color(1.0, 0.92, 0.4)
-			var base := GRID_OFFSET + Vector2(t.grid_pos.x * TILE_SIZE + 6.0, t.grid_pos.y * TILE_SIZE + 18.0)
+			var base := _hex_center(t.grid_pos) + Vector2(-14.0, -2.0)
 			draw_string(ThemeDB.fallback_font, base + Vector2(1, 1), txt,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0, 0, 0, 0.8))  # shadow
 			draw_string(ThemeDB.fallback_font, base, txt,
@@ -423,20 +395,19 @@ func _draw_enemy_intents() -> void:
 		return
 	if phase not in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
 		return
-	var half := Vector2(TILE_SIZE / 2.0, TILE_SIZE / 2.0)
 	for intent: Dictionary in _enemy_intents:
 		var u: Unit = intent.get("unit")
 		if u == null or not u.is_alive():
 			continue
-		var cell: Vector2i = intent["cell"]
-		var dest := GRID_OFFSET + Vector2(cell.x * TILE_SIZE, cell.y * TILE_SIZE)
-		# Destination marker
-		draw_rect(Rect2(dest + Vector2(4, 4), Vector2(TILE_SIZE - 9, TILE_SIZE - 9)),
-			Color(1.0, 0.55, 0.15, 0.85), false, 2.0)
+		var dc := _hex_center(intent["cell"])
+		# Destination marker — orange hex outline
+		var marker := PackedVector2Array()
+		for cp: Vector2 in Hex.corners(dc):
+			marker.append(dc + (cp - dc) * 0.85)
+		_draw_hex_outline(marker, Color(1.0, 0.55, 0.15, 0.85), 2.0)
 		var target: Unit = intent.get("target")
 		if target != null and target.is_alive():
-			var dc := dest + half
-			var tc := GRID_OFFSET + Vector2(target.grid_pos.x * TILE_SIZE, target.grid_pos.y * TILE_SIZE) + half
+			var tc := _hex_center(target.grid_pos)
 			var col: Color = Color(0.40, 0.92, 0.50, 0.85) if intent.get("kind") == "heal" \
 				else Color(1.0, 0.40, 0.30, 0.90)
 			draw_line(dc, tc, col, 2.0)
@@ -1011,11 +982,11 @@ func _draw_damage_preview() -> void:
 	elif cover:
 		line2 = "IN COVER"
 
-	var origin := GRID_OFFSET + Vector2(_hover_cell.x * TILE_SIZE, _hover_cell.y * TILE_SIZE)
-	# Position tooltip above the tile, or below if near top edge
+	var c := _hex_center(_hover_cell)
+	# Position tooltip above the hex, or below if near the top edge
 	var tip_above := _hover_cell.y >= 1
-	var tip_y: float = origin.y - 38.0 if tip_above else origin.y + TILE_SIZE + 4.0
-	var tip_rect := Rect2(origin.x - 10.0, tip_y, 130.0, 34.0)
+	var tip_y: float = c.y - 52.0 if tip_above else c.y + 22.0
+	var tip_rect := Rect2(c.x - 62.0, tip_y, 130.0, 34.0)
 	draw_rect(tip_rect, Color(0.0, 0.0, 0.0, 0.78))
 	draw_rect(tip_rect, Color(0.95, 0.30, 0.25, 0.9), false, 1.5)
 	draw_string(ThemeDB.fallback_font, Vector2(tip_rect.position.x + 6.0, tip_rect.position.y + 14.0),
@@ -1155,8 +1126,8 @@ func _flash_unit(u: Unit) -> void:
 
 
 func _world_to_grid(screen_pos: Vector2) -> Vector2i:
-	var local := screen_pos - GRID_OFFSET
-	return Vector2i(int(local.x / TILE_SIZE), int(local.y / TILE_SIZE))
+	# Nearest hex centre to the click (local to the grid origin).
+	return Hex.from_local(screen_pos - GRID_OFFSET, GRID_COLS, GRID_ROWS)
 
 func _valid_cell(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < GRID_COLS and cell.y >= 0 and cell.y < GRID_ROWS
@@ -2024,8 +1995,7 @@ func _get_move_cells(unit: Unit) -> Array[Vector2i]:
 		if steps >= range_val:
 			continue
 
-		for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var next := pos + dir
+		for next: Vector2i in Hex.neighbors(pos):
 			if _valid_cell(next) and next not in visited and next not in mountains:
 				visited[next] = true
 				queue.append({"pos": next, "steps": steps + 1})
@@ -2048,8 +2018,7 @@ func _bfs_path(start: Vector2i, end: Vector2i, excluded: Unit) -> Array[Vector2i
 		if pos == end:
 			found = true
 			break
-		for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var next := pos + dir
+		for next: Vector2i in Hex.neighbors(pos):
 			if next in came_from:
 				continue
 			if not _valid_cell(next) or next in mountains:
@@ -2079,7 +2048,7 @@ func _animate_unit_to(unit: Unit, origin: Vector2i, dest: Vector2i) -> Tween:
 		path = [dest]
 	var pts: Array = []
 	for c: Vector2i in path:
-		pts.append(Vector2(c.x * TILE_SIZE + TILE_SIZE / 2.0, c.y * TILE_SIZE + TILE_SIZE / 2.0))
+		pts.append(Hex.center_v(c))
 	return unit.animate_move_along(pts)
 
 func _get_attack_cells(attacker: Unit, targets: Array[Unit]) -> Array[Vector2i]:
@@ -2168,13 +2137,13 @@ func _nearest_capturable_obj(ai_unit: Unit) -> Vector2i:
 				nearest  = obj["grid_pos"]
 	return nearest
 
+# On a hex board there's a single grid distance; both former square-grid
+# metrics now resolve to it, so every range/threat/AI call site stays correct.
 func _manhattan(a: Vector2i, b: Vector2i) -> int:
-	return abs(a.x - b.x) + abs(a.y - b.y)
+	return Hex.distance(a, b)
 
-# Chebyshev (chessboard) distance — used for attack range so a unit can hit
-# diagonally adjacent targets, not just orthogonal ones.
 func _chebyshev(a: Vector2i, b: Vector2i) -> int:
-	return maxi(abs(a.x - b.x), abs(a.y - b.y))
+	return Hex.distance(a, b)
 
 # ---------------------------------------------------------------------------
 # Round helpers

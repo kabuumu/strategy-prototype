@@ -160,10 +160,8 @@ func _refresh_status_badge() -> void:
 
 # ---------------------------------------------------------------------------
 func update_visual_position() -> void:
-	position = Vector2(
-		grid_pos.x * TILE_SIZE + TILE_SIZE / 2,
-		grid_pos.y * TILE_SIZE + TILE_SIZE / 2
-	)
+	# Hex centre, local to _grid_node (the parent already carries GRID_OFFSET).
+	position = Hex.center_v(grid_pos)
 
 # Animate this unit walking along a sequence of world-space points (one per
 # tile, in visit order, starting from the unit's current tile). Returns the
