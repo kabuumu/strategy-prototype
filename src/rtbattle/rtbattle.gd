@@ -96,6 +96,8 @@ const AI_RETARGET_PERIOD: float = 0.6
 
 # UI nodes
 var _status_label: Label
+var _info_panel: Panel
+var _info_label: Label
 var _selection_label: Label
 var _command_label: Label
 var _result_label: Label
@@ -153,6 +155,24 @@ func _build_ui() -> void:
 	_status_label.position = Vector2(20.0, 32.0)
 	_set_passthrough(_status_label)
 	add_child(_status_label)
+
+	# Hover info card — stats for the unit under the cursor (either team)
+	_info_panel = Panel.new()
+	_info_panel.size = Vector2(280.0, 78.0)
+	_info_panel.visible = false
+	_set_passthrough(_info_panel)
+	var ips := StyleBoxFlat.new()
+	ips.bg_color = Color(0.06, 0.07, 0.10, 0.92)
+	for side in ["left", "right", "top", "bottom"]:
+		ips.set("border_width_" + side, 2)
+	ips.border_color = Color(0.5, 0.55, 0.65)
+	_info_panel.add_theme_stylebox_override("panel", ips)
+	add_child(_info_panel)
+	_info_label = Label.new()
+	_info_label.add_theme_font_size_override("font_size", 13)
+	_info_label.position = Vector2(10.0, 8.0)
+	_set_passthrough(_info_label)
+	_info_panel.add_child(_info_label)
 
 	_command_label = Label.new()
 	_command_label.text = "Select blue regiments, queue orders while paused, then press Space."
@@ -535,13 +555,30 @@ func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 func _update_hover() -> void:
 	var mouse: Vector2 = get_viewport().get_mouse_position()
 	var under: RTUnit = _pick_unit_at(mouse, player_units)
-	if under == _hovered_unit:
+	if under == null:
+		under = _pick_unit_at(mouse, enemy_units)
+	if under != _hovered_unit:
+		if _hovered_unit != null and is_instance_valid(_hovered_unit):
+			_hovered_unit.set_hovered(false)
+		_hovered_unit = under
+		if _hovered_unit != null:
+			_hovered_unit.set_hovered(true)
+	_update_info_panel(mouse)
+
+func _update_info_panel(mouse: Vector2) -> void:
+	if _info_panel == null:
 		return
-	if _hovered_unit != null and is_instance_valid(_hovered_unit):
-		_hovered_unit.set_hovered(false)
-	_hovered_unit = under
-	if _hovered_unit != null:
-		_hovered_unit.set_hovered(true)
+	if _hovered_unit == null or not is_instance_valid(_hovered_unit) or not _hovered_unit.is_alive():
+		_info_panel.visible = false
+		return
+	_info_label.text = _hovered_unit.describe()
+	_info_label.modulate = (Color(0.78, 0.86, 1.0) if _hovered_unit.team == 0 else Color(1.0, 0.78, 0.74))
+	var vs := get_viewport().get_visible_rect().size
+	var pos := mouse + Vector2(18.0, 18.0)
+	pos.x = clamp(pos.x, 0.0, vs.x - _info_panel.size.x)
+	pos.y = clamp(pos.y, 0.0, vs.y - _info_panel.size.y)
+	_info_panel.position = pos
+	_info_panel.visible = true
 
 # ---------------------------------------------------------------------------
 # Drag-box helpers

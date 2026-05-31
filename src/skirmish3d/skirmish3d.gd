@@ -207,6 +207,8 @@ var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
 var _command_label: Label
+var _info_panel: Panel
+var _info_label: Label
 var _result_label: Label
 var _restart_hint_label: Label
 var _drag_box: ColorRect
@@ -630,6 +632,27 @@ func _build_ui() -> void:
 	_selection_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_selection_label)
 
+	# Hover info card — shows stats for the unit under the cursor (any team).
+	_info_panel = Panel.new()
+	_info_panel.size = Vector2(280.0, 96.0)
+	_info_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_info_panel.visible = false
+	var ips := StyleBoxFlat.new()
+	ips.bg_color = Color(0.06, 0.07, 0.10, 0.92)
+	for side in ["left", "right", "top", "bottom"]:
+		ips.set("border_width_" + side, 2)
+	ips.border_color = Color(0.5, 0.55, 0.65)
+	for c in ["corner_radius_top_left", "corner_radius_top_right", "corner_radius_bottom_left", "corner_radius_bottom_right"]:
+		ips.set(c, 6)
+	_info_panel.add_theme_stylebox_override("panel", ips)
+	_ui.add_child(_info_panel)
+	_info_label = Label.new()
+	_info_label.add_theme_font_size_override("font_size", 13)
+	_info_label.position = Vector2(10.0, 8.0)
+	_info_label.size = Vector2(260.0, 80.0)
+	_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_info_panel.add_child(_info_label)
+
 	_result_label = Label.new()
 	_result_label.add_theme_font_size_override("font_size", 44)
 	_result_label.position = Vector2(420.0, 290.0)
@@ -1027,14 +1050,33 @@ func _apply_selection(units: Array[SkirmishUnit3D], additive: bool) -> void:
 
 func _update_hover() -> void:
 	var mouse: Vector2 = get_viewport().get_mouse_position()
+	# Hover own units first, then enemies — so you can inspect either side.
 	var under := _pick_unit_at_screen(mouse, player_units, PICK_SCREEN_RADIUS)
-	if under == hovered_unit:
+	if under == null:
+		under = _pick_unit_at_screen(mouse, enemy_units, PICK_SCREEN_RADIUS)
+	if under != hovered_unit:
+		if hovered_unit != null and is_instance_valid(hovered_unit):
+			hovered_unit.set_hovered(false)
+		hovered_unit = under
+		if hovered_unit != null:
+			hovered_unit.set_hovered(true)
+	_update_info_panel(mouse)
+
+func _update_info_panel(mouse: Vector2) -> void:
+	if _info_panel == null:
 		return
-	if hovered_unit != null and is_instance_valid(hovered_unit):
-		hovered_unit.set_hovered(false)
-	hovered_unit = under
-	if hovered_unit != null:
-		hovered_unit.set_hovered(true)
+	if hovered_unit == null or not is_instance_valid(hovered_unit) or not hovered_unit.is_alive():
+		_info_panel.visible = false
+		return
+	_info_label.text = hovered_unit.describe()
+	_info_label.modulate = (Color(0.78, 0.86, 1.0) if hovered_unit.team == 0 else Color(1.0, 0.78, 0.74))
+	# Follow the cursor, clamped on-screen
+	var vs := get_viewport().get_visible_rect().size
+	var pos := mouse + Vector2(18.0, 18.0)
+	pos.x = clamp(pos.x, 0.0, vs.x - _info_panel.size.x)
+	pos.y = clamp(pos.y, 0.0, vs.y - _info_panel.size.y)
+	_info_panel.position = pos
+	_info_panel.visible = true
 
 func _ground_hit_from_screen(screen: Vector2) -> Vector3:
 	if _camera == null:
