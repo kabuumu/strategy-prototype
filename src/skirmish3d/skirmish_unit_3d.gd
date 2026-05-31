@@ -57,6 +57,17 @@ var routing: bool = false
 var _charge_ready: bool = false   # cavalry impact bonus armed while closing
 var facing: Vector3 = Vector3.RIGHT   # xz heading the regiment is turned toward
 
+# Command stances/abilities
+var guarding: bool = false        # Shield Wall: hold ground, take much less damage
+var _volley_ready: bool = false   # Volley: next ranged attack hits far harder
+
+func set_guard(v: bool) -> void:
+	guarding = v
+
+func arm_volley() -> void:
+	if is_ranged:
+		_volley_ready = true
+
 var _body: MeshInstance3D
 var _select_ring: MeshInstance3D
 var _hover_ring: MeshInstance3D
@@ -436,8 +447,8 @@ func _expected_alive_count() -> int:
 func take_damage(amount: int) -> void:
 	if hp <= 0:
 		return
-	# Terrain cover reduces incoming damage (e.g. forest)
-	amount = max(1, int(round(amount * terrain_def_mult)))
+	# Terrain cover + Shield Wall stance reduce incoming damage
+	amount = max(1, int(round(amount * terrain_def_mult * (0.55 if guarding else 1.0))))
 	hp = max(0, hp - amount)
 	_refresh_hp_bar()
 	_flash_hit()
@@ -535,6 +546,9 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		Order.IDLE:
 			pass
 
+	if guarding:
+		want_move = false   # Shield Wall holds the line
+
 	if want_move:
 		var step: Vector3 = move_intent.normalized() * move_speed_world * terrain_speed_mult * delta
 		if order == Order.MOVE and step.length() > move_intent.length():
@@ -564,6 +578,9 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 				_charge_ready = false
 			var arc := _arc_against(attack_target)   # 1.0 front / 1.3 flank / 1.6 rear
 			mult *= arc
+			if _volley_ready and is_ranged:
+				mult *= 2.0   # Volley: concentrated ranged barrage
+				_volley_ready = false
 			var scaled: int = max(1, int(round(
 				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)) * mult
 			)))
