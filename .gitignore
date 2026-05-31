@@ -3,3 +3,6 @@
 
 # Build output
 build/
+
+# Local MCP server config (contains machine-specific absolute paths)
+.mcp.json

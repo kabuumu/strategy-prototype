@@ -10,9 +10,8 @@ var max_hp: int = 100
 var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false
 
-var _body: ColorRect
+var _body: Sprite2D
 var _hp_bar: ColorRect
-var _label: Label
 
 # ---------------------------------------------------------------------------
 func setup(type: String, p_team: int, pos: Vector2i) -> void:
@@ -27,12 +26,7 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 	_build_visuals(udata)
 	update_visual_position()
 
-func _build_visuals(udata: Dictionary) -> void:
-	var color: Color = udata["color"]
-	# Enemies get a red tint so they're visually distinct
-	if team == 1:
-		color = color.lerp(Color(0.9, 0.2, 0.2), 0.45)
-
+func _build_visuals(_udata: Dictionary) -> void:
 	# Team stripe above the body
 	var stripe := ColorRect.new()
 	stripe.size     = Vector2(52.0, 5.0)
@@ -40,20 +34,14 @@ func _build_visuals(udata: Dictionary) -> void:
 	stripe.color    = Color(0.2, 0.5, 1.0) if team == 0 else Color(1.0, 0.2, 0.2)
 	add_child(stripe)
 
-	# Main body
-	_body = ColorRect.new()
-	_body.size     = Vector2(52.0, 52.0)
-	_body.position = Vector2(-26.0, -26.0)
-	_body.color    = color
+	# Main body — pixel-art sprite (class by silhouette, team by palette)
+	var team_name: String = "player" if team == 0 else "enemy"
+	var tex: Texture2D = load("res://assets/units/%s_%s.png" % [unit_type, team_name])
+	_body = Sprite2D.new()
+	_body.texture        = tex
+	_body.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # crisp pixels
+	_body.scale          = Vector2(1.7, 1.7)                  # 32px → ~54px
 	add_child(_body)
-
-	# Unit-type initial
-	_label = Label.new()
-	_label.text     = udata["name"][0]
-	_label.position = Vector2(-8.0, -14.0)
-	_label.add_theme_font_size_override("font_size", 22)
-	_label.modulate = Color(1.0, 1.0, 1.0, 0.95)
-	add_child(_label)
 
 	# HP bar background
 	var hp_bg := ColorRect.new()
@@ -79,6 +67,31 @@ func update_visual_position() -> void:
 func take_damage(amount: int) -> void:
 	hp = max(0, hp - amount)
 	_refresh_hp_bar()
+	_spawn_damage_number(amount)
+	_flash_hit()
+
+# Floating damage number that drifts up and fades
+func _spawn_damage_number(amount: int) -> void:
+	var lbl := Label.new()
+	lbl.text = str(amount)
+	lbl.add_theme_font_size_override("font_size", 20)
+	lbl.modulate = Color(1.0, 0.85, 0.2)
+	lbl.position = Vector2(-12.0, -34.0)
+	lbl.z_index  = 100
+	add_child(lbl)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:y", -58.0, 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.7).set_delay(0.15)
+	tw.chain().tween_callback(lbl.queue_free)
+
+# Quick red flash on the sprite (independent of the unit's acted/dead tint)
+func _flash_hit() -> void:
+	if not _body:
+		return
+	_body.modulate = Color(1.8, 0.5, 0.5)
+	var tw := create_tween()
+	tw.tween_property(_body, "modulate", Color(1.0, 1.0, 1.0), 0.25)
 
 func _refresh_hp_bar() -> void:
 	var ratio: float = float(hp) / float(max_hp)

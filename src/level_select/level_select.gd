@@ -10,24 +10,28 @@ const TYPE_COLORS: Dictionary = {
 	"battle":       Color(0.80, 0.28, 0.28),
 	"elite_battle": Color(0.55, 0.10, 0.65),
 	"gain_unit":    Color(0.25, 0.55, 0.95),
+	"shop":         Color(0.85, 0.70, 0.20),
 	"heal":         Color(0.20, 0.72, 0.35)
 }
 const TYPE_LABELS: Dictionary = {
 	"battle":       "Battle",
 	"elite_battle": "Elite!",
 	"gain_unit":    "+Unit",
+	"shop":         "Shop",
 	"heal":         "Heal"
 }
 const TYPE_DESC: Dictionary = {
 	"battle":       "Standard battle",
 	"elite_battle": "Harder battle, tougher enemies",
 	"gain_unit":    "Choose a new unit",
-	"heal":         "Gain a free Scout"
+	"shop":         "Spend gold on heals and units",
+	"heal":         "Heal all units to full"
 }
 
 # ---------------------------------------------------------------------------
 var _node_buttons: Array = []
 var _roster_label: Label
+var _gold_label: Label
 var _depth_label: Label
 var _popup: Control = null
 
@@ -127,6 +131,12 @@ func _build_hud() -> void:
 	_roster_label.position = Vector2(12.0, 678.0)
 	add_child(_roster_label)
 
+	_gold_label = Label.new()
+	_gold_label.add_theme_font_size_override("font_size", 16)
+	_gold_label.modulate = Color(0.95, 0.82, 0.25)
+	_gold_label.position = Vector2(12.0, 654.0)
+	add_child(_gold_label)
+
 	_depth_label = Label.new()
 	_depth_label.add_theme_font_size_override("font_size", 15)
 	_depth_label.modulate = Color(0.70, 0.70, 0.70)
@@ -170,6 +180,7 @@ func _refresh() -> void:
 		btn.add_theme_stylebox_override("disabled", style)
 
 	_roster_label.text = "Roster: " + _roster_text()
+	_gold_label.text   = "Gold: %d" % GameManager.gold
 	_depth_label.text  = "Tier %d / %d" % [cur_tier, GameManager.MAP_TIERS]
 
 	if cur_tier >= GameManager.MAP_TIERS:
@@ -178,13 +189,19 @@ func _refresh() -> void:
 	queue_redraw()
 
 func _roster_text() -> String:
-	var counts: Dictionary = {}
-	for u: String in GameManager.player_roster:
-		counts[u] = counts.get(u, 0) + 1
+	if GameManager.player_roster.is_empty():
+		return "(none)"
 	var parts: Array[String] = []
-	for type_key: String in counts:
-		parts.append("%d× %s" % [counts[type_key], GameManager.UNIT_TYPES[type_key]["name"]])
-	return "  ".join(parts)
+	for entry: Dictionary in GameManager.player_roster:
+		var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
+		var hp: int = int(entry["hp"])
+		var max_hp: int = int(udata["max_hp"])
+		# Flag wounded units so heal nodes read as worthwhile
+		var hp_str: String = "%d/%d" % [hp, max_hp]
+		if hp < max_hp:
+			hp_str += "⚠"
+		parts.append("%s %s" % [udata["name"], hp_str])
+	return "   ".join(parts)
 
 # ---------------------------------------------------------------------------
 # Node interaction
@@ -202,9 +219,12 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":
 			_show_unit_select_popup()
+		"shop":
+			_show_shop_popup()
 		"heal":
-			GameManager.add_unit("scout")
-			_show_toast("Gained a free Scout!", Color(0.20, 0.72, 0.35))
+			GameManager.heal_roster()
+			_refresh()
+			_show_toast("Party fully healed!", Color(0.20, 0.72, 0.35))
 		_:
 			_refresh()
 
@@ -261,6 +281,103 @@ func _on_unit_chosen(unit_type: String) -> void:
 	var name_str: String = GameManager.UNIT_TYPES[unit_type]["name"]
 	var color: Color = GameManager.UNIT_TYPES[unit_type]["color"]
 	_show_toast("Added %s to your roster!" % name_str, color)
+
+# ---------------------------------------------------------------------------
+# Shop popup — spend gold; stays open for multiple purchases until "Leave"
+# ---------------------------------------------------------------------------
+func _show_shop_popup() -> void:
+	_popup = Panel.new()
+	_popup.position = Vector2(190.0, 150.0)
+	_popup.size = Vector2(900.0, 420.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.12, 0.10, 0.05, 0.97)
+	for side in ["left", "right", "top", "bottom"]:
+		style.set("border_width_" + side, 2)
+	style.border_color = Color(0.85, 0.70, 0.20)
+	for corner in ["corner_radius_top_left", "corner_radius_top_right",
+			"corner_radius_bottom_left", "corner_radius_bottom_right"]:
+		style.set(corner, 8)
+	_popup.add_theme_stylebox_override("panel", style)
+	add_child(_popup)
+	_populate_shop()
+
+func _populate_shop() -> void:
+	for child in _popup.get_children():
+		child.queue_free()
+
+	var title := Label.new()
+	title.text = "Shop"
+	title.add_theme_font_size_override("font_size", 24)
+	title.modulate = Color(1.0, 0.88, 0.35)
+	title.position = Vector2(30.0, 16.0)
+	_popup.add_child(title)
+
+	var gold_lbl := Label.new()
+	gold_lbl.text = "Gold: %d" % GameManager.gold
+	gold_lbl.add_theme_font_size_override("font_size", 18)
+	gold_lbl.modulate = Color(0.95, 0.82, 0.25)
+	gold_lbl.position = Vector2(740.0, 20.0)
+	_popup.add_child(gold_lbl)
+
+	# Heal party
+	var heal_btn := _make_shop_button(
+		"Heal Party to Full\n\n%d gold" % GameManager.SHOP_HEAL_COST,
+		Vector2(30.0, 70.0), Vector2(260.0, 150.0),
+		Color(0.20, 0.55, 0.30), GameManager.gold >= GameManager.SHOP_HEAL_COST)
+	heal_btn.pressed.connect(_on_shop_heal)
+	_popup.add_child(heal_btn)
+
+	# Buy a unit (one button per class)
+	var keys := GameManager.UNIT_TYPES.keys()
+	for i in range(keys.size()):
+		var utype: String = keys[i]
+		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+		var can_afford := GameManager.gold >= GameManager.SHOP_UNIT_COST
+		var btn := _make_shop_button(
+			"Buy %s\n\nHP:%d Mv:%d Rng:%d Dmg:%d\n\n%d gold" % [
+				udata["name"], udata["max_hp"], udata["move_range"],
+				udata["attack_range"], udata["damage"], GameManager.SHOP_UNIT_COST],
+			Vector2(310.0 + i * 195.0, 70.0), Vector2(180.0, 230.0),
+			udata["color"].darkened(0.1), can_afford)
+		btn.pressed.connect(_on_shop_buy_unit.bind(utype))
+		_popup.add_child(btn)
+
+	var leave := Button.new()
+	leave.text = "Leave"
+	leave.position = Vector2(30.0, 340.0)
+	leave.size = Vector2(260.0, 50.0)
+	leave.add_theme_font_size_override("font_size", 18)
+	leave.pressed.connect(func() -> void:
+		_popup.queue_free()
+		_popup = null
+		_refresh())
+	_popup.add_child(leave)
+
+func _make_shop_button(txt: String, pos: Vector2, sz: Vector2, color: Color, enabled: bool) -> Button:
+	var btn := Button.new()
+	btn.text = txt
+	btn.position = pos
+	btn.size = sz
+	btn.disabled = not enabled
+	btn.add_theme_font_size_override("font_size", 15)
+	btn.add_theme_stylebox_override("normal",   _circle_style(color, 8))
+	btn.add_theme_stylebox_override("hover",    _circle_style(color.lightened(0.15), 8))
+	btn.add_theme_stylebox_override("pressed",  _circle_style(color.darkened(0.25), 8))
+	btn.add_theme_stylebox_override("disabled", _circle_style(color.darkened(0.55), 8))
+	return btn
+
+func _on_shop_heal() -> void:
+	if GameManager.spend_gold(GameManager.SHOP_HEAL_COST):
+		GameManager.heal_roster()
+		_show_toast("Party healed!", Color(0.30, 0.85, 0.45))
+		_populate_shop()
+
+func _on_shop_buy_unit(unit_type: String) -> void:
+	if GameManager.spend_gold(GameManager.SHOP_UNIT_COST):
+		GameManager.add_unit(unit_type)
+		var name_str: String = GameManager.UNIT_TYPES[unit_type]["name"]
+		_show_toast("Bought %s!" % name_str, GameManager.UNIT_TYPES[unit_type]["color"])
+		_populate_shop()
 
 # ---------------------------------------------------------------------------
 # Toast / Victory
