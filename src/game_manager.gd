@@ -69,9 +69,9 @@ func _generate_map() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
-	# Build tier sizes: first tier 2–3, middle tiers 2–5, final tier always 1
+	# Tier 0 always starts as a single central node; middle tiers vary 2-5; final tier = 1 (boss)
 	var sizes: Array = []
-	sizes.append(rng.randi_range(2, 3))
+	sizes.append(1)
 	for _t in range(MAP_TIERS - 2):
 		sizes.append(rng.randi_range(2, 5))
 	sizes.append(1)

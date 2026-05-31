@@ -108,8 +108,10 @@ func _draw() -> void:
 			draw_rect(rect, color)
 			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.85), false, 1.5)
 
-	# Objectives drawn on top of the tiles
+	# Objectives drawn on top of the tiles (only while uncaptured)
 	for obj: Dictionary in objectives:
+		if int(obj["owner"]) != -1:
+			continue
 		var gx: int = obj["grid_pos"].x
 		var gy: int = obj["grid_pos"].y
 		var pad := 6.0
