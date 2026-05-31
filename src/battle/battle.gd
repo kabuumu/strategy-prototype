@@ -672,7 +672,7 @@ func _ai_act(ai_unit: Unit) -> void:
 		_check_capture(ai_unit)
 		# Still attack if a player unit happens to be in range
 		if combat_target != null and \
-				_manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+				_chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 			_do_attack(ai_unit, combat_target)
 		return
 
@@ -680,7 +680,7 @@ func _ai_act(ai_unit: Unit) -> void:
 	if combat_target == null:
 		return
 
-	if _manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 		_do_attack(ai_unit, combat_target)
 		return
 
@@ -689,7 +689,7 @@ func _ai_act(ai_unit: Unit) -> void:
 		ai_unit.grid_pos = best
 		ai_unit.update_visual_position()
 	_check_capture(ai_unit)
-	if _manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 		_do_attack(ai_unit, combat_target)
 
 # ---------------------------------------------------------------------------
@@ -728,7 +728,7 @@ func _get_attack_cells(attacker: Unit, targets: Array[Unit]) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	var range_val := attacker.get_attack_range()
 	for t: Unit in targets:
-		if t.is_alive() and _manhattan(attacker.grid_pos, t.grid_pos) <= range_val:
+		if t.is_alive() and _chebyshev(attacker.grid_pos, t.grid_pos) <= range_val:
 			cells.append(t.grid_pos)
 	return cells
 
@@ -789,6 +789,11 @@ func _nearest_capturable_obj(ai_unit: Unit) -> Vector2i:
 
 func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return abs(a.x - b.x) + abs(a.y - b.y)
+
+# Chebyshev (chessboard) distance — used for attack range so a unit can hit
+# diagonally adjacent targets, not just orthogonal ones.
+func _chebyshev(a: Vector2i, b: Vector2i) -> int:
+	return maxi(abs(a.x - b.x), abs(a.y - b.y))
 
 # ---------------------------------------------------------------------------
 # Round helpers
