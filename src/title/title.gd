@@ -40,6 +40,11 @@ func _build_ui() -> void:
 	_add_menu_button("New Game", Vector2(490.0, new_game_y), Vector2(300.0, 64.0),
 		Color(0.18, 0.36, 0.65), _on_new_game)
 
+	# Skirmish (real-time) — self-contained battle mode, no campaign state.
+	var skirmish_y: float = new_game_y + 84.0
+	_add_menu_button("Skirmish (Real-Time)", Vector2(490.0, skirmish_y), Vector2(300.0, 56.0),
+		Color(0.45, 0.30, 0.62), _on_skirmish)
+
 	if not has_save:
 		_build_meta_panel()
 
@@ -94,6 +99,11 @@ func _on_continue() -> void:
 		GameManager.reset()
 		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
+func _on_skirmish() -> void:
+	# Skirmish is a self-contained battle scene — no campaign state is
+	# touched, so the player can dip in and out without losing a run.
+	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
+
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the
 # title screen rewards repeat play. Hidden entirely on first launch.
@@ -106,13 +116,13 @@ func _build_meta_panel() -> void:
 
 	var panel := ColorRect.new()
 	panel.color    = Color(0.10, 0.12, 0.18, 0.92)
-	panel.position = Vector2(440.0, 460.0)
-	panel.size     = Vector2(400.0, 170.0)
+	panel.position = Vector2(440.0, 510.0)
+	panel.size     = Vector2(400.0, 150.0)
 	add_child(panel)
 
 	var border := ColorRect.new()
 	border.color    = Color(0.30, 0.32, 0.40, 1.0)
-	border.position = Vector2(440.0, 460.0)
+	border.position = Vector2(440.0, 510.0)
 	border.size     = Vector2(400.0, 2.0)
 	add_child(border)
 
@@ -120,10 +130,10 @@ func _build_meta_panel() -> void:
 	header.text = "PROGRESS"
 	header.add_theme_font_size_override("font_size", 14)
 	header.modulate = Color(0.85, 0.85, 0.45)
-	header.position = Vector2(456.0, 470.0)
+	header.position = Vector2(456.0, 520.0)
 	add_child(header)
 
-	var y: float = 494.0
+	var y: float = 544.0
 	if has_last_run:
 		var prefix: String = ("Cleared the campaign!" if GameManager.last_run_won
 			else "Reached tier %d / %d" % [GameManager.last_run_tier_reached, GameManager.MAP_TIERS])
