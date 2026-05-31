@@ -54,6 +54,7 @@ const STUN_COLOR := Color(0.75, 0.55, 1.0)
 var player_units: Array[Unit] = []
 var enemy_units:  Array[Unit] = []
 var _grid_node:   Node2D
+var _hurt_overlay: ColorRect
 
 # ---------------------------------------------------------------------------
 # Objective runtime state
@@ -377,6 +378,15 @@ func _build_ui() -> void:
 	_grid_node          = Node2D.new()
 	_grid_node.position = GRID_OFFSET
 	add_child(_grid_node)
+
+	# Hurt overlay — full-grid red flash when the player takes damage.
+	# Sits above the grid but below the side panel; alpha is tweened from 0.
+	_hurt_overlay              = ColorRect.new()
+	_hurt_overlay.color        = Color(0.85, 0.10, 0.10, 0.0)
+	_hurt_overlay.position     = Vector2(0.0, 0.0)
+	_hurt_overlay.size         = Vector2(PANEL_X, 720.0)
+	_hurt_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hurt_overlay)
 
 	var panel_bg := ColorRect.new()
 	panel_bg.color    = Color(0.10, 0.10, 0.15)
@@ -1009,8 +1019,9 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		_damage_dealt_by[aid] = int(_damage_dealt_by.get(aid, 0)) + dmg
 	else:
 		_damage_taken_total += dmg
-	Sfx.play("attack")
-	Sfx.play("hit")
+		# Enemy hit a player unit — extra "hit" cue + red flash, intensity ∝ damage.
+		Sfx.play("hit")
+		_flash_hurt(dmg, defender.max_hp)
 	if res["crit"]:
 		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
 		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
@@ -1086,6 +1097,21 @@ func _shake_grid(amount: float) -> void:
 		tw.tween_property(_grid_node, "position",
 			GRID_OFFSET + Vector2(randf_range(-amount, amount), randf_range(-amount, amount)), 0.03)
 	tw.tween_property(_grid_node, "position", GRID_OFFSET, 0.04)
+
+# Red flash over the grid when the player takes a hit. Intensity scales
+# with the proportion of max-HP just lost (capped) so chip damage barely
+# registers but a fat crit reads as a screen punch.
+func _flash_hurt(dmg: int, defender_max_hp: int) -> void:
+	if _hurt_overlay == null:
+		return
+	var ratio: float = 0.0
+	if defender_max_hp > 0:
+		ratio = clamp(float(dmg) / float(defender_max_hp), 0.0, 1.0)
+	# Map 0..1 ratio onto 0.08..0.30 alpha so even small hits are visible.
+	var peak: float = 0.08 + ratio * 0.22
+	var tw := create_tween()
+	tw.tween_property(_hurt_overlay, "color:a", peak, 0.05)
+	tw.tween_property(_hurt_overlay, "color:a", 0.0,  0.32)
 
 # Kill-feel punch: hard shake plus a brief slow-mo so the moment lands.
 # Uses an ignore_time_scale timer so 0.20 seconds of real time always pass
