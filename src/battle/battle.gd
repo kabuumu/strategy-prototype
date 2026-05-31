@@ -112,6 +112,7 @@ var _show_threat: bool = true
 var _fast_mode: bool = false
 const FAST_MULT: float = 2.0
 var _speed_badge: Label
+var _relics_label: Label
 
 # Battle stats — tracked per fight so the victory screen can show a
 # proper scoreboard (turns, MVP, damage dealt/taken, kills).
@@ -404,6 +405,15 @@ func _build_ui() -> void:
 	_speed_badge.position = Vector2(1280.0 - 60.0, 26.0)
 	add_child(_speed_badge)
 
+	# Relics strip — read-only reminder of which run-long passives are active,
+	# so the player can interpret damage forecasts and HP totals at a glance.
+	_relics_label = _make_label(11, Color(0.78, 0.70, 0.95))
+	_relics_label.position      = Vector2(PANEL_X + 20.0, 50.0)
+	_relics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_relics_label.size          = Vector2(480.0, 14.0)
+	add_child(_relics_label)
+	_refresh_relics_label()
+
 	_unit_info_label               = _make_label(14, Color(0.80, 0.90, 0.80))
 	_unit_info_label.position      = Vector2(PANEL_X + 20.0, 66.0)
 	_unit_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -454,6 +464,18 @@ func _build_ui() -> void:
 	_log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_log_label.size          = Vector2(480.0, 82.0)
 	add_child(_log_label)
+
+func _refresh_relics_label() -> void:
+	if _relics_label == null:
+		return
+	if GameManager.relics.is_empty():
+		_relics_label.text = ""
+		return
+	var parts: PackedStringArray = []
+	for id: String in GameManager.relics:
+		if GameManager.RELICS.has(id):
+			parts.append("◆ " + String(GameManager.RELICS[id]["name"]))
+	_relics_label.text = "Relics:  " + "   ".join(parts)
 
 func _build_unit_legend() -> void:
 	var header := _make_label(12, Color(0.50, 0.50, 0.55))
