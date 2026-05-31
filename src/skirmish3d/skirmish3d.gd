@@ -153,6 +153,9 @@ var _mountains: Array[Vector2i] = []
 var _forests: Array[Vector2i] = []
 var _hills: Array[Vector2i] = []
 var _lava: Array[Vector2i] = []
+# Terrain features placed at world positions on the continuous ground.
+# Each: { "pos": Vector3, "type": String, "radius": float }
+var _features: Array = []
 
 var _camera: Camera3D
 var _ground: MeshInstance3D
@@ -207,6 +210,8 @@ var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
 var _command_label: Label
+var _info_panel: Panel
+var _info_label: Label
 var _result_label: Label
 var _restart_hint_label: Label
 var _drag_box: ColorRect
@@ -227,46 +232,44 @@ func _ready() -> void:
 			_command_label.text = "DEPLOYMENT — right-click to position your regiments, then press ENTER to begin"
 	_refresh_ui()
 
+# Feature effect radii (gameplay) by type.
+const FEATURE_RADIUS: Dictionary = {
+	"mountain": 4.5, "forest": 5.0, "hill": 4.5, "lava": 4.0,
+}
+
 func _generate_terrain() -> void:
-	_mountains.clear()
-	_forests.clear()
-	_hills.clear()
-	_lava.clear()
+	_features.clear()
 	var tier: int = clampi(GameManager.current_tier, 0, GameManager.MAP_TIERS - 1)
 	_biome = GameManager.biome_for_tier(tier)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(tier * 127 + 31)
 	var mtn: Vector2i = _biome.get("mtn", Vector2i(2, 3))
 
-	var reserved: Array[Vector2i] = []
-	for z in [1, 5, 9]:
-		reserved.append(Vector2i(1, z))
-		reserved.append(Vector2i(TERRAIN_COLS - 2, z))
-
-	var col_lo: int = 2
-	var col_hi: int = TERRAIN_COLS - 3
-	var cluster_count: int = rng.randi_range(mtn.x, mtn.y) + 2
-	for _c in range(cluster_count):
-		var seed_cell := Vector2i(rng.randi_range(col_lo, col_hi), rng.randi_range(0, TERRAIN_ROWS - 1))
-		if seed_cell not in reserved and seed_cell not in _mountains:
-			_mountains.append(seed_cell)
-
-		var growth: int = rng.randi_range(1, 3)
-		for _g in range(growth):
-			var candidates: Array[Vector2i] = []
-			for mc: Vector2i in _mountains:
-				for adj: Vector2i in Hex.neighbors(mc):
-					if _valid_terrain_cell(adj) and adj.x >= col_lo and adj.x <= col_hi \
-							and adj not in _mountains and adj not in reserved:
-						candidates.append(adj)
-			if not candidates.is_empty():
-				_mountains.append(candidates[rng.randi() % candidates.size()])
-
-	var taken: Array[Vector2i] = reserved.duplicate()
-	taken.append_array(_mountains)
-	_place_terrain_cells(rng, _forests, int(_biome.get("forest", 3) * 1.6), taken)
-	_place_terrain_cells(rng, _hills, int(_biome.get("hill", 2) * 1.6), taken)
-	_place_terrain_cells(rng, _lava, int(_biome.get("lava", 0) * 1.6), taken)
+	var want: Dictionary = {
+		"mountain": rng.randi_range(mtn.x, mtn.y) + 1,
+		"forest":   int(_biome.get("forest", 3) * 1.4),
+		"hill":     int(_biome.get("hill", 2) * 1.4),
+		"lava":     int(_biome.get("lava", 0) * 1.4),
+	}
+	# Place features across the central band, clear of the army spawn flanks
+	# (|x| > 26) and not overlapping each other.
+	for type: String in want:
+		var radius: float = FEATURE_RADIUS[type]
+		var placed := 0
+		var tries := 0
+		while placed < int(want[type]) and tries < 60:
+			tries += 1
+			var x := rng.randf_range(-22.0, 22.0)
+			var z := rng.randf_range(-FIELD_HALF_DEPTH + 2.0, FIELD_HALF_DEPTH - 2.0)
+			var pos := Vector3(x, 0.0, z)
+			var ok := true
+			for f: Dictionary in _features:
+				if pos.distance_to(f["pos"]) < (radius + float(f["radius"])) * 0.8:
+					ok = false
+					break
+			if ok:
+				_features.append({"pos": pos, "type": type, "radius": radius})
+				placed += 1
 
 func _valid_terrain_cell(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < TERRAIN_COLS and cell.y >= 0 and cell.y < TERRAIN_ROWS
@@ -307,7 +310,9 @@ func _build_field() -> void:
 
 	_ground = MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(FIELD_HALF_WIDTH * 2.0, FIELD_HALF_DEPTH * 2.0)
+	# Extend the ground well past the unit clamp bounds so there's no visible
+	# edge — units always stand on a continuous surface.
+	plane.size = Vector2(FIELD_HALF_WIDTH * 2.0 + 24.0, FIELD_HALF_DEPTH * 2.0 + 24.0)
 	_ground.mesh = plane
 	_ground.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_ground.position = Vector3(0.0, 0.0, 0.0)
@@ -399,19 +404,20 @@ func _build_terrain_visuals(world: Node3D) -> void:
 	_terrain_node.name = "ProceduralTerrain"
 	world.add_child(_terrain_node)
 
-	for row in range(TERRAIN_ROWS):
-		for col in range(TERRAIN_COLS):
-			var cell := Vector2i(col, row)
-			var pos: Vector3 = _terrain_cell_world(cell)
-			var color: Color = _terrain_cell_color(cell)
-			_add_hex_patch(pos, color)
-			if cell in _mountains:
-				_add_mountain_cluster(pos, _cell_seed(cell))
-			elif cell in _forests:
-				_add_forest_cluster(pos, _cell_seed(cell))
-			elif cell in _hills:
-				_add_hill(pos, _cell_seed(cell))
-			elif cell in _lava:
+	# The ground is one continuous plane (built in _build_field). Here we just
+	# drop terrain feature props at their world positions.
+	for i in range(_features.size()):
+		var f: Dictionary = _features[i]
+		var pos: Vector3 = f["pos"]
+		var seed: int = i * 1327 + 71
+		match String(f["type"]):
+			"mountain":
+				_add_mountain_cluster(pos, seed)
+			"forest":
+				_add_forest_cluster(pos, seed)
+			"hill":
+				_add_hill(pos, seed)
+			"lava":
 				_add_lava_pool(pos)
 
 func _terrain_cell_world(cell: Vector2i) -> Vector3:
@@ -440,18 +446,24 @@ const MOUNTAIN_SPEED_MULT: float = 0.4
 # every living unit based on the cell it's standing on.
 func _apply_terrain(delta: float) -> void:
 	for u: SkirmishUnit3D in _all_living_units():
-		var cell := _terrain_cell_at_world(u.global_position)
 		u.terrain_def_mult = 1.0
 		u.terrain_atk_mult = 1.0
 		u.terrain_speed_mult = 1.0
-		if cell in _forests:
-			u.terrain_def_mult = FOREST_DEF_MULT
-			u.terrain_speed_mult = FOREST_SPEED_MULT
-		if cell in _hills:
-			u.terrain_atk_mult = HILL_ATK_MULT
-		if cell in _mountains:
-			u.terrain_speed_mult = MOUNTAIN_SPEED_MULT
-		if cell in _lava:
+		var on_lava := false
+		for f: Dictionary in _features:
+			if u.global_position.distance_to(f["pos"]) > float(f["radius"]):
+				continue
+			match String(f["type"]):
+				"forest":
+					u.terrain_def_mult = FOREST_DEF_MULT
+					u.terrain_speed_mult = FOREST_SPEED_MULT
+				"hill":
+					u.terrain_atk_mult = HILL_ATK_MULT
+				"mountain":
+					u.terrain_speed_mult = MOUNTAIN_SPEED_MULT
+				"lava":
+					on_lava = true
+		if on_lava:
 			u._lava_accum += delta
 			if u._lava_accum >= 1.0:
 				u._lava_accum -= 1.0
@@ -629,6 +641,27 @@ func _build_ui() -> void:
 	_selection_label.size = Vector2(1240.0, 30.0)
 	_selection_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_selection_label)
+
+	# Hover info card — shows stats for the unit under the cursor (any team).
+	_info_panel = Panel.new()
+	_info_panel.size = Vector2(280.0, 96.0)
+	_info_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_info_panel.visible = false
+	var ips := StyleBoxFlat.new()
+	ips.bg_color = Color(0.06, 0.07, 0.10, 0.92)
+	for side in ["left", "right", "top", "bottom"]:
+		ips.set("border_width_" + side, 2)
+	ips.border_color = Color(0.5, 0.55, 0.65)
+	for c in ["corner_radius_top_left", "corner_radius_top_right", "corner_radius_bottom_left", "corner_radius_bottom_right"]:
+		ips.set(c, 6)
+	_info_panel.add_theme_stylebox_override("panel", ips)
+	_ui.add_child(_info_panel)
+	_info_label = Label.new()
+	_info_label.add_theme_font_size_override("font_size", 13)
+	_info_label.position = Vector2(10.0, 8.0)
+	_info_label.size = Vector2(260.0, 80.0)
+	_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_info_panel.add_child(_info_label)
 
 	_result_label = Label.new()
 	_result_label.add_theme_font_size_override("font_size", 44)
@@ -1027,14 +1060,33 @@ func _apply_selection(units: Array[SkirmishUnit3D], additive: bool) -> void:
 
 func _update_hover() -> void:
 	var mouse: Vector2 = get_viewport().get_mouse_position()
+	# Hover own units first, then enemies — so you can inspect either side.
 	var under := _pick_unit_at_screen(mouse, player_units, PICK_SCREEN_RADIUS)
-	if under == hovered_unit:
+	if under == null:
+		under = _pick_unit_at_screen(mouse, enemy_units, PICK_SCREEN_RADIUS)
+	if under != hovered_unit:
+		if hovered_unit != null and is_instance_valid(hovered_unit):
+			hovered_unit.set_hovered(false)
+		hovered_unit = under
+		if hovered_unit != null:
+			hovered_unit.set_hovered(true)
+	_update_info_panel(mouse)
+
+func _update_info_panel(mouse: Vector2) -> void:
+	if _info_panel == null:
 		return
-	if hovered_unit != null and is_instance_valid(hovered_unit):
-		hovered_unit.set_hovered(false)
-	hovered_unit = under
-	if hovered_unit != null:
-		hovered_unit.set_hovered(true)
+	if hovered_unit == null or not is_instance_valid(hovered_unit) or not hovered_unit.is_alive():
+		_info_panel.visible = false
+		return
+	_info_label.text = hovered_unit.describe()
+	_info_label.modulate = (Color(0.78, 0.86, 1.0) if hovered_unit.team == 0 else Color(1.0, 0.78, 0.74))
+	# Follow the cursor, clamped on-screen
+	var vs := get_viewport().get_visible_rect().size
+	var pos := mouse + Vector2(18.0, 18.0)
+	pos.x = clamp(pos.x, 0.0, vs.x - _info_panel.size.x)
+	pos.y = clamp(pos.y, 0.0, vs.y - _info_panel.size.y)
+	_info_panel.position = pos
+	_info_panel.visible = true
 
 func _ground_hit_from_screen(screen: Vector2) -> Vector3:
 	if _camera == null:

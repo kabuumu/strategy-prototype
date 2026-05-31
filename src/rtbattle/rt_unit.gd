@@ -200,6 +200,14 @@ func set_hovered(v: bool) -> void:
 	if _hover_ring:
 		_hover_ring.visible = v
 
+# Human-readable stat card for the hover info panel.
+func describe() -> String:
+	var role: String = "Ranged" if is_ranged else "Melee"
+	var side: String = "Your regiment" if team == 0 else "Enemy regiment"
+	return "%s  —  %s\nHP %d / %d\n%s  ·  Dmg %d  ·  Range %d  ·  Speed %d" % [
+		unit_name, side, hp, max_hp, role,
+		damage_per_attack, int(round(attack_range_px)), int(round(move_speed_px))]
+
 # ---------------------------------------------------------------------------
 # Orders
 # ---------------------------------------------------------------------------

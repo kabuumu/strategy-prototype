@@ -439,6 +439,26 @@ func is_selected() -> bool:
 func set_hovered(v: bool) -> void:
 	_hover_ring.visible = v
 
+# Human-readable stat card for the hover info panel.
+func describe() -> String:
+	var role: String = "Ranged" if is_ranged else "Melee"
+	var side: String = "Your regiment" if team == 0 else "Enemy regiment"
+	var lines: Array[String] = []
+	lines.append("%s  —  %s" % [unit_name, side])
+	lines.append("HP %d / %d   ·   ~%d men" % [hp, max_hp, alive_soldier_count()])
+	lines.append("%s  ·  Dmg %d  ·  Range %d" % [role, damage_per_attack, int(round(attack_range_px))])
+	lines.append("Speed %d  ·  Morale %d%%" % [int(round(move_speed_px)), int(round(morale))])
+	var tags: Array[String] = []
+	if routing:
+		tags.append("⚑ ROUTING")
+	if guarding:
+		tags.append("⛨ Shield Wall")
+	if _charge_ready:
+		tags.append("⮞ Charging")
+	if not tags.is_empty():
+		lines.append("  ".join(tags))
+	return "\n".join(lines)
+
 func order_move(target: Vector3) -> void:
 	order = Order.MOVE
 	move_target = target
