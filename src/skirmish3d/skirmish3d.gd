@@ -134,6 +134,10 @@ const CAPTURE_WIN_TIME: float = 12.0
 var _cap_points: Array = []        # [{pos, owner, ring}]
 var _cap_hold: float = 0.0         # seconds one side has held them all
 var _forced_winner: int = -1       # set when a side wins by capture
+# Deployment phase (campaign battles): reposition your regiments before the
+# fight starts. Movement runs, combat/AI are frozen until you press Enter.
+var _deploying: bool = false
+const DEPLOY_X_MAX: float = -3.0   # player deploy zone is the left of this
 var _paused: bool = true
 
 var _drag_active: bool = false
@@ -216,6 +220,11 @@ func _ready() -> void:
 	_build_ui()
 	_spawn_armies()
 	_set_paused(false)
+	# Campaign battles open in a deployment phase: position your regiments first.
+	if _campaign:
+		_deploying = true
+		if _command_label != null:
+			_command_label.text = "DEPLOYMENT — right-click to position your regiments, then press ENTER to begin"
 	_refresh_ui()
 
 func _generate_terrain() -> void:
@@ -769,6 +778,9 @@ func _process(delta: float) -> void:
 	if _paused:
 		_update_hover()
 		return
+	if _deploying:
+		_deploy_tick(delta)
+		return
 
 	var all_units: Array[SkirmishUnit3D] = []
 	all_units.append_array(player_units)
@@ -814,9 +826,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _ended and _campaign and event.keycode in [KEY_R, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_ESCAPE]:
 			_finish_campaign_battle()
 			return
+		if _deploying and event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
+			_begin_battle()
+			return
 		match event.keycode:
 			KEY_SPACE:
-				_set_paused(not _paused)
+				if not _deploying:
+					_set_paused(not _paused)
 			KEY_G:
 				_command_shield_wall()
 			KEY_V:
@@ -858,6 +874,26 @@ func _unhandled_input(event: InputEvent) -> void:
 func _set_paused(v: bool) -> void:
 	_paused = v
 	_refresh_ui()
+
+# During deployment only player regiments move (combat off); they're clamped to
+# the deploy zone. Enemies stand frozen.
+func _deploy_tick(delta: float) -> void:
+	for u: SkirmishUnit3D in player_units:
+		if not u.is_alive():
+			continue
+		u.tick(delta, player_units, false)
+		u.global_position.x = clamp(u.global_position.x, -FIELD_HALF_WIDTH, DEPLOY_X_MAX)
+		u.global_position.z = clamp(u.global_position.z, -FIELD_HALF_DEPTH, FIELD_HALF_DEPTH)
+	_update_hover()
+
+func _begin_battle() -> void:
+	if not _deploying:
+		return
+	_deploying = false
+	for u: SkirmishUnit3D in player_units:
+		u.clear_order()
+	if _command_label != null:
+		_command_label.text = "Battle begins! Select regiments, then right-click to order."
 
 # Command abilities on the current selection.
 func _command_shield_wall() -> void:
@@ -922,6 +958,18 @@ func _end_left_press(mouse: Vector2, _shift: bool) -> void:
 
 func _handle_right_click(mouse: Vector2) -> void:
 	if _ended or selected_units.is_empty():
+		return
+	# Deployment: move-only, clamped to the deploy zone (no attacking yet).
+	if _deploying:
+		var g := _ground_hit_from_screen(mouse)
+		if g == Vector3.INF:
+			return
+		g.x = clamp(g.x, -FIELD_HALF_WIDTH, DEPLOY_X_MAX)
+		g.z = clamp(g.z, -FIELD_HALF_DEPTH, FIELD_HALF_DEPTH)
+		for u: SkirmishUnit3D in selected_units:
+			if u.is_alive():
+				u.order_move(g)
+		_spawn_waypoint(g, Color(0.55, 0.85, 0.95))
 		return
 	var enemy: SkirmishUnit3D = _pick_unit_at_screen(mouse, enemy_units, PICK_SCREEN_RADIUS)
 	if enemy != null:
