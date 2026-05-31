@@ -65,15 +65,35 @@ const FIELD_RECT: Rect2 = Rect2(40.0, 70.0, 1200.0, 580.0)
 
 var player_units: Array = []   # Array[RTUnit]
 var enemy_units:  Array = []
-var selected_unit: RTUnit = null
+var selected_units: Array = []          # Array[RTUnit]
+var _hovered_unit: RTUnit = null
 
 var _paused: bool = true
 var _ended: bool = false
 
-# UI labels
+# Drag-rectangle selection state
+var _drag_active: bool = false
+var _drag_origin: Vector2 = Vector2.ZERO
+var _drag_current: Vector2 = Vector2.ZERO
+var _drag_additive: bool = false        # shift-held → add to selection
+const DRAG_THRESHOLD: float = 8.0       # pixels of motion to count as a drag
+
+# Transient feedback markers — small visual pings spawned when an order is
+# issued. Each is {pos: Vector2, age: float, lifetime: float, color: Color}.
+var _waypoints: Array = []
+
+# Enemy AI re-targeting cadence — every N seconds, idle/lost enemies pick
+# the nearest living player regiment to advance on. Kept slow so orders
+# feel deliberate rather than twitchy.
+var _ai_retarget_timer: float = 0.0
+const AI_RETARGET_PERIOD: float = 0.6
+
+# UI nodes
 var _status_label: Label
 var _selection_label: Label
 var _result_label: Label
+var _restart_hint_label: Label
+var _drag_box_rect: ColorRect
 
 func _ready() -> void:
 	_build_field()
@@ -120,10 +140,10 @@ func _build_ui() -> void:
 	add_child(_status_label)
 
 	var hint := Label.new()
-	hint.text = "SPACE pause  ·  L-click select  ·  R-click move/attack  ·  Esc to menu"
+	hint.text = "SPACE pause  ·  L-click select / drag-box  ·  Shift-click add  ·  R-click move/attack  ·  R restart  ·  Esc menu"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.55, 0.55, 0.65)
-	hint.position = Vector2(620.0, 22.0)
+	hint.position = Vector2(440.0, 22.0)
 	add_child(hint)
 
 	# Bottom strip — selection info
@@ -143,11 +163,32 @@ func _build_ui() -> void:
 	# Centred result banner (hidden until win/lose)
 	_result_label = Label.new()
 	_result_label.add_theme_font_size_override("font_size", 48)
-	_result_label.position = Vector2(420.0, 320.0)
+	_result_label.position = Vector2(420.0, 290.0)
 	_result_label.size     = Vector2(440.0, 80.0)
 	_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_label.visible  = false
 	add_child(_result_label)
+
+	# Restart hint shown beneath the result banner — keeps the post-battle
+	# loop one-keypress short.
+	_restart_hint_label = Label.new()
+	_restart_hint_label.add_theme_font_size_override("font_size", 18)
+	_restart_hint_label.modulate = Color(0.80, 0.80, 0.88)
+	_restart_hint_label.position = Vector2(420.0, 360.0)
+	_restart_hint_label.size     = Vector2(440.0, 30.0)
+	_restart_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_restart_hint_label.text     = "Press R to fight again  ·  Esc to return to menu"
+	_restart_hint_label.visible  = false
+	add_child(_restart_hint_label)
+
+	# Drag-rectangle visual — a thin translucent box rendered while the
+	# player is band-boxing units. Hidden by default.
+	_drag_box_rect              = ColorRect.new()
+	_drag_box_rect.color        = Color(0.85, 0.95, 0.55, 0.16)
+	_drag_box_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_drag_box_rect.visible      = false
+	_drag_box_rect.z_index      = 50
+	add_child(_drag_box_rect)
 
 # ---------------------------------------------------------------------------
 # Army setup — symmetrical mirror skirmish so the mode is self-contained.
@@ -191,13 +232,18 @@ func _spawn_regiment(type: String, team: int, pos: Vector2) -> RTUnit:
 # ---------------------------------------------------------------------------
 func _process(delta: float) -> void:
 	if _ended:
+		_age_waypoints(delta)
+		queue_redraw()
 		return
 	if _paused:
+		_update_hover()
+		queue_redraw()
 		return
 	# All units share a flat neighbour list for cheap collision/separation.
 	var all_units: Array = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
+	_ai_tick(delta)
 	for u: RTUnit in all_units:
 		if u.is_alive():
 			u.tick(delta, all_units)
@@ -209,8 +255,71 @@ func _process(delta: float) -> void:
 				FIELD_RECT.end.x - u.radius)
 		u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius,
 				FIELD_RECT.end.y - u.radius)
+	_age_waypoints(delta)
+	_update_hover()
 	_refresh_ui()
 	_check_end_condition()
+	queue_redraw()
+
+# ---------------------------------------------------------------------------
+# Custom drawing — order feedback (waypoint markers, attack target rings)
+# ---------------------------------------------------------------------------
+func _draw() -> void:
+	# Waypoint markers: a fading circle at the destination so the player can
+	# see at a glance where each move order is heading.
+	for wp: Dictionary in _waypoints:
+		var t: float = clamp(1.0 - wp["age"] / wp["lifetime"], 0.0, 1.0)
+		var c: Color = wp["color"]
+		c.a *= t
+		var rad: float = 10.0 + (1.0 - t) * 8.0
+		draw_arc(wp["pos"], rad, 0.0, TAU, 24, c, 1.5, true)
+		draw_circle(wp["pos"], 2.0, c)
+
+	# Attack target indicator: a red ring around any enemy currently being
+	# attacked by one of the player's selected units.
+	for u: RTUnit in selected_units:
+		if not is_instance_valid(u) or not u.is_alive():
+			continue
+		if u.order != RTUnit.Order.ATTACK or u.attack_target == null \
+				or not u.attack_target.is_alive():
+			continue
+		var tgt: RTUnit = u.attack_target
+		draw_arc(tgt.position, tgt.radius + 5.0, 0.0, TAU, 32,
+				Color(1.0, 0.30, 0.30, 0.70), 2.0, true)
+		# Thin line from attacker to target so the relationship is unambiguous
+		draw_line(u.position, tgt.position, Color(1.0, 0.30, 0.30, 0.35), 1.0, true)
+
+# ---------------------------------------------------------------------------
+# Enemy AI — minimalist "advance and engage". Periodically re-targets any
+# enemy regiment that is idle or whose target has died, so the AI side keeps
+# pressure on without needing per-unit scripting.
+# ---------------------------------------------------------------------------
+func _ai_tick(delta: float) -> void:
+	_ai_retarget_timer -= delta
+	if _ai_retarget_timer > 0.0:
+		return
+	_ai_retarget_timer = AI_RETARGET_PERIOD
+	for u: RTUnit in enemy_units:
+		if not u.is_alive():
+			continue
+		var needs_target: bool = (
+			u.order == RTUnit.Order.IDLE
+			or (u.order == RTUnit.Order.ATTACK and (u.attack_target == null
+					or not u.attack_target.is_alive()))
+		)
+		if not needs_target:
+			continue
+		var nearest: RTUnit = null
+		var best_d: float = INF
+		for p: RTUnit in player_units:
+			if not p.is_alive():
+				continue
+			var d: float = u.position.distance_to(p.position)
+			if d < best_d:
+				nearest = p
+				best_d  = d
+		if nearest != null:
+			u.order_attack(nearest)
 
 # ---------------------------------------------------------------------------
 # Input
@@ -220,43 +329,113 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_SPACE:
 				_set_paused(not _paused)
+			KEY_R:
+				if _ended:
+					get_tree().reload_current_scene()
 			KEY_ESCAPE:
 				get_tree().change_scene_to_file("res://src/title/title.tscn")
 		return
 
-	if event is InputEventMouseButton and event.pressed:
+	if event is InputEventMouseMotion:
+		if _drag_active:
+			_drag_current = event.position
+			_update_drag_box_visual()
+		return
+
+	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			_handle_left_click(event.position)
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.pressed:
+				_begin_left_press(event.position, event.shift_pressed)
+			else:
+				_end_left_press(event.position, event.shift_pressed)
+		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_handle_right_click(event.position)
 
-func _handle_left_click(mouse: Vector2) -> void:
+# Left-click down: start a drag candidate. We don't know yet whether the
+# player will band-box or simply click a unit, so we record the origin and
+# wait for the mouse-up to commit.
+func _begin_left_press(mouse: Vector2, shift: bool) -> void:
 	if _ended:
 		return
-	# Find a friendly regiment under the cursor and select it.
-	var picked: RTUnit = _pick_unit_at(mouse, player_units)
-	if selected_unit != null:
-		selected_unit.set_selected(false)
-	selected_unit = picked
-	if selected_unit != null:
-		selected_unit.set_selected(true)
+	_drag_active   = true
+	_drag_origin   = mouse
+	_drag_current  = mouse
+	_drag_additive = shift
+	_update_drag_box_visual()
+
+func _end_left_press(mouse: Vector2, _shift: bool) -> void:
+	if not _drag_active:
+		return
+	_drag_active = false
+	_drag_box_rect.visible = false
+	if _ended:
+		return
+	var drag_dist: float = mouse.distance_to(_drag_origin)
+	if drag_dist >= DRAG_THRESHOLD:
+		# Band-box select: pick up every friendly unit inside the rect.
+		var rect := _drag_rect_normalized()
+		var picked: Array = []
+		for u: RTUnit in player_units:
+			if u.is_alive() and rect.has_point(u.position):
+				picked.append(u)
+		_apply_selection(picked, _drag_additive)
+	else:
+		# Simple click — pick the unit under the cursor (if any).
+		var picked: RTUnit = _pick_unit_at(mouse, player_units)
+		if picked != null:
+			_apply_selection([picked], _drag_additive)
+		elif not _drag_additive:
+			_apply_selection([], false)
 	_refresh_ui()
 
+func _apply_selection(units: Array, additive: bool) -> void:
+	if not additive:
+		for u: RTUnit in selected_units:
+			if is_instance_valid(u):
+				u.set_selected(false)
+		selected_units.clear()
+	for u: RTUnit in units:
+		if not selected_units.has(u):
+			selected_units.append(u)
+			u.set_selected(true)
+
 func _handle_right_click(mouse: Vector2) -> void:
-	if _ended or selected_unit == null or not selected_unit.is_alive():
+	if _ended or selected_units.is_empty():
 		return
-	# If we clicked on an enemy, attack it; otherwise move to the click point.
+	# If we clicked an enemy, every selected unit attacks it. Otherwise,
+	# spread the selection in a small clump around the target point so they
+	# don't all try to converge on a single pixel and shove each other.
 	var enemy: RTUnit = _pick_unit_at(mouse, enemy_units)
 	if enemy != null:
-		selected_unit.order_attack(enemy)
-	else:
-		# Clamp target inside the field
-		var target := Vector2(
-			clamp(mouse.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0),
-			clamp(mouse.y, FIELD_RECT.position.y + 10.0, FIELD_RECT.end.y - 10.0)
-		)
-		selected_unit.order_move(target)
-	_refresh_ui()
+		for u: RTUnit in selected_units:
+			if u.is_alive():
+				u.order_attack(enemy)
+		_spawn_waypoint(enemy.position, Color(1.0, 0.40, 0.40), 0.6)
+		return
+	var target := Vector2(
+		clamp(mouse.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0),
+		clamp(mouse.y, FIELD_RECT.position.y + 10.0, FIELD_RECT.end.y - 10.0)
+	)
+	# Arrange selected units in a loose ring/line around the click point.
+	var alive_sel: Array = []
+	for u: RTUnit in selected_units:
+		if u.is_alive():
+			alive_sel.append(u)
+	var n: int = alive_sel.size()
+	for i in range(n):
+		var u: RTUnit = alive_sel[i]
+		var dest: Vector2 = target
+		if n > 1:
+			# Spread targets perpendicular to the unit's approach direction.
+			var spread: float = u.radius * 1.6
+			var to_t: Vector2 = (target - u.position).normalized()
+			var perp: Vector2 = Vector2(-to_t.y, to_t.x)
+			var offset_idx: float = float(i) - (float(n) - 1.0) * 0.5
+			dest = target + perp * offset_idx * spread
+			dest.x = clamp(dest.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0)
+			dest.y = clamp(dest.y, FIELD_RECT.position.y + 10.0, FIELD_RECT.end.y - 10.0)
+		u.order_move(dest)
+	_spawn_waypoint(target, Color(0.55, 0.95, 0.55), 0.6)
 
 func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 	var best: RTUnit = null
@@ -269,6 +448,55 @@ func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 			best   = u
 			best_d = d
 	return best
+
+# Mouse-hover highlight on selectable units — gives a clear "this is
+# interactable" affordance, particularly while paused.
+func _update_hover() -> void:
+	var mouse: Vector2 = get_viewport().get_mouse_position()
+	var under: RTUnit = _pick_unit_at(mouse, player_units)
+	if under == _hovered_unit:
+		return
+	if _hovered_unit != null and is_instance_valid(_hovered_unit):
+		_hovered_unit.set_hovered(false)
+	_hovered_unit = under
+	if _hovered_unit != null:
+		_hovered_unit.set_hovered(true)
+
+# ---------------------------------------------------------------------------
+# Drag-box helpers
+# ---------------------------------------------------------------------------
+func _drag_rect_normalized() -> Rect2:
+	var x0: float = min(_drag_origin.x, _drag_current.x)
+	var y0: float = min(_drag_origin.y, _drag_current.y)
+	var x1: float = max(_drag_origin.x, _drag_current.x)
+	var y1: float = max(_drag_origin.y, _drag_current.y)
+	return Rect2(x0, y0, x1 - x0, y1 - y0)
+
+func _update_drag_box_visual() -> void:
+	if not _drag_active or _drag_box_rect == null:
+		return
+	var drag_dist: float = _drag_origin.distance_to(_drag_current)
+	if drag_dist < DRAG_THRESHOLD:
+		_drag_box_rect.visible = false
+		return
+	var r := _drag_rect_normalized()
+	_drag_box_rect.position = r.position
+	_drag_box_rect.size     = r.size
+	_drag_box_rect.visible  = true
+
+# ---------------------------------------------------------------------------
+# Waypoint feedback
+# ---------------------------------------------------------------------------
+func _spawn_waypoint(pos: Vector2, color: Color, lifetime: float) -> void:
+	_waypoints.append({"pos": pos, "age": 0.0, "lifetime": lifetime, "color": color})
+
+func _age_waypoints(delta: float) -> void:
+	var still_alive: Array = []
+	for wp: Dictionary in _waypoints:
+		wp["age"] += delta
+		if wp["age"] < wp["lifetime"]:
+			still_alive.append(wp)
+	_waypoints = still_alive
 
 # ---------------------------------------------------------------------------
 # UI state
@@ -290,8 +518,17 @@ func _refresh_ui() -> void:
 			_status_label.modulate = Color(0.55, 0.95, 0.55)
 
 	if _selection_label != null:
-		if selected_unit != null and selected_unit.is_alive():
-			var u := selected_unit
+		var alive_sel: Array = []
+		for u: RTUnit in selected_units:
+			if is_instance_valid(u) and u.is_alive():
+				alive_sel.append(u)
+		# Drop dead entries from the selection list so it doesn't grow stale
+		if alive_sel.size() != selected_units.size():
+			selected_units = alive_sel
+		if alive_sel.is_empty():
+			_selection_label.text = "No regiment selected — left-click one of your (blue) regiments, drag-box to select many, then right-click to give orders."
+		elif alive_sel.size() == 1:
+			var u: RTUnit = alive_sel[0]
 			var order_txt := "idle"
 			match u.order:
 				RTUnit.Order.MOVE:
@@ -305,11 +542,21 @@ func _refresh_ui() -> void:
 				   u.alive_soldier_count(), u.soldier_count, order_txt]
 			)
 		else:
-			_selection_label.text = "No regiment selected — left-click one of your (blue) units, then right-click to give an order."
+			var total_hp: int = 0
+			var total_max: int = 0
+			for u: RTUnit in alive_sel:
+				total_hp  += u.hp
+				total_max += u.max_hp
+			_selection_label.text = (
+				"%d regiments selected  ·  %d / %d HP combined  ·  right-click to issue group order"
+				% [alive_sel.size(), total_hp, total_max]
+			)
 
 func _on_unit_died(u: RTUnit) -> void:
-	if u == selected_unit:
-		selected_unit = null
+	if selected_units.has(u):
+		selected_units.erase(u)
+	if _hovered_unit == u:
+		_hovered_unit = null
 	# Drop dead units' visuals after a short delay so the death tween plays.
 	var t := get_tree().create_timer(1.2)
 	t.timeout.connect(func():
@@ -348,4 +595,6 @@ func _check_end_condition() -> void:
 			_result_label.text = "DRAW"
 			_result_label.modulate = Color(0.85, 0.85, 0.55)
 		_result_label.visible = true
+	if _restart_hint_label != null:
+		_restart_hint_label.visible = true
 	_refresh_ui()

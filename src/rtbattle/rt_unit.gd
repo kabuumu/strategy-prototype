@@ -55,7 +55,15 @@ var attack_target: RTUnit = null
 var _cooldown: float = 0.0
 var _soldiers: Array = []               # Array[Soldier]
 var _ring: ColorRect                    # selection indicator (initially hidden)
+var _hover_ring: ColorRect              # faint hover indicator
+var _hp_bar_bg: ColorRect
+var _hp_bar_fill: ColorRect
 var _selected: bool = false
+
+# How far away an idle regiment will spot enemies for the auto-engage
+# "stand and defend" stance. Derived per-regiment in setup() from attack
+# range, with a small buffer so units don't twitch in/out of engagement.
+var engage_radius_px: float = 100.0
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -76,6 +84,9 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	is_ranged         = attack_range_px > 80.0
 	# Radius scales with soldier count so a 9-man block is wider than a 5-man.
 	radius            = 18.0 + sqrt(float(soldier_count)) * 7.0
+	# Idle stance: detect enemies within attack range + a small buffer so
+	# units engage smoothly rather than chattering at the threshold.
+	engage_radius_px  = attack_range_px + 40.0
 	_build_visuals(stats)
 
 func _build_visuals(stats: Dictionary) -> void:
@@ -89,6 +100,17 @@ func _build_visuals(stats: Dictionary) -> void:
 	_ring.mouse_filter   = Control.MOUSE_FILTER_IGNORE
 	_ring.visible        = false
 	add_child(_ring)
+
+	# Hover ring — only friendly units use it (set externally). Same shape
+	# as the selection ring but cooler-coloured so the two never look the
+	# same when both apply.
+	_hover_ring              = ColorRect.new()
+	_hover_ring.size         = Vector2(radius * 2.0 + 4.0, radius * 2.0 + 4.0)
+	_hover_ring.position     = Vector2(-(radius + 2.0), -(radius + 2.0))
+	_hover_ring.color        = Color(0.65, 0.85, 1.0, 0.10)
+	_hover_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hover_ring.visible      = false
+	add_child(_hover_ring)
 
 	# Team-coloured floor disc — always visible so the player can see which
 	# regiment is whose at a glance. Faint so it doesn't dominate.
@@ -132,6 +154,37 @@ func _build_visuals(stats: Dictionary) -> void:
 		add_child(s.sprite)
 		_soldiers.append(s)
 
+	# Health bar floating above the regiment. Always visible — a quick HP
+	# read in addition to the soldier-count visual. Green when fresh, fades
+	# to yellow then red as casualties mount.
+	var bar_w: float = max(48.0, radius * 1.6)
+	var bar_y: float = -radius - 16.0
+	_hp_bar_bg = ColorRect.new()
+	_hp_bar_bg.size     = Vector2(bar_w, 5.0)
+	_hp_bar_bg.position = Vector2(-bar_w * 0.5, bar_y)
+	_hp_bar_bg.color    = Color(0.10, 0.10, 0.12, 0.85)
+	_hp_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hp_bar_bg)
+	_hp_bar_fill = ColorRect.new()
+	_hp_bar_fill.size     = Vector2(bar_w, 5.0)
+	_hp_bar_fill.position = Vector2(-bar_w * 0.5, bar_y)
+	_hp_bar_fill.color    = Color(0.30, 0.85, 0.30)
+	_hp_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hp_bar_fill)
+	_refresh_hp_bar()
+
+func _refresh_hp_bar() -> void:
+	if _hp_bar_fill == null or _hp_bar_bg == null:
+		return
+	var frac: float = clamp(float(hp) / float(max_hp), 0.0, 1.0)
+	_hp_bar_fill.size = Vector2(_hp_bar_bg.size.x * frac, _hp_bar_bg.size.y)
+	if frac > 0.6:
+		_hp_bar_fill.color = Color(0.30, 0.85, 0.30)
+	elif frac > 0.3:
+		_hp_bar_fill.color = Color(0.95, 0.80, 0.25)
+	else:
+		_hp_bar_fill.color = Color(0.95, 0.30, 0.25)
+
 # ---------------------------------------------------------------------------
 # Selection
 # ---------------------------------------------------------------------------
@@ -142,6 +195,10 @@ func set_selected(v: bool) -> void:
 
 func is_selected() -> bool:
 	return _selected
+
+func set_hovered(v: bool) -> void:
+	if _hover_ring:
+		_hover_ring.visible = v
 
 # ---------------------------------------------------------------------------
 # Orders
@@ -180,6 +237,7 @@ func take_damage(amount: int) -> void:
 	if hp <= 0:
 		return
 	hp = max(0, hp - amount)
+	_refresh_hp_bar()
 	_spawn_damage_number(amount)
 	# Cull soldier sprites down to the expected count so the regiment visibly
 	# shrinks as it loses HP — the Total War effect.
@@ -213,8 +271,8 @@ func _kill_soldier(s: Soldier) -> void:
 # ---------------------------------------------------------------------------
 # Per-frame simulation (driven by the scene; respects pause via dt arg)
 # ---------------------------------------------------------------------------
-# Returns true if this unit fired an attack this tick — caller uses that to
-# spawn a projectile/lunge visual at scene level.
+# Returns a small dict describing whether the unit fired this tick (used by
+# the scene for any extra cosmetic feedback if it wants).
 func tick(delta: float, neighbours: Array) -> Dictionary:
 	var fired: Dictionary = {"fired": false}
 	if not is_alive():
@@ -223,17 +281,30 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 	if _cooldown > 0.0:
 		_cooldown = max(0.0, _cooldown - delta)
 
-	# 1. Resolve attack order — drop it if the target died.
+	# 1. Order maintenance — drop attack orders whose target died, drop move
+	#    orders whose destination we've reached. Units that finish their job
+	#    return to IDLE so they can defend themselves via the auto-engage
+	#    stance rather than just sitting there obliviously.
 	if order == Order.ATTACK and (attack_target == null or not attack_target.is_alive()):
 		clear_order()
+	if order == Order.MOVE and position.distance_to(move_target) <= 4.0:
+		order = Order.IDLE
 
-	# 2. Decide movement intent.
+	# 2. Idle "skirmish" stance — if no orders, pick the nearest hostile
+	#    within engage_radius as a temporary attack target. We DO NOT chase
+	#    them (idle = hold ground), but we will fire if they're already in
+	#    range. This removes the chore of telling every unit to engage the
+	#    enemy directly in front of it.
+	if order == Order.IDLE:
+		attack_target = _find_nearest_enemy_in_radius(neighbours, engage_radius_px)
+
+	# 3. Decide movement intent.
 	var move_intent: Vector2 = Vector2.ZERO
 	var want_move: bool = false
 	match order:
 		Order.MOVE:
 			move_intent = move_target - position
-			want_move = move_intent.length() > 4.0
+			want_move = true
 		Order.ATTACK:
 			# Close to within attack range, then stop and shoot.
 			var to_t: Vector2 = attack_target.position - position
@@ -241,12 +312,11 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 			if to_t.length() > desired_gap:
 				move_intent = to_t
 				want_move = true
-			else:
-				want_move = false
 		Order.IDLE:
-			want_move = false
+			# Stand ground — never pursue auto-targets.
+			pass
 
-	# 3. Apply movement (slow, total-war-pace; integrate against neighbours
+	# 4. Apply movement (slow, total-war-pace; integrate against neighbours
 	#    so units gently push apart instead of overlapping).
 	if want_move:
 		var step: Vector2 = move_intent.normalized() * move_speed_px * delta
@@ -265,8 +335,9 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 			var push: float = (min_dist - d) * 0.5
 			position += diff.normalized() * push * min(1.0, delta * 8.0)
 
-	# 4. Try to fire if we have an attack target in range.
-	if order == Order.ATTACK and attack_target != null and attack_target.is_alive():
+	# 5. Try to fire if we have an attack target in range. Works for both
+	#    explicit attack orders and idle auto-engagement.
+	if attack_target != null and attack_target.is_alive():
 		var dist: float = position.distance_to(attack_target.position)
 		if dist <= attack_range_px + attack_target.radius and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
@@ -281,6 +352,20 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}
 
 	return fired
+
+# Helper used by the idle auto-engage stance. Returns the closest enemy
+# regiment within `radius_px`, or null if none.
+func _find_nearest_enemy_in_radius(neighbours: Array, radius_px: float) -> RTUnit:
+	var best: RTUnit = null
+	var best_d: float = radius_px
+	for other: RTUnit in neighbours:
+		if other == self or not other.is_alive() or other.team == team:
+			continue
+		var d: float = position.distance_to(other.position)
+		if d < best_d:
+			best   = other
+			best_d = d
+	return best
 
 # ---------------------------------------------------------------------------
 # Visual animations
