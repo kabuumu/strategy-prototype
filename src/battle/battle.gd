@@ -53,6 +53,11 @@ var _grid_node:   Node2D
 var objectives: Array[Dictionary] = []
 
 # ---------------------------------------------------------------------------
+# Terrain — mountain cells block all movement through and onto them
+# ---------------------------------------------------------------------------
+var mountains: Array[Vector2i] = []
+
+# ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
 var _phase_label:      Label
@@ -66,6 +71,7 @@ var _end_btn:          Button
 func _ready() -> void:
 	_build_ui()
 	_init_objectives()
+	_generate_terrain()
 	_spawn_units()
 	_update_ui()
 
@@ -80,6 +86,39 @@ func _init_objectives() -> void:
 			"owner":    -1,
 			"type":     OBJECTIVE_TYPES[i],
 		})
+
+# ---------------------------------------------------------------------------
+# Terrain generation — deterministic per battle tier/elite flag
+# Mountains are placed in cols 2–7 (clear of spawn edges) in clusters.
+# ---------------------------------------------------------------------------
+func _generate_terrain() -> void:
+	mountains.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GameManager.pending_battle_tier * 127 + (73 if GameManager.pending_battle_elite else 31)
+
+	# Cells that must stay passable (objectives + initial unit rows)
+	var reserved: Array[Vector2i] = []
+	for obj: Dictionary in objectives:
+		reserved.append(obj["grid_pos"])
+
+	var cluster_count := rng.randi_range(3, 5)
+	for _c in range(cluster_count):
+		var seed_cell := Vector2i(rng.randi_range(2, 7), rng.randi_range(0, GRID_ROWS - 1))
+		if seed_cell not in reserved and seed_cell not in mountains:
+			mountains.append(seed_cell)
+
+		# Grow each cluster 1–3 cells by attaching to existing mountain edges
+		var growth := rng.randi_range(1, 3)
+		for _g in range(growth):
+			var candidates: Array = []
+			for mc: Vector2i in mountains:
+				for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var adj := mc + dir
+					if _valid_cell(adj) and adj.x >= 2 and adj.x <= 7 \
+							and adj not in mountains and adj not in reserved:
+						candidates.append(adj)
+			if not candidates.is_empty():
+				mountains.append(candidates[rng.randi() % candidates.size()])
 
 # ---------------------------------------------------------------------------
 # Custom drawing — grid tiles + objective highlights
@@ -107,6 +146,34 @@ func _draw() -> void:
 				color = Color(0.10, 0.14, 0.09)
 			draw_rect(rect, color)
 			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.85), false, 1.5)
+
+	# Mountain tiles — drawn over the grid, block all movement
+	for m: Vector2i in mountains:
+		var bx: float = GRID_OFFSET.x + m.x * TILE_SIZE
+		var by: float = GRID_OFFSET.y + m.y * TILE_SIZE
+		draw_rect(Rect2(Vector2(bx, by), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)),
+				Color(0.18, 0.16, 0.14))
+		# Mountain body — double-peaked silhouette
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(bx + 3,  by + 64),
+				Vector2(bx + 22, by + 20),
+				Vector2(bx + 38, by + 36),
+				Vector2(bx + 50, by + 12),
+				Vector2(bx + 66, by + 64),
+			]),
+			PackedColorArray([Color(0.50, 0.46, 0.40)]))
+		# Snow caps
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(bx + 17, by + 32), Vector2(bx + 22, by + 20), Vector2(bx + 27, by + 32)
+			]),
+			PackedColorArray([Color(0.88, 0.88, 0.93)]))
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(bx + 44, by + 24), Vector2(bx + 50, by + 12), Vector2(bx + 56, by + 24)
+			]),
+			PackedColorArray([Color(0.88, 0.88, 0.93)]))
 
 	# Objectives drawn on top of the tiles (only while uncaptured)
 	for obj: Dictionary in objectives:
@@ -596,15 +663,31 @@ func _ai_act(ai_unit: Unit) -> void:
 func _get_move_cells(unit: Unit) -> Array[Vector2i]:
 	var occupied  := _occupied_cells_except(unit)
 	var range_val := unit.get_move_range()
-	var cells: Array[Vector2i] = []
-	for dx in range(-range_val, range_val + 1):
-		for dy in range(-range_val, range_val + 1):
-			if abs(dx) + abs(dy) > range_val:
-				continue
-			var cell := unit.grid_pos + Vector2i(dx, dy)
-			if _valid_cell(cell) and cell not in occupied:
-				cells.append(cell)
-	return cells
+
+	# BFS so mountains genuinely block paths, not just destination cells
+	var visited: Dictionary = {}
+	var queue: Array  = [{"pos": unit.grid_pos, "steps": 0}]
+	var result: Array[Vector2i] = []
+	visited[unit.grid_pos] = true
+
+	while not queue.is_empty():
+		var item: Dictionary = queue.pop_front()
+		var pos: Vector2i    = item["pos"]
+		var steps: int       = item["steps"]
+
+		if pos != unit.grid_pos and pos not in occupied:
+			result.append(pos)
+
+		if steps >= range_val:
+			continue
+
+		for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var next := pos + dir
+			if _valid_cell(next) and next not in visited and next not in mountains:
+				visited[next] = true
+				queue.append({"pos": next, "steps": steps + 1})
+
+	return result
 
 func _get_attack_cells(attacker: Unit, targets: Array[Unit]) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
