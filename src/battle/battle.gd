@@ -268,15 +268,29 @@ func _draw() -> void:
 			]),
 			PackedColorArray([Color(0.88, 0.88, 0.93)]))
 
-	# Special terrain tiles
+	# Forest tiles — passable, defenders here take less damage
 	for f: Vector2i in forests:
 		var fx: float = GRID_OFFSET.x + f.x * TILE_SIZE
 		var fy: float = GRID_OFFSET.y + f.y * TILE_SIZE
-		draw_rect(Rect2(Vector2(fx, fy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.12, 0.24, 0.13))
-		draw_polygon(PackedVector2Array([
-			Vector2(fx + 35, fy + 14), Vector2(fx + 18, fy + 46), Vector2(fx + 52, fy + 46)]),
-			PackedColorArray([Color(0.20, 0.55, 0.25)]))
-		draw_rect(Rect2(Vector2(fx + 31, fy + 46), Vector2(8, 12)), Color(0.40, 0.27, 0.14))
+		# Mossy ground tint
+		draw_rect(Rect2(Vector2(fx, fy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)),
+				Color(0.12, 0.28, 0.14, 0.85))
+		# Three little pine triangles
+		var trees := [Vector2(fx + 14, fy + 50), Vector2(fx + 35, fy + 56), Vector2(fx + 52, fy + 48)]
+		var sizes := [12.0, 14.0, 11.0]
+		for i in range(trees.size()):
+			var c: Vector2 = trees[i]
+			var s: float = sizes[i]
+			draw_polygon(
+				PackedVector2Array([
+					Vector2(c.x - s,       c.y),
+					Vector2(c.x + s,       c.y),
+					Vector2(c.x,           c.y - s * 1.7),
+				]),
+				PackedColorArray([Color(0.18, 0.48, 0.22)]))
+			draw_rect(Rect2(Vector2(c.x - 1.5, c.y), Vector2(3.0, 5.0)),
+					Color(0.30, 0.20, 0.12))
+	# Hill tiles — high ground, occupant deals more damage
 	for h: Vector2i in hills:
 		var hx: float = GRID_OFFSET.x + h.x * TILE_SIZE
 		var hy: float = GRID_OFFSET.y + h.y * TILE_SIZE
@@ -286,6 +300,7 @@ func _draw() -> void:
 			PackedColorArray([Color(0.55, 0.45, 0.28)]))
 		draw_string(ThemeDB.fallback_font, Vector2(hx + 4, hy + 16), "↑",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.5))
+	# Lava tiles — burns the occupant each round
 	for l: Vector2i in lava:
 		var lx: float = GRID_OFFSET.x + l.x * TILE_SIZE
 		var ly: float = GRID_OFFSET.y + l.y * TILE_SIZE
@@ -327,9 +342,13 @@ func _draw() -> void:
 		for t: Unit in enemy_units:
 			if not t.is_alive() or t.grid_pos not in cells:
 				continue
+			var has_cover: bool = t.grid_pos in forests
+			# Terrain-aware forecast (forest cover + hill bonus folded in)
 			var dmg := _attack_damage(selected_unit, t)
 			var lethal: bool = t.hp <= dmg
 			var txt: String = "KILL" if lethal else "-%d" % dmg
+			if has_cover and not lethal:
+				txt += " ♣"
 			var col: Color = Color(1.0, 0.35, 0.3) if lethal else Color(1.0, 0.92, 0.4)
 			var base := GRID_OFFSET + Vector2(t.grid_pos.x * TILE_SIZE + 6.0, t.grid_pos.y * TILE_SIZE + 18.0)
 			draw_string(ThemeDB.fallback_font, base + Vector2(1, 1), txt,
@@ -629,18 +648,25 @@ func _draw_damage_preview() -> void:
 	if target == null:
 		return
 
-	# Use base damage + flank only — don't leak the random crit roll into preview
+	# Use base damage + flank + cover — don't leak the random crit roll
 	var base := selected_unit.get_damage()
 	var flank := _is_flanking(selected_unit, target)
-	var dmg: int = int(round(base * (FLANK_MULT if flank else 1.0)))
+	var cover: bool = target.grid_pos in forests
+	# Flank bonus × terrain (forest cover + hill high-ground)
+	var mult: float = (FLANK_MULT if flank else 1.0) * _terrain_mult(selected_unit, target)
+	var dmg: int = maxi(1, int(round(base * mult)))
 	var lethal := dmg >= target.hp
 
 	var line1 := "%d dmg → HP %d/%d" % [dmg, max(0, target.hp - dmg), target.max_hp]
 	var line2 := ""
 	if lethal:
 		line2 = "LETHAL"
+	elif flank and cover:
+		line2 = "FLANKED in COVER"
 	elif flank:
 		line2 = "FLANKED!"
+	elif cover:
+		line2 = "IN COVER"
 
 	var origin := GRID_OFFSET + Vector2(_hover_cell.x * TILE_SIZE, _hover_cell.y * TILE_SIZE)
 	# Position tooltip above the tile, or below if near top edge
@@ -846,9 +872,9 @@ func _terrain_mult(attacker: Unit, defender: Unit) -> float:
 func _attack_damage(attacker: Unit, defender: Unit) -> int:
 	return maxi(1, int(round(attacker.get_damage() * _terrain_mult(attacker, defender))))
 
-# Returns { "damage": int, "crit": bool, "flank": bool }. Crit and flank don't
-# stack — crit takes precedence so the spotlight moments stay distinct.
-# Terrain multiplies on top of whichever bonus applies.
+# Returns { "damage": int, "crit": bool, "flank": bool, "cover": bool }.
+# Crit and flank don't stack — crit takes precedence. Terrain (forest cover,
+# hill high-ground) multiplies on top of whichever bonus applies.
 func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	var base := attacker.get_damage()
 	var crit := randf() < CRIT_CHANCE
@@ -859,7 +885,13 @@ func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	elif flank:
 		mult = FLANK_MULT
 	mult *= _terrain_mult(attacker, defender)
-	return {"damage": maxi(1, int(round(base * mult))), "crit": crit, "flank": flank and not crit}
+	var cover: bool = defender.grid_pos in forests
+	return {
+		"damage": maxi(1, int(round(base * mult))),
+		"crit":   crit,
+		"flank":  flank and not crit,
+		"cover":  cover,
+	}
 
 func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var res := _resolve_damage(attacker, defender)
@@ -885,6 +917,9 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	else:
 		_log_event("%s hits %s for %d" % [_unit_label(attacker), _unit_label(defender), dmg])
 		_shake_grid(2.5)
+	# Cover tag — shown alongside whatever main combat label fired
+	if res["cover"] and not (res["crit"]):
+		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = DEATH_TINT
@@ -1352,6 +1387,11 @@ func _score_cell(ai_unit: Unit, cell: Vector2i, is_ranged: bool) -> float:
 	for obj: Dictionary in objectives:
 		if obj["grid_pos"] == cell and int(obj["owner"]) != ai_unit.team:
 			score += 60.0
+	# Forest cover is universally useful — defenders take 25% less, so
+	# every personality prefers ending its turn in a forest (small bonus,
+	# big enough to break ties but not enough to skip a clean attack)
+	if cell in forests:
+		score += 15.0
 
 	var personality: String = ai_unit.unit_type
 	# Boss never kites and never camps objectives — it hunts the party.

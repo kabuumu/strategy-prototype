@@ -52,7 +52,7 @@ func _build_ui() -> void:
 	# Controls hint
 	# -----------------------------------------------------------------------
 	var hint := Label.new()
-	hint.text = "Left-click to act  ·  Right-click / Esc to cancel  ·  Tab cycles units  ·  Enter ends turn  ·  T threat overlay  ·  F fast-forward (2×)"
+	hint.text = "Left-click to act  ·  Right-click / Esc to cancel  ·  Tab cycles units  ·  Enter ends turn  ·  T threat overlay  ·  F fast-forward (2×)  ·  Forests grant defenders −25% dmg"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.40, 0.40, 0.45)
 	hint.position = Vector2(60.0, 680.0)
