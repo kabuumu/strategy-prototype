@@ -92,6 +92,22 @@ const UPGRADE_TYPES: Dictionary = {
 const UPGRADE_IDS: Array[String] = ["veteran", "sharpshooter", "swift", "eagle_eye", "ironhide", "lucky", "berserker"]
 
 # ---------------------------------------------------------------------------
+# Biomes — one per tier. Bias terrain generation + battle background so each
+# tier of a run looks and plays differently. "mtn" is the mountain-cluster
+# count range; forest/hill/lava are target tile counts.
+# ---------------------------------------------------------------------------
+const BIOMES: Array[Dictionary] = [
+	{"name": "Grassy Plains",    "bg": Color(0.07, 0.10, 0.07), "mtn": Vector2i(2, 3), "forest": 3, "hill": 2, "lava": 0},
+	{"name": "Deep Woods",       "bg": Color(0.05, 0.11, 0.07), "mtn": Vector2i(2, 3), "forest": 8, "hill": 1, "lava": 0},
+	{"name": "Rocky Highlands",  "bg": Color(0.10, 0.09, 0.07), "mtn": Vector2i(4, 6), "forest": 2, "hill": 6, "lava": 0},
+	{"name": "Volcanic Wastes",  "bg": Color(0.13, 0.06, 0.05), "mtn": Vector2i(3, 5), "forest": 0, "hill": 2, "lava": 6},
+	{"name": "The Citadel",      "bg": Color(0.10, 0.07, 0.13), "mtn": Vector2i(4, 5), "forest": 1, "hill": 3, "lava": 3},
+]
+
+func biome_for_tier(tier: int) -> Dictionary:
+	return BIOMES[clampi(tier, 0, BIOMES.size() - 1)]
+
+# ---------------------------------------------------------------------------
 # Map constants
 # ---------------------------------------------------------------------------
 const MAP_TIERS: int = 5
