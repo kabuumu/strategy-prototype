@@ -91,6 +91,13 @@ var _fast_mode: bool = false
 const FAST_MULT: float = 2.0
 var _speed_badge: Label
 
+# Battle stats — tracked per fight so the victory screen can show a
+# proper scoreboard (turns, MVP, damage dealt/taken, kills).
+var _round_count: int = 1
+var _damage_dealt_by: Dictionary = {}   # unit instance_id → int total
+var _kills_by:        Dictionary = {}   # unit instance_id → int kills
+var _damage_taken_total: int = 0
+
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	_build_ui()
@@ -786,6 +793,12 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
 	defender.take_damage(dmg)
+	# Stat tracking — bucket by attacker identity so we can pick an MVP later
+	var aid: int = attacker.get_instance_id()
+	if attacker.team == 0:
+		_damage_dealt_by[aid] = int(_damage_dealt_by.get(aid, 0)) + dmg
+	else:
+		_damage_taken_total += dmg
 	if res["crit"]:
 		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
 		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
@@ -801,6 +814,8 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
+		if attacker.team == 0:
+			_kills_by[attacker.get_instance_id()] = int(_kills_by.get(attacker.get_instance_id(), 0)) + 1
 	else:
 		# Boss enrage check: cross the HP threshold once → permanent buff
 		_check_enrage(defender)
@@ -1099,6 +1114,7 @@ func _execute_remaining_ai_units() -> void:
 # Round completion helpers
 # ---------------------------------------------------------------------------
 func _start_new_round() -> void:
+	_round_count += 1
 	_reset_acted_flags(player_units)
 	_reset_acted_flags(enemy_units)
 	_recompute_threat()   # stuns cleared at round start may re-enable threats
@@ -1499,6 +1515,9 @@ func _show_result_overlay(won: bool) -> void:
 	sub.position  = Vector2(180.0, 90.0)
 	panel.add_child(sub)
 
+	# Battle stats scoreboard — added for both win and loss
+	_build_stats_block(panel, won)
+
 	if won and not GameManager.player_roster.is_empty():
 		_build_upgrade_picker(panel)
 	else:
@@ -1510,14 +1529,14 @@ func _build_upgrade_picker(panel: Panel) -> void:
 	header.text = "Choose a Reward"
 	header.add_theme_font_size_override("font_size", 22)
 	header.modulate = Color(0.95, 0.90, 0.45)
-	header.position = Vector2(310.0, 150.0)
+	header.position = Vector2(310.0, 200.0)
 	panel.add_child(header)
 
 	var hint := Label.new()
 	hint.text = "Pick an upgrade card, then assign it to a surviving unit."
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.65, 0.65, 0.65)
-	hint.position = Vector2(225.0, 185.0)
+	hint.position = Vector2(225.0, 232.0)
 	panel.add_child(hint)
 
 	var choices := GameManager.random_upgrade_choices(3)
@@ -1525,7 +1544,7 @@ func _build_upgrade_picker(panel: Panel) -> void:
 		var id: String = choices[i]
 		var data: Dictionary = GameManager.UPGRADE_TYPES[id]
 		var card := Button.new()
-		card.position = Vector2(60.0 + i * 250.0, 215.0)
+		card.position = Vector2(60.0 + i * 250.0, 258.0)
 		card.size     = Vector2(220.0, 110.0)
 		card.text     = "%s\n\n%s" % [data["name"], data["desc"]]
 		card.add_theme_font_size_override("font_size", 15)
@@ -1582,7 +1601,7 @@ func _on_upgrade_card_picked(panel: Panel, upgrade_id: String) -> void:
 		# Three-per-row grid
 		var col := i % 3
 		var row := i / 3
-		btn.position = Vector2(70.0 + col * 250.0, 220.0 + row * 90.0)
+		btn.position = Vector2(70.0 + col * 250.0, 270.0 + row * 90.0)
 		btn.size     = Vector2(220.0, 80.0)
 		btn.text     = label_txt
 		btn.add_theme_font_size_override("font_size", 14)
@@ -1630,3 +1649,41 @@ func _build_post_battle_buttons(panel: Panel, won: bool) -> void:
 		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 	)
 	panel.add_child(btn2)
+
+# Battle scoreboard — rounds taken, total damage dealt/taken, MVP unit.
+# Inserted into the result panel between the subtitle and the reward picker.
+func _build_stats_block(panel: Panel, _won: bool) -> void:
+	# Identify the MVP: the player unit (alive or dead) that dealt the most damage.
+	# Falls back to most kills if everyone dealt zero.
+	var mvp_name: String = ""
+	var mvp_dmg: int = 0
+	var mvp_kills: int = 0
+	var total_dealt: int = 0
+	for u: Unit in player_units:
+		var id: int = u.get_instance_id()
+		var d: int = int(_damage_dealt_by.get(id, 0))
+		var k: int = int(_kills_by.get(id, 0))
+		total_dealt += d
+		if d > mvp_dmg or (d == mvp_dmg and k > mvp_kills):
+			mvp_dmg   = d
+			mvp_kills = k
+			mvp_name  = GameManager.UNIT_TYPES[u.unit_type]["name"]
+
+	var line1 := "⏱ %d round%s   ·   ⚔ %d dmg dealt   ·   🛡 %d dmg taken" % [
+		_round_count, "" if _round_count == 1 else "s",
+		total_dealt, _damage_taken_total
+	]
+	var mvp_line := ""
+	if mvp_name != "" and mvp_dmg > 0:
+		mvp_line = "★ MVP: %s — %d dmg, %d kill%s" % [
+			mvp_name, mvp_dmg, mvp_kills, "" if mvp_kills == 1 else "s"
+		]
+
+	var lbl := Label.new()
+	lbl.text = line1 + ("\n" + mvp_line if mvp_line != "" else "")
+	lbl.add_theme_font_size_override("font_size", 14)
+	lbl.modulate = Color(0.82, 0.84, 0.78)
+	lbl.position = Vector2(120.0, 145.0)
+	lbl.size     = Vector2(600.0, 50.0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(lbl)
