@@ -892,7 +892,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	if res["cover"] and not (res["crit"]):
 		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
-		_shake_grid(5.0)   # bigger jolt on a kill
+		_kill_punch()
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
 		if attacker.team == 0:
@@ -945,6 +945,17 @@ func _shake_grid(amount: float) -> void:
 		tw.tween_property(_grid_node, "position",
 			GRID_OFFSET + Vector2(randf_range(-amount, amount), randf_range(-amount, amount)), 0.03)
 	tw.tween_property(_grid_node, "position", GRID_OFFSET, 0.04)
+
+# Kill-feel punch: hard shake plus a brief slow-mo so the moment lands.
+# Uses an ignore_time_scale timer so 0.20 seconds of real time always pass
+# regardless of the fast-forward toggle or the slow scale we just set.
+func _kill_punch() -> void:
+	_shake_grid(8.0)
+	var base_scale: float = FAST_MULT if _fast_mode else 1.0
+	Engine.time_scale = base_scale * 0.25
+	await get_tree().create_timer(0.20, true, false, true).timeout
+	# Only restore if no later call already changed it (best-effort)
+	Engine.time_scale = FAST_MULT if _fast_mode else 1.0
 
 func _commit_player_unit_turn() -> void:
 	selected_unit.has_acted = true
