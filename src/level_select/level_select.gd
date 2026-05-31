@@ -3,7 +3,6 @@ extends Node2D
 # ---------------------------------------------------------------------------
 # Layout constants
 # ---------------------------------------------------------------------------
-const NODE_X: Array[float] = [320.0, 640.0, 960.0]
 const TIER_Y: Array[float] = [630.0, 510.0, 390.0, 270.0, 150.0]
 const NODE_R: float = 34.0
 
@@ -43,17 +42,14 @@ func _draw() -> void:
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.06, 0.07, 0.10))
 	# HUD bar
 	draw_rect(Rect2(0.0, 670.0, 1280.0, 50.0), Color(0.08, 0.08, 0.14))
-	# Connection lines between tiers
+	# Connection lines — drawn from stored connections so locked-out paths aren't shown
 	for tier in range(GameManager.MAP_TIERS - 1):
-		for i in range(GameManager.NODES_PER_TIER):
-			var from := Vector2(NODE_X[i], TIER_Y[tier])
-			var targets: Array = [i]
-			if i > 0:
-				targets.append(i - 1)
-			if i < GameManager.NODES_PER_TIER - 1:
-				targets.append(i + 1)
-			for j in targets:
-				var to := Vector2(NODE_X[j], TIER_Y[tier + 1])
+		var from_count: int = GameManager.map_data[tier].size()
+		var to_count:   int = GameManager.map_data[tier + 1].size()
+		for i in range(from_count):
+			var from := Vector2(_node_x(i, from_count), TIER_Y[tier])
+			for j in GameManager.map_data[tier][i]["connections"]:
+				var to := Vector2(_node_x(j, to_count), TIER_Y[tier + 1])
 				draw_line(from, to, Color(0.35, 0.35, 0.48, 0.65), 2.0)
 
 # ---------------------------------------------------------------------------
@@ -86,13 +82,20 @@ func _build_node_buttons() -> void:
 
 	# Node buttons
 	for tier in range(GameManager.MAP_TIERS):
-		for i in range(GameManager.NODES_PER_TIER):
+		for i in range(GameManager.map_data[tier].size()):
 			_add_node_button(tier, i)
+
+func _node_x(index: int, count: int) -> float:
+	if count == 1:
+		return 640.0
+	var margin := 120.0
+	return margin + float(index) * (1280.0 - margin * 2.0) / float(count - 1)
 
 func _add_node_button(tier: int, index: int) -> void:
 	var node_data: Dictionary = GameManager.map_data[tier][index]
 	var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
-	var pos := Vector2(NODE_X[index], TIER_Y[tier])
+	var count: int = GameManager.map_data[tier].size()
+	var pos := Vector2(_node_x(index, count), TIER_Y[tier])
 
 	var btn := Button.new()
 	btn.size = Vector2(NODE_R * 2.0, NODE_R * 2.0)

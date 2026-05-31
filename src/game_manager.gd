@@ -34,7 +34,8 @@ const UNIT_TYPES: Dictionary = {
 # Map constants
 # ---------------------------------------------------------------------------
 const MAP_TIERS: int = 5
-const NODES_PER_TIER: int = 3
+# Tier sizes are generated per-run (see _generate_map).
+# Last tier is always 1 node (boss); others vary from 2–5.
 
 # ---------------------------------------------------------------------------
 # Persistent game state
@@ -67,16 +68,74 @@ func _generate_map() -> void:
 	map_data.clear()
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
+
+	# Build tier sizes: first tier 2–3, middle tiers 2–5, final tier always 1
+	var sizes: Array = []
+	sizes.append(rng.randi_range(2, 3))
+	for _t in range(MAP_TIERS - 2):
+		sizes.append(rng.randi_range(2, 5))
+	sizes.append(1)
+
+	# Create nodes (connections filled in next pass)
 	for tier in range(MAP_TIERS):
 		var nodes: Array = []
-		for i in range(NODES_PER_TIER):
+		for i in range(sizes[tier]):
 			nodes.append({
 				"type": _pick_node_type(tier, rng),
 				"tier": tier,
 				"index": i,
-				"visited": false
+				"visited": false,
+				"connections": []
 			})
 		map_data.append(nodes)
+
+	# Wire up connections between every adjacent tier pair
+	for tier in range(MAP_TIERS - 1):
+		_generate_connections(tier, rng)
+
+func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
+	var from_count: int = map_data[tier].size()
+	var to_count:   int = map_data[tier + 1].size()
+
+	# Each source node connects to its proportionally-mapped target(s)
+	for i in range(from_count):
+		var t: float = 0.0 if from_count == 1 else float(i) / float(from_count - 1)
+		var target_f: float = t * float(to_count - 1)
+		var lo: int = clamp(int(floor(target_f)), 0, to_count - 1)
+		var hi: int = clamp(int(ceil(target_f)),  0, to_count - 1)
+
+		var conns: Array = [lo]
+		if hi != lo:
+			conns.append(hi)
+
+		# Randomly add one extra adjacent connection for branching variety
+		if to_count > 2 and rng.randi() % 3 == 0:
+			var extra: int = clamp(lo + rng.randi_range(-1, 1), 0, to_count - 1)
+			if extra not in conns:
+				conns.append(extra)
+
+		map_data[tier][i]["connections"] = conns
+
+	# Guarantee every target node has at least one incoming connection
+	for j in range(to_count):
+		var found := false
+		for i in range(from_count):
+			if j in map_data[tier][i]["connections"]:
+				found = true
+				break
+		if not found:
+			# Attach to the source node whose proportional position is closest
+			var best_i := 0
+			var best_d := 999.0
+			for i in range(from_count):
+				var t: float = 0.0 if from_count == 1 else float(i) / float(from_count - 1)
+				var d: float = abs(t * float(to_count - 1) - float(j))
+				if d < best_d:
+					best_d = d
+					best_i = i
+			var c: Array = map_data[tier][best_i]["connections"]
+			c.append(j)
+			map_data[tier][best_i]["connections"] = c
 
 func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 	if tier == MAP_TIERS - 1:
@@ -99,14 +158,14 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 func get_reachable_indices() -> Array:
 	if current_tier >= MAP_TIERS:
 		return []
+	# Before any node is visited, all nodes in tier 0 are available
 	if last_chosen_index == -1:
-		return [0, 1, 2]
-	var reach: Array = [last_chosen_index]
-	if last_chosen_index > 0:
-		reach.append(last_chosen_index - 1)
-	if last_chosen_index < NODES_PER_TIER - 1:
-		reach.append(last_chosen_index + 1)
-	return reach
+		var result: Array = []
+		for i in range(map_data[0].size()):
+			result.append(i)
+		return result
+	# Otherwise, return only the connections from the last visited node
+	return map_data[current_tier - 1][last_chosen_index]["connections"]
 
 func visit_node(tier: int, index: int) -> void:
 	map_data[tier][index]["visited"] = true
