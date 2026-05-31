@@ -129,13 +129,57 @@ func _build_figure(root: MeshInstance3D, scale_mul: float, with_weapon: bool) ->
 			wpn.material_override = _solid_mat(Color(0.72, 0.74, 0.80))
 		root.add_child(wpn)
 
+# Optional external 3D models. These files are NOT committed (gitignored —
+# see assets/models/README.md). If present they're used for the regiment's
+# lead figure; otherwise we fall back to the procedural low-poly figure so the
+# mode always works.
+const MODEL_DIR: String = "res://assets/models/"
+const MODEL_FILES: Dictionary = {
+	"soldier": "infantry.glb",
+	"archer":  "archer.glb",
+	"scout":   "cavalry.glb",
+	"healer":  "spearman.glb",
+}
+
+func _try_load_model(scale_mul: float) -> Node3D:
+	var fname: String = MODEL_FILES.get(unit_type, "")
+	if fname == "":
+		return null
+	var path := MODEL_DIR + fname
+	if not ResourceLoader.exists(path):
+		return null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return null
+	var inst := scene.instantiate() as Node3D
+	if inst == null:
+		return null
+	inst.scale = Vector3.ONE * scale_mul
+	return inst
+
 func _build_visuals() -> void:
-	# Body: low-poly soldier figure (team-coloured). _body is the torso so the
-	# hit-flash still works.
+	# Body root. _body is the torso (hit-flash target) for the procedural figure;
+	# with an external model it just hosts the model + a team-coloured base.
 	_body = MeshInstance3D.new()
 	_body.position = Vector3(0.0, 0.95, 0.0)
-	_build_figure(_body, 1.0, true)
 	add_child(_body)
+
+	var model := _try_load_model(1.0)
+	if model != null:
+		_body.add_child(model)
+		# Face inward and add a team-coloured base disc so sides read clearly
+		_body.rotation_degrees = Vector3(0.0, 90.0 if team == 0 else -90.0, 0.0)
+		var base := MeshInstance3D.new()
+		var disc := CylinderMesh.new()
+		disc.top_radius = 0.5
+		disc.bottom_radius = 0.5
+		disc.height = 0.08
+		base.mesh = disc
+		base.position = Vector3(0.0, -0.9, 0.0)
+		base.material_override = _solid_mat(team_color)
+		_body.add_child(base)
+	else:
+		_build_figure(_body, 1.0, true)
 
 	# Selection rings (top-down flat quads would be better, but cylinders keep
 	# this implementation stable across Godot versions.
