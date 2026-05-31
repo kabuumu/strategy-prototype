@@ -190,7 +190,7 @@ const BOSS_IDS: Array[String] = ["warlord", "pyromancer", "juggernaut"]
 # ---------------------------------------------------------------------------
 const MAP_TIERS: int = 5
 # Tier sizes are generated per-run (see _generate_map).
-# Last tier is always 1 node (boss); others vary from 2–5.
+# Tier 0 is 2-3 varied starting nodes; middle tiers vary 2–5; last tier = 1 (boss).
 
 # ---------------------------------------------------------------------------
 # Persistent game state
@@ -366,9 +366,9 @@ func _generate_map() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
-	# Tier 0 always starts as a single central node; middle tiers vary 2-5; final tier = 1 (boss)
+	# Tier 0 offers 2-3 starting paths; middle tiers vary 2-5; final tier = 1 (boss)
 	var sizes: Array = []
-	sizes.append(1)
+	sizes.append(rng.randi_range(2, 3))
 	for _t in range(MAP_TIERS - 2):
 		sizes.append(rng.randi_range(2, 5))
 	sizes.append(1)
@@ -386,9 +386,31 @@ func _generate_map() -> void:
 			})
 		map_data.append(nodes)
 
+	# Give the starting tier a curated, varied spread: one tougher (elite) path,
+	# never all battles, so the opening choice is meaningful.
+	var start_types: Array = _starting_node_types(map_data[0].size(), rng)
+	for i in range(map_data[0].size()):
+		map_data[0][i]["type"] = start_types[i]
+
 	# Wire up connections between every adjacent tier pair
 	for tier in range(MAP_TIERS - 1):
 		_generate_connections(tier, rng)
+
+# Types for the 2-3 starting nodes: always one tougher "elite_battle", a normal
+# "battle" when there's room for three, and the rest drawn from utility nodes —
+# guaranteeing variety and at least one non-combat opening.
+func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
+	var out: Array = ["elite_battle"]
+	if count >= 3:
+		out.append("battle")
+	var utility: Array = ["gain_unit", "shop", "heal"]
+	utility.shuffle()
+	var ui: int = 0
+	while out.size() < count:
+		out.append(utility[ui % utility.size()])
+		ui += 1
+	out.shuffle()
+	return out
 
 func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
 	var from_count: int = map_data[tier].size()
@@ -437,8 +459,8 @@ func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
 func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 	if tier == MAP_TIERS - 1:
 		return "elite_battle"
-	if tier == 0:
-		return "battle"
+	# Tier 0 is overwritten by _starting_node_types after generation; the value
+	# returned here is just a placeholder.
 	var roll := rng.randi() % 10
 	if roll < 4:
 		return "battle"
