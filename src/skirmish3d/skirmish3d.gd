@@ -1,5 +1,6 @@
 extends Node3D
 
+const UITheme := preload("res://src/ui/ui_theme.gd")
 const SkirmishUnit3D := preload("res://src/skirmish3d/skirmish_unit_3d.gd")
 const Hex := preload("res://src/battle/hex.gd")
 
@@ -46,6 +47,22 @@ const REGIMENT_TYPES: Dictionary = {
 		"attack_range_px": 75.0,
 		"move_speed_px": 54.0,
 	},
+	# Bosses (final-tier campaign battles) — oversized, hard-hitting regiments.
+	"warlord": {
+		"name": "Warlord's Guard", "sprite_key": "soldier",
+		"soldier_count": 20, "hp_per_soldier": 22, "damage_per_attack": 14,
+		"attack_cooldown": 1.0, "attack_range_px": 55.0, "move_speed_px": 60.0,
+	},
+	"pyromancer": {
+		"name": "Pyromancers", "sprite_key": "archer",
+		"soldier_count": 14, "hp_per_soldier": 16, "damage_per_attack": 16,
+		"attack_cooldown": 1.3, "attack_range_px": 230.0, "move_speed_px": 56.0,
+	},
+	"juggernaut": {
+		"name": "Juggernauts", "sprite_key": "healer",
+		"soldier_count": 16, "hp_per_soldier": 30, "damage_per_attack": 18,
+		"attack_cooldown": 1.3, "attack_range_px": 55.0, "move_speed_px": 44.0,
+	},
 }
 
 const FIELD_HALF_WIDTH: float = 36.0
@@ -68,6 +85,7 @@ var enemy_units: Array[SkirmishUnit3D] = []
 var selected_units: Array[SkirmishUnit3D] = []
 var hovered_unit: SkirmishUnit3D = null
 var _ended: bool = false
+var _campaign: bool = false   # launched from the campaign map (vs standalone)
 var _paused: bool = true
 
 var _drag_active: bool = false
@@ -136,12 +154,15 @@ func _spawn_impact_puff(at: Vector3) -> void:
 var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
+var _command_label: Label
 var _result_label: Label
 var _restart_hint_label: Label
 var _drag_box: ColorRect
 
 func _ready() -> void:
 	set_process_unhandled_input(true)
+	_campaign = GameManager.pending_skirmish
+	GameManager.pending_skirmish = false   # consume the flag
 	_generate_terrain()
 	_build_field()
 	_build_ui()
@@ -439,7 +460,7 @@ func _build_ui() -> void:
 	var top := ColorRect.new()
 	top.color = Color(0.06, 0.08, 0.14, 0.9)
 	top.position = Vector2(0.0, 0.0)
-	top.size = Vector2(1280.0, 60.0)
+	top.size = Vector2(1280.0, 72.0)
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(top)
 
@@ -457,13 +478,26 @@ func _build_ui() -> void:
 	_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_status_label)
 
+	_command_label = Label.new()
+	_command_label.text = "Select regiments, then right-click ground or enemies. Terrain matters."
+	_command_label.add_theme_font_size_override("font_size", 13)
+	_command_label.modulate = Color(0.74, 0.78, 0.84)
+	_command_label.position = Vector2(326.0, 39.0)
+	_command_label.size = Vector2(510.0, 22.0)
+	_command_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui.add_child(_command_label)
+
 	var hint := Label.new()
-	hint.text = "L-click select / drag-box  ·  Shift add  ·  R-click move/attack  ·  WASD/edge pan  ·  wheel zoom  ·  SPACE pause  ·  R restart  ·  ESC menu     (flank/rear hits hurt more · hills boost · forests shield · lava burns · routed units flee)"
+	hint.text = "Drag-box select  ·  Shift add  ·  WASD/edge pan  ·  Wheel zoom"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.56, 0.56, 0.66)
-	hint.position = Vector2(420.0, 22.0)
+	hint.position = Vector2(326.0, 16.0)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(hint)
+
+	_ui.add_child(UITheme.button("Pause", Vector2(884.0, 14.0), Vector2(104.0, 40.0), Color(0.18, 0.26, 0.36), _on_pause_button, 15))
+	_ui.add_child(UITheme.button("Restart", Vector2(1000.0, 14.0), Vector2(104.0, 40.0), Color(0.28, 0.22, 0.34), _on_restart_button, 15))
+	_ui.add_child(UITheme.button("Menu", Vector2(1116.0, 14.0), Vector2(104.0, 40.0), Color(0.30, 0.20, 0.20), _on_menu_button, 15))
 
 	_selection_label = Label.new()
 	_selection_label.add_theme_font_size_override("font_size", 15)
@@ -500,7 +534,20 @@ func _build_ui() -> void:
 	_drag_box.z_index = 50
 	_ui.add_child(_drag_box)
 
+func _on_pause_button() -> void:
+	if not _ended:
+		_set_paused(not _paused)
+
+func _on_restart_button() -> void:
+	get_tree().reload_current_scene()
+
+func _on_menu_button() -> void:
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
 func _spawn_armies() -> void:
+	if _campaign:
+		_spawn_campaign_armies()
+		return
 	var lines_player: Array = [
 		{"type": "soldier", "x": -22.0, "z": -12.0},
 		{"type": "archer", "x": -23.5, "z": -4.0},
@@ -522,6 +569,38 @@ func _spawn_armies() -> void:
 		var entry: Dictionary = lines_enemy[i]
 		var u := _spawn_regiment(String(entry["type"]), 1, Vector3(entry["x"], 0.0, entry["z"]))
 		enemy_units.append(u)
+
+# Build both armies from campaign state: your roster vs the tier's enemy roster.
+func _spawn_campaign_armies() -> void:
+	var roster := GameManager.player_roster
+	var pz := _line_positions(roster.size())
+	for i in range(roster.size()):
+		var rtype: String = roster[i].get("type", "soldier")
+		var u := _spawn_regiment(rtype, 0, Vector3(-22.0, 0.0, pz[i]))
+		u.roster_index = i
+		player_units.append(u)
+
+	var elist := GameManager.get_battle_enemy_roster(
+		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
+	var ez := _line_positions(elist.size())
+	var hp_mult := GameManager.get_hp_multiplier(
+		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
+	for i in range(elist.size()):
+		var u := _spawn_regiment(String(elist[i]), 1, Vector3(22.0, 0.0, ez[i]))
+		# Scale enemy strength with tier (more men + hp)
+		u.max_hp = int(u.max_hp * hp_mult)
+		u.hp = u.max_hp
+		enemy_units.append(u)
+
+# Evenly spread N regiments across the field depth.
+func _line_positions(n: int) -> Array[float]:
+	var out: Array[float] = []
+	if n <= 0:
+		return out
+	var span := FIELD_HALF_DEPTH * 1.7
+	for i in range(n):
+		out.append(-span * 0.5 + span * (float(i) + 0.5) / float(n))
+	return out
 
 func _spawn_regiment(type: String, team: int, pos: Vector3) -> SkirmishUnit3D:
 	var u := SkirmishUnit3D.new()
@@ -599,6 +678,10 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
+		# When a campaign battle has ended, any of these continue the run
+		if _ended and _campaign and event.keycode in [KEY_R, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_ESCAPE]:
+			_finish_campaign_battle()
+			return
 		match event.keycode:
 			KEY_SPACE:
 				_set_paused(not _paused)
@@ -606,6 +689,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				if _ended:
 					get_tree().reload_current_scene()
 			KEY_ESCAPE:
+				if _campaign:
+					return   # no quitting mid campaign battle
 				get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 	if event is InputEventMouseMotion:
@@ -615,6 +700,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventMouseButton:
+		if _ended and _campaign and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_finish_campaign_battle()
+			return
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				_begin_left_press(event.position, event.shift_pressed)
@@ -677,6 +765,10 @@ func _handle_right_click(mouse: Vector2) -> void:
 			if u.is_alive():
 				u.order_attack(enemy)
 		_spawn_waypoint(enemy.global_position + Vector3(0.0, 0.2, 0.0), Color(1.0, 0.40, 0.40))
+		if _command_label != null:
+			_command_label.text = "Attack order: %d regiment%s focusing %s." % [
+				selected_units.size(), "" if selected_units.size() == 1 else "s", enemy.unit_name
+			]
 		return
 	var target := _ground_hit_from_screen(mouse)
 	if target == Vector3.INF:
@@ -701,6 +793,10 @@ func _handle_right_click(mouse: Vector2) -> void:
 			dest.z = clamp(dest.z, -FIELD_HALF_DEPTH, FIELD_HALF_DEPTH)
 		u.order_move(dest)
 	_spawn_waypoint(target, Color(0.55, 0.95, 0.55))
+	if _command_label != null:
+		_command_label.text = "Move order: %d regiment%s to marked ground." % [
+			n, "" if n == 1 else "s"
+		]
 
 func _apply_selection(units: Array[SkirmishUnit3D], additive: bool) -> void:
 	if not additive:
@@ -913,6 +1009,8 @@ func _refresh_ui() -> void:
 			selected_units = alive_sel
 		if alive_sel.is_empty():
 			_selection_label.text = "No regiment selected — left-click a blue regiment, drag-box for many, right-click for orders."
+			if _command_label != null and not _ended:
+				_command_label.modulate = Color(0.64, 0.68, 0.74)
 		elif alive_sel.size() == 1:
 			var u: SkirmishUnit3D = alive_sel[0]
 			var order_txt := "idle"
@@ -926,6 +1024,8 @@ func _refresh_ui() -> void:
 				"%s  ·  %s  ·  %d / %d HP  ·  %d / %d soldiers  ·  %s"
 				% [u.unit_name, range_txt, u.hp, u.max_hp, u.alive_soldier_count(), u.soldier_count, order_txt]
 			)
+			if _command_label != null:
+				_command_label.modulate = Color(0.80, 0.86, 0.92)
 		else:
 			var total_hp := 0
 			var total_max := 0
@@ -936,6 +1036,8 @@ func _refresh_ui() -> void:
 				"%d regiments selected  ·  %d / %d HP combined  ·  right-click to issue group order"
 				% [alive_sel.size(), total_hp, total_max]
 			)
+			if _command_label != null:
+				_command_label.modulate = Color(0.80, 0.86, 0.92)
 
 	if _ended:
 		_result_label.visible = true
@@ -988,5 +1090,32 @@ func _check_end_condition() -> void:
 			_result_label.modulate = Color(0.88, 0.88, 0.5)
 		_result_label.visible = true
 	if _restart_hint_label != null:
+		if _campaign:
+			_restart_hint_label.text = "Click or press Enter to continue"
 		_restart_hint_label.visible = true
 	_refresh_ui()
+
+# Campaign: apply the battle outcome to the run, then leave the skirmish.
+func _finish_campaign_battle() -> void:
+	var e_alive := false
+	for u: SkirmishUnit3D in enemy_units:
+		if u.is_alive():
+			e_alive = true
+			break
+	var survivors: Array[Dictionary] = []
+	for u: SkirmishUnit3D in player_units:
+		if u.is_alive() and u.roster_index >= 0 and u.roster_index < GameManager.player_roster.size():
+			survivors.append(GameManager.player_roster[u.roster_index])
+	var won: bool = (not e_alive) and survivors.size() > 0
+	GameManager.set_roster(survivors)
+	if won:
+		var tier := GameManager.pending_battle_tier
+		var elite := GameManager.pending_battle_elite
+		GameManager.add_gold(GameManager.battle_gold_reward(tier, elite))
+		GameManager.register_battle_won(elite)
+		if elite:
+			GameManager.grant_random_relic()
+		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	else:
+		GameManager.clear_run()   # defeat — the run ends
+		get_tree().change_scene_to_file("res://src/title/title.tscn")

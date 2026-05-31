@@ -1,5 +1,7 @@
 extends Node2D
 
+const UITheme := preload("res://src/ui/ui_theme.gd")
+
 # ---------------------------------------------------------------------------
 # Grid constants
 # ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ var _instruct_label:   Label
 var _obj_status_label: Label
 var _log_label:        Label
 var _skip_btn:         Button
+var _cancel_btn:       Button
 var _ability_btn:      Button
 var _ability_panel:    Control
 var _ability_name_lbl: Label
@@ -434,10 +437,16 @@ func _build_ui() -> void:
 	add_child(_hurt_overlay)
 
 	var panel_bg := ColorRect.new()
-	panel_bg.color    = Color(0.10, 0.10, 0.15)
+	panel_bg.color    = Color(0.075, 0.082, 0.115)
 	panel_bg.position = Vector2(PANEL_X, 0.0)
 	panel_bg.size     = Vector2(1280.0 - PANEL_X, 720.0)
 	add_child(panel_bg)
+
+	UITheme.color_band(self, Vector2(PANEL_X + 12.0, 14.0), Vector2(500.0, 102.0), Color(0.10, 0.11, 0.16, 0.82))
+	UITheme.color_band(self, Vector2(PANEL_X + 12.0, 126.0), Vector2(500.0, 210.0), Color(0.085, 0.098, 0.130, 0.82))
+	UITheme.color_band(self, Vector2(PANEL_X + 12.0, 346.0), Vector2(500.0, 72.0), Color(0.085, 0.105, 0.095, 0.78))
+	UITheme.color_band(self, Vector2(PANEL_X + 12.0, 424.0), Vector2(500.0, 122.0), Color(0.080, 0.085, 0.112, 0.76))
+	UITheme.color_band(self, Vector2(PANEL_X + 12.0, 618.0), Vector2(500.0, 88.0), Color(0.055, 0.065, 0.088, 0.84))
 
 	_phase_label          = _make_label(22, Color(0.95, 0.90, 0.50))
 	_phase_label.position = Vector2(PANEL_X + 20.0, 22.0)
@@ -488,7 +497,12 @@ func _build_ui() -> void:
 
 	_skip_btn = _make_button("Skip Attack", Vector2(PANEL_X + 20.0, 560.0), Vector2(220.0, 50.0))
 	_skip_btn.pressed.connect(_on_skip_pressed)
+	_skip_btn.visible = false
 	add_child(_skip_btn)
+
+	_cancel_btn = _make_button("Cancel / Deselect", Vector2(PANEL_X + 20.0, 560.0), Vector2(220.0, 50.0))
+	_cancel_btn.pressed.connect(_handle_right_click)
+	add_child(_cancel_btn)
 
 	_end_btn = _make_button("End Turn", Vector2(PANEL_X + 258.0, 560.0), Vector2(220.0, 50.0))
 	_end_btn.pressed.connect(_on_end_turn)
@@ -591,6 +605,9 @@ func _make_button(txt: String, pos: Vector2, sz: Vector2) -> Button:
 	btn.position = pos
 	btn.size     = sz
 	btn.add_theme_font_size_override("font_size", 16)
+	btn.add_theme_stylebox_override("normal", UITheme.button_style(Color(0.17, 0.24, 0.34)))
+	btn.add_theme_stylebox_override("hover", UITheme.button_style(Color(0.22, 0.31, 0.43)))
+	btn.add_theme_stylebox_override("pressed", UITheme.button_style(Color(0.11, 0.16, 0.24)))
 	return btn
 
 # Single-character glyph that visually represents each ability id.
@@ -802,10 +819,12 @@ func _update_ui() -> void:
 	if phase != Phase.PLAYER_TURN or selected_unit != null:
 		_end_turn_armed_at = -1.0
 	_skip_btn.visible = false   # retired in the AP model
+	if _cancel_btn != null:
+		_cancel_btn.visible = phase == Phase.PLAYER_TURN and selected_unit != null
 	match phase:
 		Phase.PLAYER_TURN:
 			_end_btn.visible = true
-			_end_btn.text    = "End Turn"
+			_end_btn.text    = "End Turn [Enter]"
 			if selected_unit == null:
 				_phase_label.text    = "Your Turn"
 				_instruct_label.text = "Click a unit to act. Move / attack / ability each cost 1 AP.\nEnd Turn when finished."
@@ -825,8 +844,12 @@ func _update_ui() -> void:
 			_instruct_label.text = "Enemy is acting…"
 			_unit_info_label.text = ""
 			_end_btn.visible     = false
+			if _cancel_btn != null:
+				_cancel_btn.visible = false
 		Phase.BATTLE_WON, Phase.BATTLE_LOST:
 			_end_btn.visible     = false
+			if _cancel_btn != null:
+				_cancel_btn.visible = false
 
 	# The ability action bar figures out its own visibility from the unit/AP.
 	_refresh_ability_bar()

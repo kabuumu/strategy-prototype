@@ -1,10 +1,15 @@
 extends Node2D
 
+const UITheme := preload("res://src/ui/ui_theme.gd")
+
 # ---------------------------------------------------------------------------
 # Layout constants
 # ---------------------------------------------------------------------------
 const TIER_Y: Array[float] = [630.0, 510.0, 390.0, 270.0, 150.0]
-const NODE_R: float = 34.0
+const NODE_R: float = 32.0
+const MAP_LEFT: float = 72.0
+const MAP_RIGHT: float = 820.0
+const SIDE_X: float = 880.0
 
 const TYPE_COLORS: Dictionary = {
 	"battle":       Color(0.80, 0.28, 0.28),
@@ -34,6 +39,7 @@ var _roster_label: Label
 var _gold_label: Label
 var _relics_label: Label
 var _depth_label: Label
+var _node_detail_label: Label
 var _popup: Control = null
 var _shop_relic_offer: String = ""
 
@@ -56,9 +62,9 @@ func _ready() -> void:
 
 func _draw() -> void:
 	# Background
-	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.06, 0.07, 0.10))
-	# HUD bar
-	draw_rect(Rect2(0.0, 670.0, 1280.0, 50.0), Color(0.08, 0.08, 0.14))
+	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), UITheme.BG)
+	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
+	draw_line(Vector2(SIDE_X - 22.0, 0.0), Vector2(SIDE_X - 22.0, 720.0), Color(0.25, 0.27, 0.35, 0.85), 1.0)
 	# Connection lines — drawn from stored connections so locked-out paths aren't shown
 	for tier in range(GameManager.MAP_TIERS - 1):
 		var from_count: int = GameManager.map_data[tier].size()
@@ -67,35 +73,14 @@ func _draw() -> void:
 			var from := Vector2(_node_x(i, from_count), TIER_Y[tier])
 			for j in GameManager.map_data[tier][i]["connections"]:
 				var to := Vector2(_node_x(j, to_count), TIER_Y[tier + 1])
-				draw_line(from, to, Color(0.35, 0.35, 0.48, 0.65), 2.0)
+				draw_line(from, to, Color(0.36, 0.37, 0.50, 0.62), 2.0)
 
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
 func _build_node_buttons() -> void:
-	# Title
-	var title := Label.new()
-	title.text = "Choose Your Path"
-	title.add_theme_font_size_override("font_size", 38)
-	title.modulate = Color(0.95, 0.90, 0.65)
-	title.position = Vector2(460.0, 22.0)
-	add_child(title)
-
-	# Legend
-	var legend_x := 20.0
-	for type_key: String in TYPE_COLORS.keys():
-		var dot := ColorRect.new()
-		dot.color = TYPE_COLORS[type_key]
-		dot.size = Vector2(14.0, 14.0)
-		dot.position = Vector2(legend_x, 698.0)
-		add_child(dot)
-		var lbl := Label.new()
-		lbl.text = TYPE_LABELS[type_key] + ": " + TYPE_DESC[type_key]
-		lbl.add_theme_font_size_override("font_size", 11)
-		lbl.modulate = Color(0.75, 0.75, 0.75)
-		lbl.position = Vector2(legend_x + 18.0, 696.0)
-		add_child(lbl)
-		legend_x += 260.0
+	add_child(UITheme.label("Choose Your Path", 38, Color(0.95, 0.90, 0.65), Vector2(72.0, 24.0)))
+	add_child(UITheme.label("Only highlighted nodes are reachable. Hover a node to preview the commitment.", 14, UITheme.TEXT_MUTED, Vector2(76.0, 70.0), Vector2(720.0, 28.0)))
 
 	# Node buttons
 	for tier in range(GameManager.MAP_TIERS):
@@ -104,9 +89,8 @@ func _build_node_buttons() -> void:
 
 func _node_x(index: int, count: int) -> float:
 	if count == 1:
-		return 640.0
-	var margin := 120.0
-	return margin + float(index) * (1280.0 - margin * 2.0) / float(count - 1)
+		return (MAP_LEFT + MAP_RIGHT) * 0.5
+	return MAP_LEFT + float(index) * (MAP_RIGHT - MAP_LEFT) / float(count - 1)
 
 func _add_node_button(tier: int, index: int) -> void:
 	var node_data: Dictionary = GameManager.map_data[tier][index]
@@ -124,10 +108,7 @@ func _add_node_button(tier: int, index: int) -> void:
 	btn.add_theme_stylebox_override("pressed",  _circle_style(base_color.darkened(0.25), NODE_R))
 	btn.add_theme_stylebox_override("disabled", _circle_style(Color(0.28, 0.28, 0.32), NODE_R))
 	btn.pressed.connect(_on_node_pressed.bind(tier, index))
-	# Hover preview on battle nodes only — other node types are self-explanatory
-	if node_data["type"] in ["battle", "elite_battle"]:
-		btn.mouse_entered.connect(_on_battle_node_hover.bind(tier, index, pos))
-		btn.mouse_exited.connect(_hide_battle_preview)
+	btn.mouse_entered.connect(_show_node_detail.bind(tier, index))
 	add_child(btn)
 	_node_buttons.append({"button": btn, "tier": tier, "index": index})
 
@@ -198,6 +179,41 @@ func _hide_battle_preview() -> void:
 	if _preview_panel:
 		_preview_panel.visible = false
 
+func _show_node_detail(tier: int, index: int) -> void:
+	if _node_detail_label == null:
+		return
+	_node_detail_label.text = _node_detail_text(tier, index)
+
+func _node_detail_text(tier: int, index: int) -> String:
+	var nd: Dictionary = GameManager.map_data[tier][index]
+	var type_key: String = String(nd["type"])
+	var title: String = TYPE_LABELS.get(type_key, "Node")
+	var lines: Array[String] = [title, TYPE_DESC.get(type_key, "")]
+	if type_key in ["battle", "elite_battle"]:
+		var elite := type_key == "elite_battle"
+		var roster: Array[String] = GameManager.get_battle_enemy_roster(tier, elite)
+		var counts: Dictionary = {}
+		for k: String in roster:
+			counts[k] = int(counts.get(k, 0)) + 1
+		lines.append("")
+		lines.append("Enemy preview:")
+		for k: String in counts.keys():
+			var udata: Dictionary = GameManager.UNIT_TYPES[k]
+			lines.append("%dx %s" % [counts[k], udata["name"]])
+		var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
+		if hp_mult > 1.001:
+			lines.append("HP scaling x%.2f" % hp_mult)
+	elif type_key == "gain_unit":
+		lines.append("")
+		lines.append("Adds one recruit of your choice.")
+	elif type_key == "shop":
+		lines.append("")
+		lines.append("Spend gold on healing, units, or a relic offer.")
+	elif type_key == "heal":
+		lines.append("")
+		lines.append("Restores every surviving unit to full HP.")
+	return "\n".join(lines)
+
 func _circle_style(color: Color, radius: float) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = color
@@ -209,31 +225,35 @@ func _circle_style(color: Color, radius: float) -> StyleBoxFlat:
 	return s
 
 func _build_hud() -> void:
-	_roster_label = Label.new()
-	_roster_label.add_theme_font_size_override("font_size", 15)
-	_roster_label.modulate = Color(0.90, 0.85, 0.70)
-	_roster_label.position = Vector2(12.0, 678.0)
-	add_child(_roster_label)
+	var side := UITheme.panel(self, Vector2(SIDE_X, 24.0), Vector2(328.0, 652.0), UITheme.PANEL, Color(0.34, 0.36, 0.46))
+	side.add_child(UITheme.label("Run", 24, UITheme.GOLD, Vector2(18.0, 14.0)))
 
-	_gold_label = Label.new()
-	_gold_label.add_theme_font_size_override("font_size", 16)
-	_gold_label.modulate = Color(0.95, 0.82, 0.25)
-	_gold_label.position = Vector2(12.0, 654.0)
-	add_child(_gold_label)
+	_depth_label = UITheme.label("", 14, UITheme.TEXT_MUTED, Vector2(18.0, 48.0), Vector2(286.0, 22.0))
+	side.add_child(_depth_label)
+	_gold_label = UITheme.label("", 18, UITheme.GOLD, Vector2(18.0, 82.0), Vector2(286.0, 24.0))
+	side.add_child(_gold_label)
 
-	_relics_label = Label.new()
-	_relics_label.add_theme_font_size_override("font_size", 13)
-	_relics_label.modulate = Color(0.75, 0.85, 0.95)
-	_relics_label.position = Vector2(220.0, 656.0)
-	_relics_label.size = Vector2(860.0, 40.0)
-	_relics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	add_child(_relics_label)
+	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 124.0)))
+	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 144.0), Vector2(292.0, 112.0))
+	side.add_child(_roster_label)
 
-	_depth_label = Label.new()
-	_depth_label.add_theme_font_size_override("font_size", 15)
-	_depth_label.modulate = Color(0.70, 0.70, 0.70)
-	_depth_label.position = Vector2(900.0, 678.0)
-	add_child(_depth_label)
+	side.add_child(UITheme.label("Relics", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 272.0)))
+	_relics_label = UITheme.label("", 12, Color(0.75, 0.85, 0.95), Vector2(18.0, 292.0), Vector2(292.0, 82.0))
+	side.add_child(_relics_label)
+
+	side.add_child(UITheme.label("Node", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 396.0)))
+	_node_detail_label = UITheme.label("", 13, UITheme.TEXT, Vector2(18.0, 418.0), Vector2(292.0, 132.0))
+	side.add_child(_node_detail_label)
+
+	side.add_child(UITheme.label("Legend", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 570.0)))
+	var lx := 18.0
+	var ly := 594.0
+	for type_key: String in TYPE_COLORS.keys():
+		UITheme.chip(side, TYPE_LABELS[type_key], Vector2(lx, ly), TYPE_COLORS[type_key], 92.0)
+		lx += 100.0
+		if lx > 220.0:
+			lx = 18.0
+			ly += 30.0
 
 # ---------------------------------------------------------------------------
 # Refresh state
@@ -271,13 +291,17 @@ func _refresh() -> void:
 		btn.add_theme_stylebox_override("normal",   style)
 		btn.add_theme_stylebox_override("disabled", style)
 
-	_roster_label.text = "Roster: " + _roster_text()
+	_roster_label.text = _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
-	_relics_label.text = "Relics: " + _relics_text()
+	_relics_label.text = _relics_text()
 	_depth_label.text  = "Tier %d / %d   ·   Wins: %d   ·   Best: %d" % [
 		cur_tier, GameManager.MAP_TIERS,
 		GameManager.battles_won, GameManager.best_streak_ever
 	]
+	if _node_detail_label != null and _node_detail_label.text == "":
+		var reach: Array = GameManager.get_reachable_indices()
+		if not reach.is_empty() and cur_tier < GameManager.MAP_TIERS:
+			_show_node_detail(cur_tier, int(reach[0]))
 
 	if cur_tier >= GameManager.MAP_TIERS:
 		_show_victory()
@@ -322,7 +346,12 @@ func _on_node_pressed(tier: int, index: int) -> void:
 		"battle", "elite_battle":
 			GameManager.pending_battle_tier  = tier
 			GameManager.pending_battle_elite = node_data["type"] == "elite_battle"
-			get_tree().change_scene_to_file("res://src/battle/battle.tscn")
+			# Route to the run's chosen battle style.
+			if GameManager.battle_mode == "3d":
+				GameManager.pending_skirmish = true
+				get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
+			else:
+				get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":
 			_show_unit_select_popup()
 		"shop":

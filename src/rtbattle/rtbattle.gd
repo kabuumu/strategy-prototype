@@ -13,6 +13,7 @@ extends Node2D
 #                       on an enemy regiment → attack it
 #   - Esc          : return to title
 
+const UITheme := preload("res://src/ui/ui_theme.gd")
 const RTUnit := preload("res://src/rtbattle/rt_unit.gd")
 
 # Per-unit-type definitions for the skirmish mode. Kept here (not in
@@ -91,6 +92,7 @@ const AI_RETARGET_PERIOD: float = 0.6
 # UI nodes
 var _status_label: Label
 var _selection_label: Label
+var _command_label: Label
 var _result_label: Label
 var _restart_hint_label: Label
 var _drag_box_rect: ColorRect
@@ -129,7 +131,7 @@ func _build_ui() -> void:
 	var top := ColorRect.new()
 	top.color    = Color(0.07, 0.09, 0.13, 0.92)
 	top.position = Vector2(0.0, 0.0)
-	top.size     = Vector2(1280.0, 60.0)
+	top.size     = Vector2(1280.0, 72.0)
 	_set_passthrough(top)
 	add_child(top)
 
@@ -147,13 +149,26 @@ func _build_ui() -> void:
 	_set_passthrough(_status_label)
 	add_child(_status_label)
 
+	_command_label = Label.new()
+	_command_label.text = "Select blue regiments, then right-click ground or enemies."
+	_command_label.add_theme_font_size_override("font_size", 13)
+	_command_label.modulate = Color(0.74, 0.78, 0.84)
+	_command_label.position = Vector2(302.0, 39.0)
+	_command_label.size = Vector2(530.0, 22.0)
+	_set_passthrough(_command_label)
+	add_child(_command_label)
+
 	var hint := Label.new()
-	hint.text = "SPACE pause  ·  L-click select / drag-box  ·  Shift-click add  ·  R-click move/attack  ·  R restart  ·  Esc menu"
+	hint.text = "Drag-box select  ·  Shift add  ·  Right-click orders"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.55, 0.55, 0.65)
-	hint.position = Vector2(440.0, 22.0)
+	hint.position = Vector2(302.0, 16.0)
 	_set_passthrough(hint)
 	add_child(hint)
+
+	add_child(UITheme.button("Pause", Vector2(884.0, 14.0), Vector2(104.0, 40.0), Color(0.18, 0.26, 0.36), _on_pause_button, 15))
+	add_child(UITheme.button("Restart", Vector2(1000.0, 14.0), Vector2(104.0, 40.0), Color(0.28, 0.22, 0.34), _on_restart_button, 15))
+	add_child(UITheme.button("Menu", Vector2(1116.0, 14.0), Vector2(104.0, 40.0), Color(0.30, 0.20, 0.20), _on_menu_button, 15))
 
 	# Bottom strip — selection info
 	var bot := ColorRect.new()
@@ -202,6 +217,16 @@ func _build_ui() -> void:
 	_drag_box_rect.visible      = false
 	_drag_box_rect.z_index      = 50
 	add_child(_drag_box_rect)
+
+func _on_pause_button() -> void:
+	if not _ended:
+		_set_paused(not _paused)
+
+func _on_restart_button() -> void:
+	get_tree().reload_current_scene()
+
+func _on_menu_button() -> void:
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 # ---------------------------------------------------------------------------
 # Army setup — symmetrical mirror skirmish so the mode is self-contained.
@@ -424,6 +449,10 @@ func _handle_right_click(mouse: Vector2) -> void:
 			if u.is_alive():
 				u.order_attack(enemy)
 		_spawn_waypoint(enemy.position, Color(1.0, 0.40, 0.40), 0.6)
+		if _command_label != null:
+			_command_label.text = "Attack order: %d regiment%s focusing %s." % [
+				selected_units.size(), "" if selected_units.size() == 1 else "s", enemy.unit_name
+			]
 		return
 	var target := Vector2(
 		clamp(mouse.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0),
@@ -449,6 +478,10 @@ func _handle_right_click(mouse: Vector2) -> void:
 			dest.y = clamp(dest.y, FIELD_RECT.position.y + 10.0, FIELD_RECT.end.y - 10.0)
 		u.order_move(dest)
 	_spawn_waypoint(target, Color(0.55, 0.95, 0.55), 0.6)
+	if _command_label != null:
+		_command_label.text = "Move order: %d regiment%s to marked ground." % [
+			n, "" if n == 1 else "s"
+		]
 
 func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 	var best: RTUnit = null
@@ -540,6 +573,8 @@ func _refresh_ui() -> void:
 			selected_units = alive_sel
 		if alive_sel.is_empty():
 			_selection_label.text = "No regiment selected — left-click one of your (blue) regiments, drag-box to select many, then right-click to give orders."
+			if _command_label != null and not _ended:
+				_command_label.modulate = Color(0.64, 0.68, 0.74)
 		elif alive_sel.size() == 1:
 			var u: RTUnit = alive_sel[0]
 			var order_txt := "idle"
@@ -554,6 +589,8 @@ func _refresh_ui() -> void:
 				% [u.unit_name, range_txt, u.hp, u.max_hp,
 				   u.alive_soldier_count(), u.soldier_count, order_txt]
 			)
+			if _command_label != null:
+				_command_label.modulate = Color(0.80, 0.86, 0.92)
 		else:
 			var total_hp: int = 0
 			var total_max: int = 0
@@ -564,6 +601,8 @@ func _refresh_ui() -> void:
 				"%d regiments selected  ·  %d / %d HP combined  ·  right-click to issue group order"
 				% [alive_sel.size(), total_hp, total_max]
 			)
+			if _command_label != null:
+				_command_label.modulate = Color(0.80, 0.86, 0.92)
 
 func _on_unit_died(u: RTUnit) -> void:
 	if selected_units.has(u):
