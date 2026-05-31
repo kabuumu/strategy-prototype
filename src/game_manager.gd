@@ -115,6 +115,7 @@ var battles_won: int = 0
 var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
+var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
 var last_run_won: bool = false
@@ -184,13 +185,21 @@ func _load_meta() -> void:
 	best_streak_ever  = int(cfg.get_value("meta", "best_streak_ever",  0))
 	best_tier_reached = int(cfg.get_value("meta", "best_tier_reached", 0))
 	total_runs        = int(cfg.get_value("meta", "total_runs",        0))
+	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 
 func _save_meta() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("meta", "best_streak_ever",  best_streak_ever)
 	cfg.set_value("meta", "best_tier_reached", best_tier_reached)
 	cfg.set_value("meta", "total_runs",        total_runs)
+	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.save(META_PATH)
+
+# Mark the first-battle help as seen (persists so it won't auto-open again).
+func mark_tutorial_seen() -> void:
+	if not tutorial_seen:
+		tutorial_seen = true
+		_save_meta()
 
 # ---------------------------------------------------------------------------
 # Map generation

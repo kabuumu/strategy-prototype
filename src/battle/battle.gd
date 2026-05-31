@@ -92,6 +92,7 @@ var _ability_name_lbl: Label
 var _ability_desc_lbl: Label
 var _ability_icon_lbl: Label
 var _ability_hint_lbl: Label
+var _help_overlay: Control = null
 var _ability_bg:       ColorRect
 var _end_btn:          Button
 
@@ -135,8 +136,12 @@ func _ready() -> void:
 	_generate_terrain()
 	_spawn_units()
 	_update_ui()
+	# First battle ever → auto-open the help panel once.
+	if not GameManager.tutorial_seen:
+		_toggle_help()
+		GameManager.mark_tutorial_seen()
 	# Boss-fight intro overlay
-	if GameManager.is_final_battle(GameManager.pending_battle_tier,
+	elif GameManager.is_final_battle(GameManager.pending_battle_tier,
 			GameManager.pending_battle_elite):
 		_show_boss_intro()
 
@@ -456,6 +461,11 @@ func _build_ui() -> void:
 	_end_btn = _make_button("End Turn", Vector2(PANEL_X + 258.0, 560.0), Vector2(220.0, 50.0))
 	_end_btn.pressed.connect(_on_end_turn)
 	add_child(_end_btn)
+
+	var help_hint := _make_label(13, Color(0.60, 0.62, 0.72))
+	help_hint.text     = "[H] Help"
+	help_hint.position = Vector2(PANEL_X + 410.0, 26.0)
+	add_child(help_hint)
 
 	# Battle log — last few combat events, sits below the action buttons
 	var log_header := _make_label(11, Color(0.45, 0.45, 0.50))
@@ -923,6 +933,17 @@ func _draw_damage_preview() -> void:
 # Input
 # ---------------------------------------------------------------------------
 func _input(event: InputEvent) -> void:
+	# Help toggle works in any phase (and while the help panel is open).
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode in [KEY_H, KEY_SLASH, KEY_QUESTION]:
+		_toggle_help()
+		return
+	# While help is open: Esc closes it; swallow all other input so board clicks
+	# don't fall through.
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_help()
+		return
 	if phase in [Phase.AI_ACTING, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
 		return
 
@@ -1191,23 +1212,27 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		# Enemy hit a player unit — extra "hit" cue + red flash, intensity ∝ damage.
 		Sfx.play("hit")
 		_flash_hurt(dmg, defender.max_hp)
+	# Build a single combat tag (crit/flank + optional cover) so one hit shows
+	# at most one emphasis label above the damage number, not three.
+	var tag := ""
+	var tag_col := Color(1.0, 0.85, 0.30)
 	if res["crit"]:
-		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
+		tag = "CRIT"; tag_col = Color(1.0, 0.45, 0.20)
 		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
 		_shake_grid(4.5)
 	elif res["flank"]:
-		defender.show_combat_label("FLANKED!", Color(1.0, 0.85, 0.30))
+		tag = "FLANK"
 		_log_event("%s ⚔ flank %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
 		_shake_grid(3.5)
 	else:
 		_log_event("%s hits %s for %d" % [_unit_label(attacker), _unit_label(defender), dmg])
 		_shake_grid(2.5)
-	# Cover tag — shown alongside whatever main combat label fired
-	if res["cover"] and not (res["crit"]):
-		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
+	if res["cover"]:
+		tag = (tag + "+" if tag != "" else "") + "COVER"
+	if tag != "":
+		defender.show_combat_label(tag, tag_col)
 	if not defender.is_alive():
 		_kill_punch()
-		Sfx.play("kill")
 		defender.play_death_animation()
 		defender.modulate = DEATH_TINT
 		Sfx.play("death")
@@ -1998,13 +2023,13 @@ func _tick_statuses(u: Unit) -> void:
 	# Standing in lava refreshes burn
 	if u.grid_pos in lava and u.is_alive():
 		u.apply_burn(2)
+	# DoT shows the floating damage number; the persistent ☠/🔥 badge gives
+	# the cause, so no extra word popup is needed.
 	if u.poison_turns > 0:
 		u.take_damage(POISON_DMG)
-		u.show_status_popup("-%d poison" % POISON_DMG, Color(0.45, 0.85, 0.30))
 		u.poison_turns -= 1
 	if u.is_alive() and u.burn_turns > 0:
 		u.take_damage(BURN_DMG)
-		u.show_status_popup("-%d burn" % BURN_DMG, Color(1.0, 0.5, 0.15))
 		u.burn_turns -= 1
 	if not u.is_alive():
 		u.modulate = DEATH_TINT
@@ -2027,16 +2052,106 @@ func _all_dead(units: Array[Unit]) -> bool:
 # Toast notifications
 # ---------------------------------------------------------------------------
 func _show_toast(text: String, color: Color) -> void:
+	# Banner in the clear band below the grid (grid bottom ≈ 615), so it never
+	# overlaps the initiative strip (top) or the units.
+	var holder := Control.new()
+	holder.position = Vector2(40.0, 624.0)
+	holder.z_index  = 50
+	add_child(holder)
+	var bg := ColorRect.new()
+	bg.color    = Color(0.0, 0.0, 0.0, 0.55)
+	bg.size     = Vector2(700.0, 30.0)
+	holder.add_child(bg)
 	var lbl := Label.new()
 	lbl.text     = text
-	lbl.add_theme_font_size_override("font_size", 19)
+	lbl.add_theme_font_size_override("font_size", 18)
 	lbl.modulate = color
-	# Position above the grid centre so it doesn't clash with units
-	lbl.position = Vector2(50.0, 18.0)
-	add_child(lbl)
+	lbl.position = Vector2(10.0, 4.0)
+	holder.add_child(lbl)
 	var tw := create_tween()
-	tw.tween_interval(2.5)
-	tw.tween_callback(lbl.queue_free)
+	tw.tween_interval(2.2)
+	tw.tween_property(holder, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(holder.queue_free)
+
+# ---------------------------------------------------------------------------
+# Help overlay
+# ---------------------------------------------------------------------------
+const HELP_TEXT := """[ CONTROLS ]
+Left-click a unit to select.  Click a blue tile to move, a red tile to attack.
+Right-click / Esc cancels.   Tab = next unit.   Enter = end turn.
+Q = ability.   T = threat overlay.   F = fast-forward.   H = toggle this help.
+
+[ COMBAT ]
+Each unit moves then attacks once per round; you can attack diagonally.
+CRIT (random) and FLANK (an ally on the opposite side of the target) add damage.
+
+[ TERRAIN ]
+Mountain blocks movement.   Forest = cover (defender takes less).
+Hill = high ground (attacker hits harder).   Lava = burns the occupant each round.
+
+[ STATUSES ]  (badges on the unit)
+Stun ⚡ skips its next turn.   Poison ☠ and Burn 🔥 deal damage each round.
+
+[ ABILITIES ]  (Q — once per battle)
+Soldier: Shield Bash (stun)   ·   Archer: Piercing Shot (hits unit behind)
+Scout: Dash (move again)   ·   Healer: Field Heal (heal an ally)
+
+[ MAP & ROSTER ]
+Step on ★ objectives for heal/reinforce bonuses.
+Win battles for gold + a unit upgrade; elites drop relics; spend gold at Shops.
+HP carries between battles and the fallen stay dead — permadeath."""
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = _build_help_overlay()
+	add_child(_help_overlay)
+
+func _build_help_overlay() -> Control:
+	var root := Control.new()
+	root.z_index = 200
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.78)
+	dim.size  = Vector2(1280.0, 720.0)
+	root.add_child(dim)
+
+	var panel := Panel.new()
+	panel.position = Vector2(150.0, 60.0)
+	panel.size     = Vector2(980.0, 600.0)
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0.10, 0.11, 0.16, 0.98)
+	for side in ["left", "right", "top", "bottom"]:
+		s.set("border_width_" + side, 2)
+	s.border_color = Color(0.55, 0.60, 0.80)
+	for corner in ["corner_radius_top_left", "corner_radius_top_right",
+			"corner_radius_bottom_left", "corner_radius_bottom_right"]:
+		s.set(corner, 10)
+	panel.add_theme_stylebox_override("panel", s)
+	root.add_child(panel)
+
+	var title := Label.new()
+	title.text = "How to Play"
+	title.add_theme_font_size_override("font_size", 30)
+	title.modulate = Color(0.95, 0.92, 0.70)
+	title.position = Vector2(34.0, 20.0)
+	panel.add_child(title)
+
+	var body := Label.new()
+	body.text = HELP_TEXT
+	body.add_theme_font_size_override("font_size", 16)
+	body.modulate = Color(0.85, 0.88, 0.92)
+	body.position = Vector2(34.0, 72.0)
+	body.size     = Vector2(912.0, 470.0)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(body)
+
+	var close := _make_button("Close  [H / Esc]", Vector2(360.0, 532.0), Vector2(260.0, 46.0))
+	close.pressed.connect(_toggle_help)
+	panel.add_child(close)
+	return root
 
 # ---------------------------------------------------------------------------
 # Win / Loss overlays

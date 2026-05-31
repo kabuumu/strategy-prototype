@@ -34,6 +34,7 @@ func apply_burn(turns: int) -> void:
 var _body: Sprite2D
 var _status_label: Label
 var _hp_bar: ColorRect
+var _float_slot: int = 0   # next free vertical slot for stacked floating text
 
 # ---------------------------------------------------------------------------
 func setup(type: String, p_team: int, pos: Vector2i) -> void:
@@ -190,20 +191,32 @@ func play_death_animation() -> void:
 			_body.position.y + 18.0, 0.45).set_trans(Tween.TRANS_QUAD)
 	tw.tween_property(_body, "modulate:a", 0.55, 0.45)
 
-# Floating damage number that drifts up and fades
-func _spawn_damage_number(amount: int) -> void:
+# Unified floating text. Concurrent messages are stacked into vertical slots
+# so they never overlap; each rises and fades, then frees its slot. This is the
+# single entry point for damage numbers, combat tags, and ability/status words.
+func float_text(text: String, color: Color, font_size: int = 16, emphasis: bool = false) -> void:
+	var slot := _float_slot
+	_float_slot += 1
 	var lbl := Label.new()
-	lbl.text = str(amount)
-	lbl.add_theme_font_size_override("font_size", 20)
-	lbl.modulate = Color(1.0, 0.85, 0.2)
-	lbl.position = Vector2(-12.0, -34.0)
-	lbl.z_index  = 100
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", font_size)
+	lbl.modulate = color
+	lbl.z_index  = 101 if emphasis else 100
+	lbl.size = Vector2(60.0, 16.0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var y0 := -34.0 - float(slot) * 18.0
+	lbl.position = Vector2(-30.0, y0)
 	add_child(lbl)
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(lbl, "position:y", -58.0, 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_property(lbl, "modulate:a", 0.0, 0.7).set_delay(0.15)
-	tw.chain().tween_callback(lbl.queue_free)
+	tw.tween_property(lbl, "position:y", y0 - 22.0, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.8).set_delay(0.25)
+	tw.chain().tween_callback(func() -> void:
+		lbl.queue_free()
+		_float_slot = maxi(0, _float_slot - 1))
+
+func _spawn_damage_number(amount: int) -> void:
+	float_text(str(amount), Color(1.0, 0.85, 0.2), 20)
 
 # Quick red flash on the sprite (independent of the unit's acted/dead tint)
 func _flash_hit() -> void:
@@ -213,20 +226,9 @@ func _flash_hit() -> void:
 	var tw := create_tween()
 	tw.tween_property(_body, "modulate", Color(1.0, 1.0, 1.0), 0.25)
 
-# Floating status word (e.g. "STUNNED!") that rises and fades
+# Floating status/ability word (e.g. "STUNNED!", "DASH!", "+35")
 func show_status_popup(text: String, color: Color) -> void:
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 15)
-	lbl.modulate = color
-	lbl.position = Vector2(-26.0, -48.0)
-	lbl.z_index  = 100
-	add_child(lbl)
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(lbl, "position:y", -70.0, 0.9)
-	tw.tween_property(lbl, "modulate:a", 0.0, 0.9).set_delay(0.3)
-	tw.chain().tween_callback(lbl.queue_free)
+	float_text(text, color, 15)
 
 func get_ability() -> Dictionary:
 	return GameManager.UNIT_TYPES[unit_type].get("ability", {})
@@ -246,20 +248,9 @@ func _is_boss() -> bool:
 func is_alive() -> bool:
 	return hp > 0
 
-# Floating coloured label (e.g. "CRIT!" / "FLANKED!") shown above the unit.
+# Emphasised combat tag (e.g. "CRIT", "FLANK+COVER") shown above the unit.
 func show_combat_label(text: String, color: Color) -> void:
-	var lbl := Label.new()
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 14)
-	lbl.modulate = color
-	lbl.position = Vector2(-26.0, -54.0)
-	lbl.z_index  = 101
-	add_child(lbl)
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(lbl, "position:y", -78.0, 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_property(lbl, "modulate:a", 0.0, 0.9).set_delay(0.30)
-	tw.chain().tween_callback(lbl.queue_free)
+	float_text(text, color, 14, true)
 
 func get_move_range() -> int:
 	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
