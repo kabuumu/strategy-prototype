@@ -47,10 +47,12 @@ func _build_ui() -> void:
 	y += 78.0
 
 	# Skirmishes are self-contained battle modes, no campaign state touched.
-	_add_menu_button("Skirmish 3D", Vector2(490.0, y), Vector2(145.0, 54.0),
+	_add_menu_button("Skirmish 3D", Vector2(430.0, y), Vector2(120.0, 54.0),
 		Color(0.45, 0.30, 0.62), _on_skirmish_3d)
-	_add_menu_button("Skirmish 2D", Vector2(645.0, y), Vector2(145.0, 54.0),
+	_add_menu_button("Skirmish 2D", Vector2(580.0, y), Vector2(120.0, 54.0),
 		Color(0.32, 0.40, 0.55), _on_skirmish_2d)
+	_add_menu_button("Auto Battle", Vector2(730.0, y), Vector2(120.0, 54.0),
+		Color(0.30, 0.48, 0.36), _on_auto_battler)
 
 	var hint := Label.new()
 	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
@@ -117,6 +119,9 @@ func _on_skirmish_3d() -> void:
 
 func _on_skirmish_2d() -> void:
 	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
+
+func _on_auto_battler() -> void:
+	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the

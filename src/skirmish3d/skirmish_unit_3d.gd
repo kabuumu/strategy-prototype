@@ -506,7 +506,7 @@ func _flash_hit() -> void:
 	var tw := create_tween()
 	tw.tween_property(mat, "albedo_color", old, HIT_FLASH_TIME)
 
-func tick(delta: float, neighbours: Array) -> Dictionary:
+func tick(delta: float, neighbours: Array, combat: bool = true) -> Dictionary:
 	var fired: Dictionary = {"fired": false}
 	if not is_alive():
 		return fired
@@ -515,7 +515,7 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		_cooldown = max(0.0, _cooldown - delta)
 
 	# --- Morale / rout ---------------------------------------------------
-	var enemy_near: bool = _find_nearest_enemy_in_radius(neighbours, engage_radius_world * 2.5) != null
+	var enemy_near: bool = combat and _find_nearest_enemy_in_radius(neighbours, engage_radius_world * 2.5) != null
 	if routing:
 		morale = min(100.0, morale + 22.0 * delta)
 		if morale >= 55.0 and not enemy_near:
@@ -545,9 +545,11 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 	if order == Order.MOVE and global_position.distance_to(move_target) <= 0.35:
 		order = Order.IDLE
 
-	# Hold-ground auto-stance.
-	if order == Order.IDLE:
+	# Hold-ground auto-stance (disabled during deployment).
+	if order == Order.IDLE and combat:
 		attack_target = _find_nearest_enemy_in_radius(neighbours, engage_radius_world)
+	elif not combat:
+		attack_target = null
 
 	var move_intent := Vector3.ZERO
 	var want_move := false
