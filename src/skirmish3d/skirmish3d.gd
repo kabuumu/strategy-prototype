@@ -1,6 +1,7 @@
 extends Node3D
 
 const SkirmishUnit3D := preload("res://src/skirmish3d/skirmish_unit_3d.gd")
+const Hex := preload("res://src/battle/hex.gd")
 
 # Core 3D skirmish constants. These are intentionally independent from
 # campaign data so this mode remains a self-contained training board.
@@ -54,6 +55,13 @@ const AI_RETARGET_PERIOD: float = 0.6
 const DRAG_THRESHOLD: float = 7.0
 const PICK_SCREEN_RADIUS: float = 17.0
 const PICK_RAY_RADIUS_SCALE: float = 1.8
+const TERRAIN_COLS: int = 14
+const TERRAIN_ROWS: int = 11
+const TERRAIN_HEX_RADIUS: float = 2.3
+const TERRAIN_X_SPACING: float = 3.9
+const TERRAIN_Z_SPACING: float = 2.95
+const TERRAIN_ORIGIN_X: float = -27.0
+const TERRAIN_ORIGIN_Z: float = -14.5
 
 var player_units: Array[SkirmishUnit3D] = []
 var enemy_units: Array[SkirmishUnit3D] = []
@@ -70,10 +78,16 @@ var _drag_additive: bool = false
 var _ai_retarget_timer: float = 0.0
 
 var _waypoints: Array = []
+var _biome: Dictionary = {}
+var _mountains: Array[Vector2i] = []
+var _forests: Array[Vector2i] = []
+var _hills: Array[Vector2i] = []
+var _lava: Array[Vector2i] = []
 
 var _camera: Camera3D
 var _ground: MeshInstance3D
 var _ground_body: StaticBody3D
+var _terrain_node: Node3D
 
 var _ui: CanvasLayer
 var _status_label: Label
@@ -84,16 +98,84 @@ var _drag_box: ColorRect
 
 func _ready() -> void:
 	set_process_unhandled_input(true)
+	_generate_terrain()
 	_build_field()
 	_build_ui()
 	_spawn_armies()
 	_set_paused(false)
 	_refresh_ui()
 
+func _generate_terrain() -> void:
+	_mountains.clear()
+	_forests.clear()
+	_hills.clear()
+	_lava.clear()
+	var tier: int = clampi(GameManager.current_tier, 0, GameManager.MAP_TIERS - 1)
+	_biome = GameManager.biome_for_tier(tier)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(tier * 127 + 31)
+	var mtn: Vector2i = _biome.get("mtn", Vector2i(2, 3))
+
+	var reserved: Array[Vector2i] = []
+	for z in [1, 5, 9]:
+		reserved.append(Vector2i(1, z))
+		reserved.append(Vector2i(TERRAIN_COLS - 2, z))
+
+	var col_lo: int = 2
+	var col_hi: int = TERRAIN_COLS - 3
+	var cluster_count: int = rng.randi_range(mtn.x, mtn.y) + 2
+	for _c in range(cluster_count):
+		var seed_cell := Vector2i(rng.randi_range(col_lo, col_hi), rng.randi_range(0, TERRAIN_ROWS - 1))
+		if seed_cell not in reserved and seed_cell not in _mountains:
+			_mountains.append(seed_cell)
+
+		var growth: int = rng.randi_range(1, 3)
+		for _g in range(growth):
+			var candidates: Array[Vector2i] = []
+			for mc: Vector2i in _mountains:
+				for adj: Vector2i in Hex.neighbors(mc):
+					if _valid_terrain_cell(adj) and adj.x >= col_lo and adj.x <= col_hi \
+							and adj not in _mountains and adj not in reserved:
+						candidates.append(adj)
+			if not candidates.is_empty():
+				_mountains.append(candidates[rng.randi() % candidates.size()])
+
+	var taken: Array[Vector2i] = reserved.duplicate()
+	taken.append_array(_mountains)
+	_place_terrain_cells(rng, _forests, int(_biome.get("forest", 3) * 1.6), taken)
+	_place_terrain_cells(rng, _hills, int(_biome.get("hill", 2) * 1.6), taken)
+	_place_terrain_cells(rng, _lava, int(_biome.get("lava", 0) * 1.6), taken)
+
+func _valid_terrain_cell(cell: Vector2i) -> bool:
+	return cell.x >= 0 and cell.x < TERRAIN_COLS and cell.y >= 0 and cell.y < TERRAIN_ROWS
+
+func _place_terrain_cells(rng: RandomNumberGenerator, target: Array[Vector2i], count: int, taken: Array[Vector2i]) -> void:
+	var tries: int = 0
+	while target.size() < count and tries < 80:
+		tries += 1
+		var cell := Vector2i(rng.randi_range(1, TERRAIN_COLS - 2), rng.randi_range(0, TERRAIN_ROWS - 1))
+		if cell not in taken:
+			target.append(cell)
+			taken.append(cell)
+
 func _build_field() -> void:
 	var world := Node3D.new()
 	world.name = "World"
 	add_child(world)
+
+	# Lighting + ambient so the low-poly unit figures read as 3D (the figures
+	# use shaded materials; the ground stays flat/unshaded).
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-55.0, -42.0, 0.0)
+	sun.light_energy = 1.15
+	world.add_child(sun)
+	var env := WorldEnvironment.new()
+	var e := Environment.new()
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color(0.46, 0.49, 0.58)
+	e.ambient_light_energy = 0.6
+	env.environment = e
+	world.add_child(env)
 
 	_camera = Camera3D.new()
 	_camera.position = Vector3(0.0, CAMERA_Y, 34.0)
@@ -109,9 +191,11 @@ func _build_field() -> void:
 	_ground.position = Vector3(0.0, 0.0, 0.0)
 	var gm := StandardMaterial3D.new()
 	gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	gm.albedo_color = Color(0.16, 0.22, 0.17)
+	var ground_color: Color = _biome.get("bg", Color(0.07, 0.10, 0.07))
+	gm.albedo_color = ground_color.lightened(0.05)
 	_ground.material_override = gm
 	world.add_child(_ground)
+	_build_terrain_visuals(world)
 
 	_ground_body = StaticBody3D.new()
 	var cs := CollisionShape3D.new()
@@ -121,6 +205,142 @@ func _build_field() -> void:
 	_ground_body.add_child(cs)
 	world.add_child(_ground_body)
 	_ground_body.position = Vector3(0.0, 0.0, 0.0)
+
+func _build_terrain_visuals(world: Node3D) -> void:
+	_terrain_node = Node3D.new()
+	_terrain_node.name = "ProceduralTerrain"
+	world.add_child(_terrain_node)
+
+	for row in range(TERRAIN_ROWS):
+		for col in range(TERRAIN_COLS):
+			var cell := Vector2i(col, row)
+			var pos: Vector3 = _terrain_cell_world(cell)
+			var color: Color = _terrain_cell_color(cell)
+			_add_hex_patch(pos, color)
+			if cell in _mountains:
+				_add_mountain_cluster(pos, _cell_seed(cell))
+			elif cell in _forests:
+				_add_forest_cluster(pos, _cell_seed(cell))
+			elif cell in _hills:
+				_add_hill(pos, _cell_seed(cell))
+			elif cell in _lava:
+				_add_lava_pool(pos)
+
+func _terrain_cell_world(cell: Vector2i) -> Vector3:
+	var x: float = TERRAIN_ORIGIN_X + float(cell.x) * TERRAIN_X_SPACING
+	if (cell.y & 1) == 1:
+		x += TERRAIN_X_SPACING * 0.5
+	var z: float = TERRAIN_ORIGIN_Z + float(cell.y) * TERRAIN_Z_SPACING
+	return Vector3(x, 0.03, z)
+
+func _terrain_cell_color(cell: Vector2i) -> Color:
+	if cell in _mountains:
+		return Color(0.19, 0.17, 0.15)
+	if cell in _forests:
+		return Color(0.10, 0.25, 0.12)
+	if cell in _hills:
+		return Color(0.30, 0.25, 0.15)
+	if cell in _lava:
+		return Color(0.46, 0.12, 0.04)
+	var bg: Color = _biome.get("bg", Color(0.07, 0.10, 0.07))
+	return bg.lightened(0.14 if (cell.x + cell.y) % 2 == 0 else 0.08)
+
+func _cell_seed(cell: Vector2i) -> int:
+	return cell.x * 73856093 ^ cell.y * 19349663
+
+func _make_mat(color: Color, unshaded: bool = false, emission: Color = Color(0.0, 0.0, 0.0, 0.0)) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.9
+	if unshaded:
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if emission.a > 0.0:
+		mat.emission_enabled = true
+		mat.emission = emission
+		mat.emission_energy_multiplier = 0.55
+	return mat
+
+func _add_hex_patch(pos: Vector3, color: Color) -> void:
+	var tile := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = TERRAIN_HEX_RADIUS
+	mesh.bottom_radius = TERRAIN_HEX_RADIUS
+	mesh.height = 0.08
+	mesh.radial_segments = 6
+	tile.mesh = mesh
+	tile.position = pos
+	tile.rotation_degrees.y = 30.0
+	tile.material_override = _make_mat(color.lightened(0.02), false)
+	_terrain_node.add_child(tile)
+
+func _add_mountain_cluster(pos: Vector3, seed: int) -> void:
+	for i in range(3):
+		var rock := MeshInstance3D.new()
+		var mesh := CylinderMesh.new()
+		mesh.top_radius = 0.0
+		mesh.bottom_radius = 0.75 + float((seed + i * 17) % 30) * 0.01
+		mesh.height = 1.9 + float((seed + i * 29) % 40) * 0.025
+		mesh.radial_segments = 5
+		rock.mesh = mesh
+		var ox: float = float(((seed + i * 41) % 100) - 50) * 0.018
+		var oz: float = float(((seed + i * 53) % 100) - 50) * 0.018
+		rock.position = pos + Vector3(ox, mesh.height * 0.5 + 0.07, oz)
+		rock.rotation_degrees.y = float((seed + i * 37) % 90)
+		rock.material_override = _make_mat(Color(0.43, 0.39, 0.33), false)
+		_terrain_node.add_child(rock)
+
+func _add_forest_cluster(pos: Vector3, seed: int) -> void:
+	for i in range(5):
+		var ox: float = float(((seed + i * 31) % 100) - 50) * 0.025
+		var oz: float = float(((seed + i * 47) % 100) - 50) * 0.025
+		_add_tree(pos + Vector3(ox, 0.0, oz), seed + i * 11)
+
+func _add_tree(pos: Vector3, seed: int) -> void:
+	var trunk := MeshInstance3D.new()
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.08
+	trunk_mesh.bottom_radius = 0.11
+	trunk_mesh.height = 0.55
+	trunk_mesh.radial_segments = 6
+	trunk.mesh = trunk_mesh
+	trunk.position = pos + Vector3(0.0, 0.32, 0.0)
+	trunk.material_override = _make_mat(Color(0.28, 0.18, 0.10), false)
+	_terrain_node.add_child(trunk)
+
+	var canopy := MeshInstance3D.new()
+	var canopy_mesh := CylinderMesh.new()
+	canopy_mesh.top_radius = 0.0
+	canopy_mesh.bottom_radius = 0.42 + float(seed % 20) * 0.006
+	canopy_mesh.height = 0.95
+	canopy_mesh.radial_segments = 7
+	canopy.mesh = canopy_mesh
+	canopy.position = pos + Vector3(0.0, 0.98, 0.0)
+	canopy.material_override = _make_mat(Color(0.16, 0.42, 0.18), false)
+	_terrain_node.add_child(canopy)
+
+func _add_hill(pos: Vector3, seed: int) -> void:
+	var hill := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = TERRAIN_HEX_RADIUS * 0.34
+	mesh.bottom_radius = TERRAIN_HEX_RADIUS * 0.78
+	mesh.height = 0.65 + float(seed % 20) * 0.01
+	mesh.radial_segments = 9
+	hill.mesh = mesh
+	hill.position = pos + Vector3(0.0, mesh.height * 0.5 + 0.04, 0.0)
+	hill.material_override = _make_mat(Color(0.52, 0.43, 0.27), false)
+	_terrain_node.add_child(hill)
+
+func _add_lava_pool(pos: Vector3) -> void:
+	var lava := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = TERRAIN_HEX_RADIUS * 0.48
+	mesh.bottom_radius = TERRAIN_HEX_RADIUS * 0.48
+	mesh.height = 0.1
+	mesh.radial_segments = 12
+	lava.mesh = mesh
+	lava.position = pos + Vector3(0.0, 0.08, 0.0)
+	lava.material_override = _make_mat(Color(0.95, 0.34, 0.08), true, Color(1.0, 0.42, 0.05, 1.0))
+	_terrain_node.add_child(lava)
 
 func _build_ui() -> void:
 	_ui = CanvasLayer.new()

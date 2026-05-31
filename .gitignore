@@ -6,3 +6,11 @@ build/
 
 # Local MCP server config (contains machine-specific absolute paths)
 .mcp.json
+
+# 3D model assets — large binaries, not committed (see assets/models/README.md).
+# The skirmish3d mode falls back to procedural figures when these are absent.
+assets/models/*.glb
+assets/models/*.gltf
+assets/models/*.bin
+assets/models/*.import
+

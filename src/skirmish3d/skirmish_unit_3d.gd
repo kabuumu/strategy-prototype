@@ -75,20 +75,111 @@ func setup(type: String, p_team: int, world_pos: Vector3, stats: Dictionary) -> 
 	engage_radius_world = (attack_range_px + 40.0) * WORLD_SCALE
 	_build_visuals()
 
+func _solid_mat(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 0.85
+	return m
+
+var team_color: Color:
+	get: return Color(0.30, 0.53, 1.0) if team == 0 else Color(0.95, 0.28, 0.28)
+
+# Build a small low-poly humanoid figure rooted at `root` (its torso), with a
+# head, two legs and a class weapon. Used both for the regiment's lead figure
+# and (smaller) for the squad markers.
+func _build_figure(root: MeshInstance3D, scale_mul: float, with_weapon: bool) -> void:
+	var torso := BoxMesh.new()
+	torso.size = Vector3(0.62, 0.74, 0.36) * scale_mul
+	root.mesh = torso
+	root.material_override = _solid_mat(team_color)
+
+	var head := MeshInstance3D.new()
+	var hs := SphereMesh.new()
+	hs.radius = 0.24 * scale_mul
+	hs.height = 0.48 * scale_mul
+	head.mesh = hs
+	head.position = Vector3(0.0, 0.6 * scale_mul, 0.0)
+	head.material_override = _solid_mat(Color(0.87, 0.72, 0.55))
+	root.add_child(head)
+
+	for lx: float in [-0.16, 0.16]:
+		var leg := MeshInstance3D.new()
+		var lb := BoxMesh.new()
+		lb.size = Vector3(0.2, 0.62, 0.28) * scale_mul
+		leg.mesh = lb
+		leg.position = Vector3(lx * scale_mul, -0.66 * scale_mul, 0.0)
+		leg.material_override = _solid_mat(team_color.darkened(0.35))
+		root.add_child(leg)
+
+	if with_weapon:
+		var wpn := MeshInstance3D.new()
+		if is_ranged:
+			var bow := TorusMesh.new()
+			bow.inner_radius = 0.20 * scale_mul
+			bow.outer_radius = 0.30 * scale_mul
+			wpn.mesh = bow
+			wpn.position = Vector3(0.42 * scale_mul, 0.18 * scale_mul, 0.0)
+			wpn.material_override = _solid_mat(Color(0.55, 0.40, 0.22))
+		else:
+			var shaft := BoxMesh.new()
+			shaft.size = Vector3(0.07, 1.35, 0.07) * scale_mul
+			wpn.mesh = shaft
+			wpn.position = Vector3(0.42 * scale_mul, 0.30 * scale_mul, 0.0)
+			wpn.rotation_degrees = Vector3(0.0, 0.0, 12.0)
+			wpn.material_override = _solid_mat(Color(0.72, 0.74, 0.80))
+		root.add_child(wpn)
+
+# Optional external 3D models. These files are NOT committed (gitignored —
+# see assets/models/README.md). If present they're used for the regiment's
+# lead figure; otherwise we fall back to the procedural low-poly figure so the
+# mode always works.
+const MODEL_DIR: String = "res://assets/models/"
+const MODEL_FILES: Dictionary = {
+	"soldier": "infantry.glb",
+	"archer":  "archer.glb",
+	"scout":   "cavalry.glb",
+	"healer":  "spearman.glb",
+}
+
+func _try_load_model(scale_mul: float) -> Node3D:
+	var fname: String = MODEL_FILES.get(unit_type, "")
+	if fname == "":
+		return null
+	var path := MODEL_DIR + fname
+	if not ResourceLoader.exists(path):
+		return null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return null
+	var inst := scene.instantiate() as Node3D
+	if inst == null:
+		return null
+	inst.scale = Vector3.ONE * scale_mul
+	return inst
+
 func _build_visuals() -> void:
-	# Body: simple colored pillar so this mode stays robust in 3D.
+	# Body root. _body is the torso (hit-flash target) for the procedural figure;
+	# with an external model it just hosts the model + a team-coloured base.
 	_body = MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 1.0
-	cyl.bottom_radius = 1.0
-	cyl.height = 1.4
-	_body.mesh = cyl
-	_body.position = Vector3.ZERO
-	var body_mat := StandardMaterial3D.new()
-	body_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	body_mat.albedo_color = (Color(0.30, 0.53, 1.0) if team == 0 else Color(1.0, 0.25, 0.25))
-	_body.material_override = body_mat
+	_body.position = Vector3(0.0, 0.95, 0.0)
 	add_child(_body)
+
+	var model := _try_load_model(1.0)
+	if model != null:
+		_body.add_child(model)
+		# Face inward and add a team-coloured base disc so sides read clearly
+		_body.rotation_degrees = Vector3(0.0, 90.0 if team == 0 else -90.0, 0.0)
+		var base := MeshInstance3D.new()
+		var disc := CylinderMesh.new()
+		disc.top_radius = 0.5
+		disc.bottom_radius = 0.5
+		disc.height = 0.08
+		base.mesh = disc
+		base.position = Vector3(0.0, -0.9, 0.0)
+		base.material_override = _solid_mat(team_color)
+		_body.add_child(base)
+	else:
+		_build_figure(_body, 1.0, true)
 
 	# Selection rings (top-down flat quads would be better, but cylinders keep
 	# this implementation stable across Godot versions.
@@ -143,26 +234,19 @@ func _build_visuals() -> void:
 	_hp_fill.material_override = fg_mat
 	add_child(_hp_fill)
 
-	# Create faux-soldier markers as tiny capsules. This gives immediate visual
-	# feedback of losses without using a 2D sprite-based squad visual.
+	# Squad markers — tiny low-poly figures arranged in a formation grid around
+	# the lead figure, so losses are visible as troopers vanish.
 	var cols: int = max(1, int(ceil(sqrt(float(soldier_count)))))
-	var spacing: float = 0.28 / max(1, cols)
+	var spacing: float = 0.62
 	for i in range(soldier_count):
 		var s := Soldier.new()
 		var col: int = i % cols
 		var row: int = i / cols
 		var ox := (float(col) - float(cols - 1) * 0.5) * spacing
-		var oz := (float(row) - float(cols - 1) * 0.5) * spacing * 0.85
-		var sp := CapsuleMesh.new()
-		sp.radius = 0.06
-		sp.height = 0.12
+		var oz := (float(row) - float(cols - 1) * 0.5) * spacing * 0.85 + 0.9
 		s.mesh = MeshInstance3D.new()
-		s.mesh.mesh = sp
-		s.mesh.position = Vector3(ox, 0.5, oz)
-		var sm := StandardMaterial3D.new()
-		sm.albedo_color = Color(1.0, 1.0, 1.0, 0.85)
-		sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		s.mesh.material_override = sm
+		_build_figure(s.mesh, 0.42, false)   # small, no weapon
+		s.mesh.position = Vector3(ox, 0.32, oz)
 		add_child(s.mesh)
 		_soldiers.append(s)
 

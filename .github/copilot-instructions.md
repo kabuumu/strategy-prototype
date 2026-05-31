@@ -6,6 +6,12 @@ Godot 4.4 turn-based strategy game written in GDScript. Engine version: 4.4, ren
 
 There are no build/test/lint commands — the game is run and tested through the Godot editor.
 
+## Assets
+
+Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed and regenerated via `tools/gen_sprites.py` / `tools/gen_sfx.py`.
+
+**3D models are NOT committed** — `assets/models/*.glb` is gitignored (large binaries). The 3D skirmish mode (`src/skirmish3d/`) uses them when present and falls back to procedural low-poly figures otherwise, so it always runs. Check `assets/models/` and `assets/models/README.md` (expected filenames + CC0 sources) before assuming models are available; `SkirmishUnit3D.MODEL_FILES` maps unit type → filename.
+
 ## Architecture
 
 ### Scene flow
