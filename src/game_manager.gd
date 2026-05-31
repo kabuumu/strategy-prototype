@@ -112,8 +112,6 @@ var map_data: Array = []
 
 # Run statistics — reset on every new run
 var battles_won: int = 0
-var elites_defeated: int = 0
-var units_lost: int = 0
 var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
@@ -167,15 +165,11 @@ func reset() -> void:
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	battles_won = 0
-	elites_defeated = 0
-	units_lost = 0
 	_generate_map()
 
 # Called by battle on victory. Updates streak counters.
-func register_battle_won(elite: bool) -> void:
+func register_battle_won(_elite: bool) -> void:
 	battles_won += 1
-	if elite:
-		elites_defeated += 1
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
 		_save_meta()
@@ -351,7 +345,6 @@ func heal_roster() -> void:
 # Called by battle on victory: rebuild roster from surviving units (dead units
 # are dropped — permadeath) carrying their remaining HP and upgrades forward.
 func set_roster(survivors: Array[Dictionary]) -> void:
-	units_lost += max(0, player_roster.size() - survivors.size())
 	player_roster = survivors
 
 # Apply an upgrade to a roster entry by index. Bumps stored HP for VETERAN so

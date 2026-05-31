@@ -26,6 +26,7 @@ const HEAL_AMOUNT: int = 30
 const POISON_DMG: int = 8
 const BURN_DMG: int = 12
 const DEATH_TINT := Color(0.32, 0.32, 0.32, 0.50)
+const ACTED_TINT := Color(0.58, 0.58, 0.58, 1.0)   # greyed once a unit has acted
 
 # ---------------------------------------------------------------------------
 # Turn state machine
@@ -1181,7 +1182,6 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
 	defender.take_damage(dmg)
-	Sfx.play("attack")
 	# Stat tracking — bucket by attacker identity so we can pick an MVP later
 	var aid: int = attacker.get_instance_id()
 	if attacker.team == 0:
@@ -1295,7 +1295,7 @@ func _kill_punch() -> void:
 
 func _commit_player_unit_turn() -> void:
 	selected_unit.has_acted = true
-	selected_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+	selected_unit.modulate  = ACTED_TINT
 	selected_unit           = null
 	move_cells.clear()
 	attack_cells.clear()
@@ -1440,7 +1440,7 @@ func _on_end_turn() -> void:
 
 	if selected_unit:
 		selected_unit.has_acted = true
-		selected_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+		selected_unit.modulate  = ACTED_TINT
 		selected_unit           = null
 	move_cells.clear()
 	attack_cells.clear()
@@ -1563,7 +1563,7 @@ func _execute_one_ai_unit() -> void:
 
 	await _ai_act(ai_unit)
 	ai_unit.has_acted = true
-	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+	ai_unit.modulate  = ACTED_TINT
 	queue_redraw()
 
 	if _all_dead(player_units):
@@ -1599,7 +1599,7 @@ func _execute_remaining_ai_units() -> void:
 
 	await _ai_act(ai_unit)
 	ai_unit.has_acted = true
-	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+	ai_unit.modulate  = ACTED_TINT
 	queue_redraw()
 
 	if _all_dead(player_units):
@@ -1896,17 +1896,7 @@ func _occupied_cells_except(excluded: Unit) -> Array[Vector2i]:
 	return cells
 
 func _all_occupied_cells() -> Array[Vector2i]:
-	var cells: Array[Vector2i] = []
-	for u: Unit in player_units:
-		if u.is_alive():
-			cells.append(u.grid_pos)
-	for u: Unit in enemy_units:
-		if u.is_alive():
-			cells.append(u.grid_pos)
-	return cells
-
-func _best_move_toward(unit: Unit, target: Unit) -> Vector2i:
-	return _best_move_to_cell(unit, target.grid_pos)
+	return _occupied_cells_except(null)
 
 func _best_move_to_cell(unit: Unit, target_cell: Vector2i) -> Vector2i:
 	var best_pos  := unit.grid_pos
@@ -1988,7 +1978,7 @@ func _mark_all_acted(units: Array[Unit]) -> void:
 	for u: Unit in units:
 		if u.is_alive() and not u.has_acted:
 			u.has_acted = true
-			u.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+			u.modulate  = ACTED_TINT
 
 func _reset_acted_flags(units: Array[Unit]) -> void:
 	for u: Unit in units:
@@ -2026,7 +2016,7 @@ func _consume_stun(u: Unit) -> bool:
 		return false
 	u.stunned   = false
 	u.has_acted = true
-	u.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+	u.modulate  = ACTED_TINT
 	u.show_status_popup("STUNNED!", STUN_COLOR)
 	return true
 
@@ -2056,7 +2046,6 @@ var _relic_reward: String = ""
 
 func _trigger_win() -> void:
 	phase = Phase.BATTLE_WON
-	Sfx.play("victory")
 	_persist_roster()
 	_gold_reward = GameManager.battle_gold_reward(
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
