@@ -74,6 +74,7 @@ var mountains: Array[Vector2i] = []
 var forests:   Array[Vector2i] = []
 var hills:     Array[Vector2i] = []
 var lava:      Array[Vector2i] = []
+var _biome:    Dictionary = {}   # current tier's biome (see GameManager.BIOMES)
 const FOREST_DEFENSE: float = 0.65   # damage multiplier to a defender in forest
 const HILL_ATTACK:    float = 1.30   # damage multiplier from an attacker on a hill
 
@@ -182,12 +183,15 @@ func _generate_terrain() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = GameManager.pending_battle_tier * 127 + (73 if GameManager.pending_battle_elite else 31)
 
+	_biome = GameManager.biome_for_tier(GameManager.pending_battle_tier)
+	var mtn: Vector2i = _biome["mtn"]
+
 	# Cells that must stay passable (objectives + initial unit rows)
 	var reserved: Array[Vector2i] = []
 	for obj: Dictionary in objectives:
 		reserved.append(obj["grid_pos"])
 
-	var cluster_count := rng.randi_range(3, 5)
+	var cluster_count := rng.randi_range(mtn.x, mtn.y)
 	for _c in range(cluster_count):
 		var seed_cell := Vector2i(rng.randi_range(2, 7), rng.randi_range(0, GRID_ROWS - 1))
 		if seed_cell not in reserved and seed_cell not in mountains:
@@ -218,16 +222,22 @@ func _generate_terrain() -> void:
 			if c not in taken:
 				target.append(c)
 				taken.append(c)
-	_place.call(forests, 5)
-	_place.call(hills, 4)
-	_place.call(lava, 3)
+	_place.call(forests, int(_biome["forest"]))
+	_place.call(hills, int(_biome["hill"]))
+	_place.call(lava, int(_biome["lava"]))
 
 # ---------------------------------------------------------------------------
 # Custom drawing — grid tiles + objective highlights
 # ---------------------------------------------------------------------------
 func _draw() -> void:
-	# Background — drawn here so it sits beneath the grid and objectives
-	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.07, 0.08, 0.07))
+	# Background — tinted by the current biome, beneath the grid and objectives
+	var bg: Color = _biome.get("bg", Color(0.07, 0.08, 0.07))
+	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), bg)
+	# Biome name, faint, centred above the grid
+	var biome_name: String = _biome.get("name", "")
+	if biome_name != "":
+		draw_string(ThemeDB.fallback_font, Vector2(GRID_OFFSET.x + 250.0, 48.0),
+			biome_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.65, 0.65, 0.72, 0.7))
 
 	# Grid tiles
 	for x in range(GRID_COLS):
