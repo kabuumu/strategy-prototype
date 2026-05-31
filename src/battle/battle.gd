@@ -85,6 +85,9 @@ func _init_objectives() -> void:
 # Custom drawing — grid tiles + objective highlights
 # ---------------------------------------------------------------------------
 func _draw() -> void:
+	# Background — drawn here so it sits beneath the grid and objectives
+	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.07, 0.08, 0.07))
+
 	# Grid tiles
 	for x in range(GRID_COLS):
 		for y in range(GRID_ROWS):
@@ -99,11 +102,11 @@ func _draw() -> void:
 			elif cell in move_cells:
 				color = Color(0.16, 0.36, 0.65, 0.80)
 			elif (x + y) % 2 == 0:
-				color = Color(0.13, 0.18, 0.12)
+				color = Color(0.15, 0.21, 0.14)
 			else:
-				color = Color(0.11, 0.16, 0.10)
+				color = Color(0.10, 0.14, 0.09)
 			draw_rect(rect, color)
-			draw_rect(rect, Color(0.22, 0.28, 0.20), false, 1.0)
+			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.85), false, 1.5)
 
 	# Objectives drawn on top of the tiles
 	for obj: Dictionary in objectives:
@@ -133,11 +136,6 @@ func _draw() -> void:
 # Build UI
 # ---------------------------------------------------------------------------
 func _build_ui() -> void:
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.08, 0.07)
-	bg.size  = Vector2(1280.0, 720.0)
-	add_child(bg)
-
 	_grid_node          = Node2D.new()
 	_grid_node.position = GRID_OFFSET
 	add_child(_grid_node)
