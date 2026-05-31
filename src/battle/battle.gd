@@ -366,8 +366,8 @@ func _spawn_units() -> void:
 	var p_rows := _distribute_rows(roster.size())
 	for i in range(roster.size()):
 		var entry: Dictionary = roster[i]
-		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]))
-		# Carry persisted HP forward (clamped to current max)
+		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]), entry.get("upgrades", []))
+		# Carry persisted HP forward (clamped to current max — VETERAN may have raised it)
 		u.hp = clampi(int(entry["hp"]), 1, u.max_hp)
 		u._refresh_hp_bar()
 		player_units.append(u)
@@ -378,7 +378,7 @@ func _spawn_units() -> void:
 	var e_list  := GameManager.get_battle_enemy_roster(tier, elite)
 	var e_rows  := _distribute_rows(e_list.size())
 	for i in range(e_list.size()):
-		var u := _create_unit(e_list[i], 1, Vector2i(GRID_COLS - 1, e_rows[i]))
+		var u := _create_unit(e_list[i], 1, Vector2i(GRID_COLS - 1, e_rows[i]), [])
 		u.max_hp = int(u.max_hp * hp_mult)
 		u.hp     = u.max_hp
 		u._refresh_hp_bar()
@@ -410,10 +410,11 @@ func _distribute_rows(count: int) -> Array[int]:
 		rows.append(int(step * (i + 1)))
 	return rows
 
-func _create_unit(unit_type: String, team: int, pos: Vector2i) -> Unit:
+func _create_unit(unit_type: String, team: int, pos: Vector2i, ups: Array = []) -> Unit:
 	var scene: PackedScene = load("res://src/battle/unit.tscn")
 	var u := scene.instantiate() as Unit
 	_grid_node.add_child(u)
+	u.upgrades = ups.duplicate()
 	u.setup(unit_type, team, pos)
 	return u
 
@@ -473,9 +474,15 @@ func _update_ui() -> void:
 
 	if selected_unit and phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK]:
 		var udata: Dictionary = GameManager.UNIT_TYPES[selected_unit.unit_type]
-		_unit_info_label.text = "[%s]\nHP: %d / %d\nMove: %d  ·  Range: %d  ·  Dmg: %d" % [
-			udata["name"], selected_unit.hp, selected_unit.max_hp,
-			udata["move_range"], udata["attack_range"], udata["damage"]
+		var ups := selected_unit.upgrade_short_labels()
+		var up_str: String = ("   ✦ " + ", ".join(ups)) if ups.size() > 0 else ""
+		# Show effective stats (post-upgrade), with base in parens when bonused
+		_unit_info_label.text = "[%s]%s\nHP: %d / %d\nMove: %d  ·  Range: %d  ·  Dmg: %d" % [
+			udata["name"], up_str,
+			selected_unit.hp, selected_unit.max_hp,
+			selected_unit.get_move_range(),
+			selected_unit.get_attack_range(),
+			selected_unit.get_damage()
 		]
 
 	_refresh_obj_status()
@@ -1368,7 +1375,11 @@ func _persist_roster() -> void:
 	var survivors: Array[Dictionary] = []
 	for u: Unit in player_units:
 		if u.is_alive():
-			survivors.append({"type": u.unit_type, "hp": u.hp})
+			survivors.append({
+				"type": u.unit_type,
+				"hp":   u.hp,
+				"upgrades": u.upgrades.duplicate(),
+			})
 	GameManager.set_roster(survivors)
 
 func _trigger_loss() -> void:
@@ -1378,8 +1389,8 @@ func _trigger_loss() -> void:
 
 func _show_result_overlay(won: bool) -> void:
 	var panel := Panel.new()
-	panel.position = Vector2(290.0, 190.0)
-	panel.size     = Vector2(700.0, 340.0)
+	panel.position = Vector2(220.0, 110.0)
+	panel.size     = Vector2(840.0, 500.0)
 
 	var s := StyleBoxFlat.new()
 	s.bg_color        = Color(0.07, 0.07, 0.12, 0.97)
@@ -1393,9 +1404,9 @@ func _show_result_overlay(won: bool) -> void:
 
 	var title := Label.new()
 	title.text     = "Victory!" if won else "Defeat!"
-	title.add_theme_font_size_override("font_size", 56)
+	title.add_theme_font_size_override("font_size", 48)
 	title.modulate  = Color(0.95, 0.85, 0.20) if won else Color(0.95, 0.30, 0.30)
-	title.position  = Vector2(220.0, 45.0)
+	title.position  = Vector2(330.0, 22.0)
 	panel.add_child(title)
 
 	var sub := Label.new()
@@ -1408,11 +1419,115 @@ func _show_result_overlay(won: bool) -> void:
 		sub.text = "All your units were destroyed.\nFinal streak: %d battles won" % GameManager.battles_won
 	sub.add_theme_font_size_override("font_size", 16)
 	sub.modulate  = Color(0.72, 0.72, 0.72)
-	sub.position  = Vector2(120.0, 125.0)
+	sub.position  = Vector2(180.0, 90.0)
 	panel.add_child(sub)
 
+	if won and not GameManager.player_roster.is_empty():
+		_build_upgrade_picker(panel)
+	else:
+		_build_post_battle_buttons(panel, won)
+
+# Reward step: 3 random upgrade cards. Click → choose a survivor.
+func _build_upgrade_picker(panel: Panel) -> void:
+	var header := Label.new()
+	header.text = "Choose a Reward"
+	header.add_theme_font_size_override("font_size", 22)
+	header.modulate = Color(0.95, 0.90, 0.45)
+	header.position = Vector2(310.0, 150.0)
+	panel.add_child(header)
+
+	var hint := Label.new()
+	hint.text = "Pick an upgrade card, then assign it to a surviving unit."
+	hint.add_theme_font_size_override("font_size", 13)
+	hint.modulate = Color(0.65, 0.65, 0.65)
+	hint.position = Vector2(225.0, 185.0)
+	panel.add_child(hint)
+
+	var choices := GameManager.random_upgrade_choices(3)
+	for i in range(choices.size()):
+		var id: String = choices[i]
+		var data: Dictionary = GameManager.UPGRADE_TYPES[id]
+		var card := Button.new()
+		card.position = Vector2(60.0 + i * 250.0, 215.0)
+		card.size     = Vector2(220.0, 110.0)
+		card.text     = "%s\n\n%s" % [data["name"], data["desc"]]
+		card.add_theme_font_size_override("font_size", 15)
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.16, 0.16, 0.22)
+		st.border_color = data["color"]
+		st.border_width_left = 2
+		st.border_width_right = 2
+		st.border_width_top = 2
+		st.border_width_bottom = 2
+		st.corner_radius_top_left = 6
+		st.corner_radius_top_right = 6
+		st.corner_radius_bottom_left = 6
+		st.corner_radius_bottom_right = 6
+		card.add_theme_stylebox_override("normal", st)
+		card.add_theme_stylebox_override("hover", st)
+		card.add_theme_stylebox_override("pressed", st)
+		card.pressed.connect(_on_upgrade_card_picked.bind(panel, id))
+		panel.add_child(card)
+
+	var skip := Button.new()
+	skip.text = "Skip reward — Continue"
+	skip.position = Vector2(290.0, 430.0)
+	skip.size     = Vector2(260.0, 44.0)
+	skip.add_theme_font_size_override("font_size", 15)
+	skip.pressed.connect(func() -> void:
+		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	)
+	skip.name = "SkipBtn"
+	panel.add_child(skip)
+
+# Card clicked: replace cards with survivor-picker buttons
+func _on_upgrade_card_picked(panel: Panel, upgrade_id: String) -> void:
+	# Strip out the upgrade-card buttons and the skip button
+	for child in panel.get_children():
+		if child is Button:
+			child.queue_free()
+	# Update header
+	for child in panel.get_children():
+		if child is Label and (child as Label).text.begins_with("Choose"):
+			(child as Label).text = "Apply '%s' to which unit?" % \
+					GameManager.UPGRADE_TYPES[upgrade_id]["name"]
+
+	var roster := GameManager.player_roster
+	for i in range(roster.size()):
+		var entry: Dictionary = roster[i]
+		var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
+		var max_hp: int = GameManager.unit_effective_max_hp(entry)
+		var ups: Array = entry.get("upgrades", [])
+		var label_txt: String = "%s\nHP %d/%d" % [udata["name"], int(entry["hp"]), max_hp]
+		if ups.size() > 0:
+			label_txt += "\n✦ %d upgrade%s" % [ups.size(), "" if ups.size() == 1 else "s"]
+		var btn := Button.new()
+		# Three-per-row grid
+		var col := i % 3
+		var row := i / 3
+		btn.position = Vector2(70.0 + col * 250.0, 220.0 + row * 90.0)
+		btn.size     = Vector2(220.0, 80.0)
+		btn.text     = label_txt
+		btn.add_theme_font_size_override("font_size", 14)
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.14, 0.18, 0.22)
+		st.border_color = udata["color"]
+		st.border_width_left = 2
+		st.border_width_right = 2
+		st.border_width_top = 2
+		st.border_width_bottom = 2
+		btn.add_theme_stylebox_override("normal", st)
+		btn.pressed.connect(_on_upgrade_assigned.bind(i, upgrade_id))
+		panel.add_child(btn)
+
+func _on_upgrade_assigned(roster_index: int, upgrade_id: String) -> void:
+	GameManager.apply_upgrade(roster_index, upgrade_id)
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+# Defeat / fallback buttons (no upgrade flow)
+func _build_post_battle_buttons(panel: Panel, won: bool) -> void:
 	var btn1 := Button.new()
-	btn1.position = Vector2(90.0, 220.0)
+	btn1.position = Vector2(165.0, 320.0)
 	btn1.size     = Vector2(220.0, 60.0)
 	btn1.add_theme_font_size_override("font_size", 18)
 	if won:
@@ -1430,7 +1545,7 @@ func _show_result_overlay(won: bool) -> void:
 
 	var btn2 := Button.new()
 	btn2.text     = "Main Menu"
-	btn2.position = Vector2(390.0, 220.0)
+	btn2.position = Vector2(455.0, 320.0)
 	btn2.size     = Vector2(220.0, 60.0)
 	btn2.add_theme_font_size_override("font_size", 18)
 	btn2.pressed.connect(func() -> void:

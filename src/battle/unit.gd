@@ -11,6 +11,7 @@ var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false
 var stunned: bool = false       # skips its next activation
 var ability_used: bool = false  # special ability is once per battle
+var upgrades: Array = []        # roguelike upgrades (see GameManager.UPGRADE_TYPES)
 
 var _body: Sprite2D
 var _hp_bar: ColorRect
@@ -23,6 +24,10 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 
 	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
 	max_hp = udata["max_hp"]
+	# VETERAN: +20 max HP per stack (applied here so HP bar/initial fill are right)
+	for u in upgrades:
+		if u == "veteran":
+			max_hp += 20
 	hp     = max_hp
 
 	_build_visuals(udata)
@@ -157,10 +162,33 @@ func show_combat_label(text: String, color: Color) -> void:
 	tw.chain().tween_callback(lbl.queue_free)
 
 func get_move_range() -> int:
-	return GameManager.UNIT_TYPES[unit_type]["move_range"]
+	var v: int = GameManager.UNIT_TYPES[unit_type]["move_range"]
+	for u in upgrades:
+		if u == "swift":
+			v += 1
+	return v
 
 func get_attack_range() -> int:
-	return GameManager.UNIT_TYPES[unit_type]["attack_range"]
+	var v: int = GameManager.UNIT_TYPES[unit_type]["attack_range"]
+	for u in upgrades:
+		if u == "eagle_eye":
+			v += 1
+	return mini(v, 4)
 
 func get_damage() -> int:
-	return GameManager.UNIT_TYPES[unit_type]["damage"]
+	var v: int = GameManager.UNIT_TYPES[unit_type]["damage"]
+	for u in upgrades:
+		if u == "sharpshooter":
+			v += 5
+	return v
+
+# Short labels for upgrades (e.g. ["VET", "SS"]) for compact UI display
+func upgrade_short_labels() -> Array[String]:
+	var out: Array[String] = []
+	for u in upgrades:
+		match u:
+			"veteran":      out.append("VET")
+			"sharpshooter": out.append("SS")
+			"swift":        out.append("SWF")
+			"eagle_eye":    out.append("EYE")
+	return out

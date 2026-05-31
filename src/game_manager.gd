@@ -37,6 +37,19 @@ const UNIT_TYPES: Dictionary = {
 }
 
 # ---------------------------------------------------------------------------
+# Persistent unit upgrades earned after battle wins
+# ---------------------------------------------------------------------------
+# Stacking is permitted (multiple SHARPSHOOTERs = +5 dmg each).
+# Effects are applied in unit.gd's getters and during setup.
+const UPGRADE_TYPES: Dictionary = {
+	"veteran":      {"name": "Veteran",      "desc": "+20 max HP, heal 20",  "color": Color(0.50, 0.95, 0.45)},
+	"sharpshooter": {"name": "Sharpshooter", "desc": "+5 damage",            "color": Color(0.95, 0.45, 0.30)},
+	"swift":        {"name": "Swift",        "desc": "+1 move range",        "color": Color(0.45, 0.75, 0.95)},
+	"eagle_eye":    {"name": "Eagle Eye",    "desc": "+1 attack range (max 4)", "color": Color(0.95, 0.85, 0.35)},
+}
+const UPGRADE_IDS: Array[String] = ["veteran", "sharpshooter", "swift", "eagle_eye"]
+
+# ---------------------------------------------------------------------------
 # Map constants
 # ---------------------------------------------------------------------------
 const MAP_TIERS: int = 5
@@ -230,18 +243,56 @@ func add_unit(unit_type: String) -> void:
 	player_roster.append({
 		"type": unit_type,
 		"hp":   int(UNIT_TYPES[unit_type]["max_hp"]),
+		"upgrades": [] as Array,
 	})
 
-# Restore every roster unit to full HP (heal node).
+# Restore every roster unit to full HP (heal node). Honours VETERAN HP boosts.
 func heal_roster() -> void:
 	for entry: Dictionary in player_roster:
-		entry["hp"] = int(UNIT_TYPES[entry["type"]]["max_hp"])
+		entry["hp"] = unit_effective_max_hp(entry)
 
 # Called by battle on victory: rebuild roster from surviving units (dead units
-# are dropped — permadeath) carrying their remaining HP forward.
+# are dropped — permadeath) carrying their remaining HP and upgrades forward.
 func set_roster(survivors: Array[Dictionary]) -> void:
 	units_lost += max(0, player_roster.size() - survivors.size())
 	player_roster = survivors
+
+# Apply an upgrade to a roster entry by index. Bumps stored HP for VETERAN so
+# the heal is honoured immediately.
+func apply_upgrade(roster_index: int, upgrade_id: String) -> void:
+	if roster_index < 0 or roster_index >= player_roster.size():
+		return
+	if not UPGRADE_TYPES.has(upgrade_id):
+		return
+	var entry: Dictionary = player_roster[roster_index]
+	var ups: Array = entry.get("upgrades", [])
+	ups.append(upgrade_id)
+	entry["upgrades"] = ups
+	if upgrade_id == "veteran":
+		# Heal 20 (capped at new effective max)
+		var new_max := unit_effective_max_hp(entry)
+		entry["hp"] = mini(new_max, int(entry["hp"]) + 20)
+	player_roster[roster_index] = entry
+
+# Total max HP after VETERAN stacks
+func unit_effective_max_hp(entry: Dictionary) -> int:
+	var base: int = int(UNIT_TYPES[entry["type"]]["max_hp"])
+	var bonus: int = 0
+	for u: String in entry.get("upgrades", []):
+		if u == "veteran":
+			bonus += 20
+	return base + bonus
+
+# Pick `count` distinct random upgrades from the pool. If pool is smaller,
+# returns all of them.
+func random_upgrade_choices(count: int) -> Array[String]:
+	var pool: Array[String] = UPGRADE_IDS.duplicate()
+	pool.shuffle()
+	var n: int = mini(count, pool.size())
+	var out: Array[String] = []
+	for i in range(n):
+		out.append(pool[i])
+	return out
 
 # ---------------------------------------------------------------------------
 # Economy

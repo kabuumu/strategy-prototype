@@ -198,12 +198,14 @@ func _roster_text() -> String:
 	for entry: Dictionary in GameManager.player_roster:
 		var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
 		var hp: int = int(entry["hp"])
-		var max_hp: int = int(udata["max_hp"])
+		var max_hp: int = GameManager.unit_effective_max_hp(entry)
 		# Flag wounded units so heal nodes read as worthwhile
 		var hp_str: String = "%d/%d" % [hp, max_hp]
 		if hp < max_hp:
 			hp_str += "⚠"
-		parts.append("%s %s" % [udata["name"], hp_str])
+		var ups: Array = entry.get("upgrades", [])
+		var up_str: String = (" ✦%d" % ups.size()) if ups.size() > 0 else ""
+		parts.append("%s %s%s" % [udata["name"], hp_str, up_str])
 	return "   ".join(parts)
 
 # ---------------------------------------------------------------------------
