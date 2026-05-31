@@ -246,7 +246,7 @@ func _build_ui() -> void:
 	_build_unit_legend()
 
 	_skip_btn = _make_button("Skip Attack", Vector2(PANEL_X + 20.0, 560.0), Vector2(220.0, 50.0))
-	_skip_btn.pressed.connect(_on_skip_attack)
+	_skip_btn.pressed.connect(_on_skip_pressed)
 	add_child(_skip_btn)
 
 	_end_btn = _make_button("End Turn", Vector2(PANEL_X + 258.0, 560.0), Vector2(220.0, 50.0))
@@ -296,7 +296,12 @@ func _spawn_units() -> void:
 	var roster := GameManager.player_roster
 	var p_rows := _distribute_rows(roster.size())
 	for i in range(roster.size()):
-		player_units.append(_create_unit(roster[i], 0, Vector2i(0, p_rows[i])))
+		var entry: Dictionary = roster[i]
+		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]))
+		# Carry persisted HP forward (clamped to current max)
+		u.hp = clampi(int(entry["hp"]), 1, u.max_hp)
+		u._refresh_hp_bar()
+		player_units.append(u)
 
 	var tier    := GameManager.pending_battle_tier
 	var elite   := GameManager.pending_battle_elite
@@ -338,14 +343,16 @@ func _update_ui() -> void:
 			_end_btn.text        = "End Turn"
 		Phase.PLAYER_SELECT_MOVE:
 			_phase_label.text    = "Move Unit"
-			_instruct_label.text = "Click a blue tile to move.\nRight-click to deselect."
-			_skip_btn.visible    = false
+			_instruct_label.text = "Click a blue tile to move, or Skip Move to attack from here.\nRight-click to deselect."
+			_skip_btn.visible    = true
+			_skip_btn.text       = "Skip Move"
 			_end_btn.visible     = true
 			_end_btn.text        = "Forfeit Unit"
 		Phase.PLAYER_SELECT_ATTACK:
 			_phase_label.text    = "Attack"
 			_instruct_label.text = "Click a red tile to attack.\nOr click Skip Attack."
 			_skip_btn.visible    = true
+			_skip_btn.text       = "Skip Attack"
 			_end_btn.visible     = false
 		Phase.AI_ACTING:
 			_phase_label.text    = "Enemy Turn"
@@ -454,9 +461,30 @@ func _try_attack(cell: Vector2i) -> void:
 			return
 
 func _do_attack(attacker: Unit, defender: Unit) -> void:
+	_lunge(attacker, defender)
 	defender.take_damage(attacker.get_damage())
+	_shake_grid(2.5)
 	if not defender.is_alive():
+		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
+
+# Attacker hops toward the target and back
+func _lunge(attacker: Unit, defender: Unit) -> void:
+	var home := attacker.position
+	var dir: Vector2 = (defender.position - attacker.position)
+	if dir.length() > 0.0:
+		dir = dir.normalized() * 11.0
+	var tw := create_tween()
+	tw.tween_property(attacker, "position", home + dir, 0.07).set_trans(Tween.TRANS_QUAD)
+	tw.tween_property(attacker, "position", home, 0.13).set_trans(Tween.TRANS_QUAD)
+
+# Brief positional shake of the unit layer
+func _shake_grid(amount: float) -> void:
+	var tw := create_tween()
+	for _i in range(4):
+		tw.tween_property(_grid_node, "position",
+			GRID_OFFSET + Vector2(randf_range(-amount, amount), randf_range(-amount, amount)), 0.03)
+	tw.tween_property(_grid_node, "position", GRID_OFFSET, 0.04)
 
 func _commit_player_unit_turn() -> void:
 	selected_unit.has_acted = true
@@ -471,9 +499,16 @@ func _commit_player_unit_turn() -> void:
 
 	_run_one_ai_unit()
 
-func _on_skip_attack() -> void:
-	if phase == Phase.PLAYER_SELECT_ATTACK:
-		_commit_player_unit_turn()
+func _on_skip_pressed() -> void:
+	match phase:
+		Phase.PLAYER_SELECT_MOVE:
+			# Attack from current cell without moving
+			move_cells.clear()
+			attack_cells = _get_attack_cells(selected_unit, enemy_units)
+			phase = Phase.PLAYER_SELECT_ATTACK
+			_update_ui()
+		Phase.PLAYER_SELECT_ATTACK:
+			_commit_player_unit_turn()
 
 func _on_end_turn() -> void:
 	if selected_unit:
@@ -637,7 +672,7 @@ func _ai_act(ai_unit: Unit) -> void:
 		_check_capture(ai_unit)
 		# Still attack if a player unit happens to be in range
 		if combat_target != null and \
-				_manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+				_chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 			_do_attack(ai_unit, combat_target)
 		return
 
@@ -645,7 +680,7 @@ func _ai_act(ai_unit: Unit) -> void:
 	if combat_target == null:
 		return
 
-	if _manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 		_do_attack(ai_unit, combat_target)
 		return
 
@@ -654,7 +689,7 @@ func _ai_act(ai_unit: Unit) -> void:
 		ai_unit.grid_pos = best
 		ai_unit.update_visual_position()
 	_check_capture(ai_unit)
-	if _manhattan(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
 		_do_attack(ai_unit, combat_target)
 
 # ---------------------------------------------------------------------------
@@ -693,7 +728,7 @@ func _get_attack_cells(attacker: Unit, targets: Array[Unit]) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	var range_val := attacker.get_attack_range()
 	for t: Unit in targets:
-		if t.is_alive() and _manhattan(attacker.grid_pos, t.grid_pos) <= range_val:
+		if t.is_alive() and _chebyshev(attacker.grid_pos, t.grid_pos) <= range_val:
 			cells.append(t.grid_pos)
 	return cells
 
@@ -755,6 +790,11 @@ func _nearest_capturable_obj(ai_unit: Unit) -> Vector2i:
 func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return abs(a.x - b.x) + abs(a.y - b.y)
 
+# Chebyshev (chessboard) distance — used for attack range so a unit can hit
+# diagonally adjacent targets, not just orthogonal ones.
+func _chebyshev(a: Vector2i, b: Vector2i) -> int:
+	return maxi(abs(a.x - b.x), abs(a.y - b.y))
+
 # ---------------------------------------------------------------------------
 # Round helpers
 # ---------------------------------------------------------------------------
@@ -791,10 +831,25 @@ func _show_toast(text: String, color: Color) -> void:
 # ---------------------------------------------------------------------------
 # Win / Loss overlays
 # ---------------------------------------------------------------------------
+var _gold_reward: int = 0
+
 func _trigger_win() -> void:
 	phase = Phase.BATTLE_WON
+	_persist_roster()
+	_gold_reward = GameManager.battle_gold_reward(
+		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
+	GameManager.add_gold(_gold_reward)
 	_update_ui()
 	_show_result_overlay(true)
+
+# Survivors (incl. objective-spawned reinforcements) carry forward with their
+# remaining HP; the fallen are dropped from the roster — permadeath.
+func _persist_roster() -> void:
+	var survivors: Array[Dictionary] = []
+	for u: Unit in player_units:
+		if u.is_alive():
+			survivors.append({"type": u.unit_type, "hp": u.hp})
+	GameManager.set_roster(survivors)
 
 func _trigger_loss() -> void:
 	phase = Phase.BATTLE_LOST
@@ -824,7 +879,10 @@ func _show_result_overlay(won: bool) -> void:
 	panel.add_child(title)
 
 	var sub := Label.new()
-	sub.text     = "All enemies defeated." if won else "All your units were destroyed."
+	if won:
+		sub.text = "All enemies defeated.   +%d gold  (total %d)" % [_gold_reward, GameManager.gold]
+	else:
+		sub.text = "All your units were destroyed."
 	sub.add_theme_font_size_override("font_size", 18)
 	sub.modulate  = Color(0.72, 0.72, 0.72)
 	sub.position  = Vector2(170.0, 130.0)

@@ -40,10 +40,17 @@ const MAP_TIERS: int = 5
 # ---------------------------------------------------------------------------
 # Persistent game state
 # ---------------------------------------------------------------------------
-var player_roster: Array[String] = []
+# Each entry: { "type": String, "hp": int }  — HP persists across battles,
+# and units that die in battle are removed (permadeath).
+var player_roster: Array[Dictionary] = []
+var gold: int = 0
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
+
+# Shop prices
+const SHOP_HEAL_COST: int = 25
+const SHOP_UNIT_COST: int = 60
 
 # Set before switching to the battle scene
 var pending_battle_tier: int = 0
@@ -54,7 +61,10 @@ func _ready() -> void:
 	reset()
 
 func reset() -> void:
-	player_roster = ["soldier", "soldier", "archer"]
+	player_roster = []
+	for t: String in ["soldier", "soldier", "archer"]:
+		add_unit(t)
+	gold = 0
 	current_tier = 0
 	last_chosen_index = -1
 	pending_battle_tier = 0
@@ -143,12 +153,14 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 	if tier == 0:
 		return "battle"
 	var roll := rng.randi() % 10
-	if roll < 5:
+	if roll < 4:
 		return "battle"
-	elif roll < 7:
+	elif roll < 6:
 		return "elite_battle"
-	elif roll < 9:
+	elif roll < 7:
 		return "gain_unit"
+	elif roll < 9:
+		return "shop"
 	else:
 		return "heal"
 
@@ -192,4 +204,33 @@ func get_hp_multiplier(tier: int, elite: bool) -> float:
 # Roster management
 # ---------------------------------------------------------------------------
 func add_unit(unit_type: String) -> void:
-	player_roster.append(unit_type)
+	player_roster.append({
+		"type": unit_type,
+		"hp":   int(UNIT_TYPES[unit_type]["max_hp"]),
+	})
+
+# Restore every roster unit to full HP (heal node).
+func heal_roster() -> void:
+	for entry: Dictionary in player_roster:
+		entry["hp"] = int(UNIT_TYPES[entry["type"]]["max_hp"])
+
+# Called by battle on victory: rebuild roster from surviving units (dead units
+# are dropped — permadeath) carrying their remaining HP forward.
+func set_roster(survivors: Array[Dictionary]) -> void:
+	player_roster = survivors
+
+# ---------------------------------------------------------------------------
+# Economy
+# ---------------------------------------------------------------------------
+# Gold rewarded for winning a battle, scaling with tier and elite status.
+func battle_gold_reward(tier: int, elite: bool) -> int:
+	return 25 + tier * 10 + (25 if elite else 0)
+
+func add_gold(amount: int) -> void:
+	gold += amount
+
+func spend_gold(amount: int) -> bool:
+	if gold < amount:
+		return false
+	gold -= amount
+	return true
