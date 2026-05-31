@@ -1,7 +1,7 @@
 class_name SkirmishUnit3D
 extends CharacterBody3D
 
-signal died(unit: SkirmishUnit3D)
+signal died(unit)
 
 const WORLD_SCALE: float = 0.06
 
@@ -37,7 +37,7 @@ var radius: float = 32.0
 enum Order { IDLE, MOVE, ATTACK }
 var order: int = Order.IDLE
 var move_target: Vector3 = Vector3.ZERO
-var attack_target: SkirmishUnit3D = null
+var attack_target: CharacterBody3D = null
 
 var _cooldown: float = 0.0
 var _selected: bool = false
@@ -142,7 +142,6 @@ func _build_visuals() -> void:
 	fg_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_hp_fill.material_override = fg_mat
 	add_child(_hp_fill)
-	add_child(_hp_bg)
 
 	# Create faux-soldier markers as tiny capsules. This gives immediate visual
 	# feedback of losses without using a 2D sprite-based squad visual.
@@ -170,10 +169,10 @@ func _build_visuals() -> void:
 func _refresh_hp_bar() -> void:
 	if _hp_fill == null:
 		return
-	var frac := clamp(float(hp) / float(max_hp), 0.0, 1.0)
+	var frac: float = clamp(float(hp) / float(max_hp), 0.0, 1.0)
 	_hp_fill.position.x = (frac - 1.0) * 0.725
 	_hp_fill.scale.x = frac
-	var m := _hp_fill.material_override as StandardMaterial3D
+	var m: StandardMaterial3D = _hp_fill.material_override
 	if m != null:
 		if frac > 0.6:
 			m.albedo_color = Color(0.30, 0.85, 0.30)
@@ -197,7 +196,7 @@ func order_move(target: Vector3) -> void:
 	move_target = target
 	attack_target = null
 
-func order_attack(target: SkirmishUnit3D) -> void:
+func order_attack(target: CharacterBody3D) -> void:
 	order = Order.ATTACK
 	attack_target = target
 
@@ -255,7 +254,7 @@ func _flash_hit() -> void:
 	var tw := create_tween()
 	tw.tween_property(mat, "albedo_color", old, HIT_FLASH_TIME)
 
-func tick(delta: float, neighbours: Array[SkirmishUnit3D]) -> Dictionary:
+func tick(delta: float, neighbours: Array) -> Dictionary:
 	var fired: Dictionary = {"fired": false}
 	if not is_alive():
 		return fired
@@ -284,7 +283,7 @@ func tick(delta: float, neighbours: Array[SkirmishUnit3D]) -> Dictionary:
 			if attack_target != null and attack_target.is_alive():
 				var to_t := attack_target.global_position - global_position
 				to_t.y = 0.0
-				var desired_gap := attack_range_world + attack_target.radius
+				var desired_gap: float = attack_range_world + attack_target.radius
 				if to_t.length() > desired_gap:
 					move_intent = to_t
 					want_move = true
@@ -298,7 +297,7 @@ func tick(delta: float, neighbours: Array[SkirmishUnit3D]) -> Dictionary:
 		global_position += step
 
 	# Soft unit separation (2D, x/z only)
-	for other: SkirmishUnit3D in neighbours:
+	for other: CharacterBody3D in neighbours:
 		if other == self or not other.is_alive():
 			continue
 		var diff := global_position - other.global_position
@@ -311,7 +310,7 @@ func tick(delta: float, neighbours: Array[SkirmishUnit3D]) -> Dictionary:
 
 	if attack_target != null and attack_target.is_alive():
 		var dist: float = global_position.distance_to(attack_target.global_position)
-		var target_gap := attack_range_world + attack_target.radius
+		var target_gap: float = attack_range_world + attack_target.radius
 		if dist <= target_gap and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
 			var scaled: int = max(1, int(round(
@@ -329,10 +328,10 @@ func _play_attack_animation() -> void:
 	tw.tween_property(_body, "position:y", 0.45, 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_body, "position:y", 0.0, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-func _find_nearest_enemy_in_radius(neighbours: Array[SkirmishUnit3D], radius_world: float) -> SkirmishUnit3D:
-	var best: SkirmishUnit3D = null
+func _find_nearest_enemy_in_radius(neighbours: Array, radius_world: float) -> CharacterBody3D:
+	var best: CharacterBody3D = null
 	var best_d: float = radius_world
-	for other: SkirmishUnit3D in neighbours:
+	for other: CharacterBody3D in neighbours:
 		if other == self or not other.is_alive() or other.team == team:
 			continue
 		var d: float = global_position.distance_to(other.global_position)

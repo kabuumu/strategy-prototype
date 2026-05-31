@@ -5,10 +5,10 @@ extends RefCounted
 # Centers are LOCAL (relative to the grid origin); callers add GRID_OFFSET when
 # drawing on the battle node, or use them directly for _grid_node children.
 
-const SIZE: float  = 37.0     # centre → corner
-const W: float     = 64.08    # hex width  = SIZE * sqrt(3)
-const H: float     = 74.0     # hex height = SIZE * 2
-const VSTEP: float = 55.5     # row spacing = SIZE * 1.5
+const SIZE: float  = 27.0     # centre → corner
+const W: float     = 46.77    # hex width  = SIZE * sqrt(3)
+const H: float     = 54.0     # hex height = SIZE * 2
+const VSTEP: float = 40.5     # row spacing = SIZE * 1.5
 
 static func center(col: int, row: int) -> Vector2:
 	var x: float = W * col + (W * 0.5 if (row & 1) == 1 else 0.0) + W * 0.5

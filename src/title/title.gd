@@ -44,8 +44,6 @@ func _build_ui() -> void:
 	var skirmish_y: float = new_game_y + 84.0
 	_add_menu_button("Skirmish (Real-Time)", Vector2(490.0, skirmish_y), Vector2(300.0, 56.0),
 		Color(0.45, 0.30, 0.62), _on_skirmish)
-	_add_menu_button("Skirmish (3D)", Vector2(490.0, skirmish_y + 68.0), Vector2(300.0, 56.0),
-		Color(0.26, 0.60, 0.30), _on_skirmish_3d)
 
 	if not has_save:
 		_build_meta_panel()
@@ -104,9 +102,6 @@ func _on_continue() -> void:
 func _on_skirmish() -> void:
 	# Skirmish is a self-contained battle scene — no campaign state is
 	# touched, so the player can dip in and out without losing a run.
-	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
-
-func _on_skirmish_3d() -> void:
 	get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
 
 # ---------------------------------------------------------------------------

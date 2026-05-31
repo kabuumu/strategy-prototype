@@ -3,10 +3,10 @@ extends Node2D
 # ---------------------------------------------------------------------------
 # Grid constants
 # ---------------------------------------------------------------------------
-const GRID_COLS: int = 10
-const GRID_ROWS: int = 8
-const TILE_SIZE: int = 70
-const GRID_OFFSET: Vector2 = Vector2(40.0, 55.0)
+const GRID_COLS: int = 14
+const GRID_ROWS: int = 11
+const TILE_SIZE: int = 70   # legacy; hex layout lives in Hex
+const GRID_OFFSET: Vector2 = Vector2(30.0, 48.0)
 const PANEL_X: float = 760.0
 
 # ---------------------------------------------------------------------------
@@ -14,9 +14,9 @@ const PANEL_X: float = 760.0
 # ---------------------------------------------------------------------------
 # Three objectives spread across the map — left, centre, right
 const OBJECTIVE_CELLS: Array[Vector2i] = [
-	Vector2i(2, 2),
-	Vector2i(5, 4),
+	Vector2i(4, 2),
 	Vector2i(7, 5),
+	Vector2i(10, 8),
 ]
 # Bonus awarded when captured: "heal" or "reinforce"
 const OBJECTIVE_TYPES: Array[String] = ["heal", "reinforce", "heal"]
@@ -196,20 +196,22 @@ func _generate_terrain() -> void:
 	for obj: Dictionary in objectives:
 		reserved.append(obj["grid_pos"])
 
-	var cluster_count := rng.randi_range(mtn.x, mtn.y)
+	# Keep clear lanes near the spawn edges (cols 0-1 and the last two columns)
+	var col_lo := 2
+	var col_hi := GRID_COLS - 3
+	var cluster_count := rng.randi_range(mtn.x, mtn.y) + 2   # bigger board, more cover
 	for _c in range(cluster_count):
-		var seed_cell := Vector2i(rng.randi_range(2, 7), rng.randi_range(0, GRID_ROWS - 1))
+		var seed_cell := Vector2i(rng.randi_range(col_lo, col_hi), rng.randi_range(0, GRID_ROWS - 1))
 		if seed_cell not in reserved and seed_cell not in mountains:
 			mountains.append(seed_cell)
 
-		# Grow each cluster 1–3 cells by attaching to existing mountain edges
+		# Grow each cluster a few cells along hex neighbours
 		var growth := rng.randi_range(1, 3)
 		for _g in range(growth):
 			var candidates: Array = []
 			for mc: Vector2i in mountains:
-				for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-					var adj := mc + dir
-					if _valid_cell(adj) and adj.x >= 2 and adj.x <= 7 \
+				for adj: Vector2i in Hex.neighbors(mc):
+					if _valid_cell(adj) and adj.x >= col_lo and adj.x <= col_hi \
 							and adj not in mountains and adj not in reserved:
 						candidates.append(adj)
 			if not candidates.is_empty():
@@ -227,9 +229,10 @@ func _generate_terrain() -> void:
 			if c not in taken:
 				target.append(c)
 				taken.append(c)
-	_place.call(forests, int(_biome["forest"]))
-	_place.call(hills, int(_biome["hill"]))
-	_place.call(lava, int(_biome["lava"]))
+	# Scale terrain counts up for the larger board
+	_place.call(forests, int(_biome["forest"] * 1.6))
+	_place.call(hills, int(_biome["hill"] * 1.6))
+	_place.call(lava, int(_biome["lava"] * 1.6))
 
 # ---------------------------------------------------------------------------
 # Custom drawing — hex grid + terrain + overlays
@@ -1174,10 +1177,7 @@ func _refresh_action_cells() -> void:
 	ability_cells.clear()
 	if selected_unit == null or selected_unit.ap <= 0:
 		return
-	# Only one move per turn — once moved, no more move tiles (attacks/abilities
-	# still cost AP). Dash re-enables a move.
-	if not selected_unit.moved_this_turn:
-		move_cells = _get_move_cells(selected_unit)
+	move_cells   = _get_move_cells(selected_unit)
 	attack_cells = _get_attack_cells(selected_unit, enemy_units)
 
 # Shared post-action bookkeeping: win check, AP-based greying, reselect/deselect.
@@ -1201,7 +1201,6 @@ func _try_move_unit(cell: Vector2i) -> void:
 		var origin := selected_unit.grid_pos
 		selected_unit.grid_pos = cell
 		_animate_unit_to(selected_unit, origin, cell)
-	selected_unit.moved_this_turn = true
 	selected_unit.spend_ap(1)
 	_check_capture(selected_unit)
 	_after_player_action()
@@ -1508,12 +1507,11 @@ func _on_ability_pressed() -> void:
 		return
 	var id: String = selected_unit.get_ability().get("id", "")
 	if id == "dash":
-		# Dash: move again this turn (clears the one-move limit). The follow-up
-		# move still costs AP.
+		# Dash: a burst of extra mobility — grants +1 AP (an extra action).
 		selected_unit.ability_used = true
-		selected_unit.moved_this_turn = false
+		selected_unit.ap += 1
 		Sfx.play("ability")
-		selected_unit.show_status_popup("DASH! move again", Color(0.95, 0.85, 0.2))
+		selected_unit.show_status_popup("DASH! +1 AP", Color(0.95, 0.85, 0.2))
 		selected_unit.modulate = Color(1, 1, 1, 1)
 		_refresh_action_cells()
 		_update_ui()
@@ -1752,9 +1750,7 @@ func _execute_ai_turn() -> void:
 # One AI action for a unit (spends 1 AP). Returns false when it can't do
 # anything useful, so the turn loop stops early.
 func _ai_one_action(u: Unit) -> bool:
-	var can_move: bool = not u.moved_this_turn
-
-	# Healer: heal a wounded ally in range; else (if it may still move) close in
+	# Healer: heal a wounded ally in range; else close in
 	if u.get_ability().get("id", "") == "heal_ally" and not u.ability_used:
 		var w := _most_wounded_ally(u, enemy_units)
 		if w != null:
@@ -1766,15 +1762,10 @@ func _ai_one_action(u: Unit) -> bool:
 				u.ability_used = true
 				u.spend_ap(1)
 				return true
-			if can_move:
-				var hc := _best_move_to_cell(u, w.grid_pos)
-				if hc != u.grid_pos:
-					await _ai_step(u, hc)
-					return true
-
-	# Already moved this turn → can only attack from the current cell
-	if not can_move:
-		return _ai_attack_from_here(u)
+			var hc := _best_move_to_cell(u, w.grid_pos)
+			if hc != u.grid_pos:
+				await _ai_step(u, hc)
+				return true
 
 	# Best move+attack pairing (move now, attack next action)
 	var plan := _best_attack_plan(u)
@@ -1803,23 +1794,8 @@ func _ai_one_action(u: Unit) -> bool:
 			return true
 	return false
 
-# Attack the best in-range player target without moving. Returns false if none.
-func _ai_attack_from_here(u: Unit) -> bool:
-	var best: Unit = null
-	var range_val := u.get_attack_range()
-	for t: Unit in player_units:
-		if t.is_alive() and _chebyshev(u.grid_pos, t.grid_pos) <= range_val:
-			if best == null or t.hp < best.hp:
-				best = t
-	if best == null:
-		return false
-	_do_attack(u, best)
-	u.spend_ap(1)
-	return true
-
 # Move an AI unit one step of its plan (animated), spend 1 AP, check capture.
 func _ai_step(u: Unit, dest: Vector2i) -> void:
-	u.moved_this_turn = true
 	var origin := u.grid_pos
 	u.grid_pos = dest
 	await _animate_unit_to(u, origin, dest).finished

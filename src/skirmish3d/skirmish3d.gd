@@ -97,7 +97,7 @@ func _build_field() -> void:
 
 	_camera = Camera3D.new()
 	_camera.position = Vector3(0.0, CAMERA_Y, 34.0)
-	_camera.look_at(Vector3.ZERO, Vector3.UP)
+	_camera.look_at_from_position(_camera.position, Vector3.ZERO, Vector3.UP)
 	_camera.current = true
 	world.add_child(_camera)
 
@@ -229,7 +229,7 @@ func _process(delta: float) -> void:
 		_update_hover()
 		return
 
-	var all_units: Array = []
+	var all_units: Array[SkirmishUnit3D] = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
 	_ai_tick(delta)
@@ -403,7 +403,7 @@ func _pick_unit_at_screen(screen: Vector2, pool: Array[SkirmishUnit3D], max_dist
 		if not _is_in_front_of_camera(u):
 			continue
 		var sp := _project_to_ui(u.global_position + Vector3(0.0, 0.55, 0.0))
-		var d := sp.distance_to(screen)
+		var d: float = sp.distance_to(screen)
 		if d < best_d:
 			best_d = d
 			best = u
@@ -425,7 +425,7 @@ func _pick_unit_by_ray(screen: Vector2, pool: Array[SkirmishUnit3D], max_dist: f
 		var t: float = (u.global_position - from).dot(dir)
 		if t < 0.0 or t > max_dist:
 			continue
-		var closest: Vector3 = from + dir * t
+		var closest: Vector3 = from + (dir * t)
 		var offset: float = closest.distance_to(u.global_position)
 		# Flat top-down units so use a slightly taller envelope to keep picks forgiving.
 		if offset <= hit_radius:
@@ -454,10 +454,10 @@ func _clamp_to_field(p: Vector3) -> Vector3:
 	)
 
 func _drag_rect_normalized() -> Rect2:
-	var x0 := min(_drag_origin.x, _drag_current.x)
-	var y0 := min(_drag_origin.y, _drag_current.y)
-	var x1 := max(_drag_origin.x, _drag_current.x)
-	var y1 := max(_drag_origin.y, _drag_current.y)
+	var x0: float = min(_drag_origin.x, _drag_current.x)
+	var y0: float = min(_drag_origin.y, _drag_current.y)
+	var x1: float = max(_drag_origin.x, _drag_current.x)
+	var y1: float = max(_drag_origin.y, _drag_current.y)
 	return Rect2(x0, y0, x1 - x0, y1 - y0)
 
 func _update_drag_box_visual() -> void:
@@ -480,7 +480,7 @@ func _ai_tick(delta: float) -> void:
 	for u: SkirmishUnit3D in enemy_units:
 		if not u.is_alive():
 			continue
-		var needs_target := (
+		var needs_target: bool = (
 			u.order == SkirmishUnit3D.Order.IDLE or
 			(u.order == SkirmishUnit3D.Order.ATTACK and (u.attack_target == null or not u.attack_target.is_alive()))
 		)
@@ -513,25 +513,29 @@ func _spawn_waypoint(pos: Vector3, color: Color) -> void:
 	marker.add_child(mesh)
 	marker.visible = true
 	add_child(marker)
-	_waypoints.append({"node": marker, "age": 0.0, "lifetime": 0.6})
+	var wp: Dictionary = {"node": marker, "age": 0.0, "lifetime": 0.6}
+	_waypoints.append(wp)
 
 func _age_waypoints(delta: float) -> void:
-	var alive: Array = []
+	var alive: Array[Dictionary] = []
 	for it: Dictionary in _waypoints:
-		var node := it.get("node", null)
+		var it_node: Variant = it.get("node", null)
+		var node: Node3D = null
+		if it_node is Node3D:
+			node = it_node
 		var age: float = float(it.get("age", 0.0)) + delta
-		var lt := float(it.get("lifetime", 0.0))
+		var lt: float = float(it.get("lifetime", 0.0))
 		if node == null or age > lt:
 			if node != null and is_instance_valid(node):
 				node.queue_free()
 			continue
 		it["age"] = age
-		var t := clamp(age / max(0.1, lt), 0.0, 1.0)
-		var mat := null
+		var t: float = clamp(age / max(0.1, lt), 0.0, 1.0)
+		var mat: StandardMaterial3D = null
 		if node.get_child_count() > 0:
-			var first := node.get_child(0)
-			if first != null and first is MeshInstance3D:
-				mat = (first.material_override as StandardMaterial3D)
+			var first: Node = node.get_child(0)
+			if first is MeshInstance3D:
+				mat = (first as MeshInstance3D).material_override as StandardMaterial3D
 		if mat != null:
 			mat.albedo_color.a = lerp(0.8, 0.0, t)
 		alive.append(it)

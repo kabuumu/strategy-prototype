@@ -11,13 +11,11 @@ var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false   # mirrors ap <= 0 (kept for round-completion checks)
 var ap: int = 0               # action points remaining this turn
 var max_ap: int = 2
-var moved_this_turn: bool = false   # a unit may take only one move per turn
 
 func refill_ap() -> void:
 	max_ap = GameManager.ap_for(unit_type)
 	ap = max_ap
 	has_acted = false
-	moved_this_turn = false
 
 func spend_ap(n: int = 1) -> void:
 	ap = maxi(0, ap - n)
@@ -112,7 +110,7 @@ func _build_visuals(udata: Dictionary) -> void:
 	_body = Sprite2D.new()
 	_body.texture        = tex
 	_body.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # crisp pixels
-	var s: float = 2.3 if is_boss else 1.7
+	var s: float = 1.85 if is_boss else 1.4
 	# Face inward: players look right (toward the enemy side), enemies look left.
 	_body.scale = Vector2(-s if team == 1 else s, s)
 	add_child(_body)
