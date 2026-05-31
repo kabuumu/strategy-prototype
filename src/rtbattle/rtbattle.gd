@@ -6,9 +6,9 @@ extends Node2D
 # return there when finished.
 #
 # Controls:
-#   - SPACE        : toggle pause
+#   - SPACE        : start battle / toggle pause
 #   - Left-click   : select a friendly regiment (clears prior selection)
-#   - Right-click  : issue an order with the selected regiment
+#   - Right-click  : queue an order with the selected regiment
 #                       on empty ground → move there
 #                       on an enemy regiment → attack it
 #   - Esc          : return to title
@@ -63,6 +63,8 @@ const REGIMENT_TYPES: Dictionary = {
 }
 
 const FIELD_RECT: Rect2 = Rect2(40.0, 70.0, 1200.0, 580.0)
+const PICK_RADIUS_PADDING: float = 14.0
+const OPENING_AI_DELAY: float = 2.0
 
 var player_units: Array = []   # Array[RTUnit]
 var enemy_units:  Array = []
@@ -70,6 +72,7 @@ var selected_units: Array = []          # Array[RTUnit]
 var _hovered_unit: RTUnit = null
 
 var _paused: bool = true
+var _battle_started: bool = false
 var _ended: bool = false
 
 # Drag-rectangle selection state
@@ -87,6 +90,7 @@ var _waypoints: Array = []
 # the nearest living player regiment to advance on. Kept slow so orders
 # feel deliberate rather than twitchy.
 var _ai_retarget_timer: float = 0.0
+var _opening_ai_timer: float = 0.0
 const AI_RETARGET_PERIOD: float = 0.6
 
 # UI nodes
@@ -150,7 +154,7 @@ func _build_ui() -> void:
 	add_child(_status_label)
 
 	_command_label = Label.new()
-	_command_label.text = "Select blue regiments, then right-click ground or enemies."
+	_command_label.text = "Select blue regiments, queue orders while paused, then press Space."
 	_command_label.add_theme_font_size_override("font_size", 13)
 	_command_label.modulate = Color(0.74, 0.78, 0.84)
 	_command_label.position = Vector2(302.0, 39.0)
@@ -159,14 +163,14 @@ func _build_ui() -> void:
 	add_child(_command_label)
 
 	var hint := Label.new()
-	hint.text = "Drag-box select  ·  Shift add  ·  Right-click orders"
+	hint.text = "Drag-box select  ·  Shift add  ·  Right-click queues move / attack"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.55, 0.55, 0.65)
 	hint.position = Vector2(302.0, 16.0)
 	_set_passthrough(hint)
 	add_child(hint)
 
-	add_child(UITheme.button("Pause", Vector2(884.0, 14.0), Vector2(104.0, 40.0), Color(0.18, 0.26, 0.36), _on_pause_button, 15))
+	add_child(UITheme.button("Start/Pause", Vector2(884.0, 14.0), Vector2(104.0, 40.0), Color(0.18, 0.26, 0.36), _on_pause_button, 14))
 	add_child(UITheme.button("Restart", Vector2(1000.0, 14.0), Vector2(104.0, 40.0), Color(0.28, 0.22, 0.34), _on_restart_button, 15))
 	add_child(UITheme.button("Menu", Vector2(1116.0, 14.0), Vector2(104.0, 40.0), Color(0.30, 0.20, 0.20), _on_menu_button, 15))
 
@@ -281,7 +285,10 @@ func _process(delta: float) -> void:
 	var all_units: Array = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
-	_ai_tick(delta)
+	if _opening_ai_timer > 0.0:
+		_opening_ai_timer = max(0.0, _opening_ai_timer - delta)
+	else:
+		_ai_tick(delta)
 	for u: RTUnit in all_units:
 		if u.is_alive():
 			u.tick(delta, all_units)
@@ -362,6 +369,32 @@ func _ai_tick(delta: float) -> void:
 # ---------------------------------------------------------------------------
 # Input
 # ---------------------------------------------------------------------------
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		if _drag_active:
+			_drag_current = event.position
+			_update_drag_box_visual()
+			get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventMouseButton:
+		var in_field := FIELD_RECT.has_point(event.position)
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if not in_field:
+					return
+				_begin_left_press(event.position, event.shift_pressed)
+			else:
+				if not _drag_active:
+					return
+				_end_left_press(event.position, event.shift_pressed)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			if not in_field:
+				return
+			_handle_right_click(event.position)
+			get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
@@ -373,21 +406,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_ESCAPE:
 				get_tree().change_scene_to_file("res://src/title/title.tscn")
 		return
-
-	if event is InputEventMouseMotion:
-		if _drag_active:
-			_drag_current = event.position
-			_update_drag_box_visual()
-		return
-
-	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed:
-				_begin_left_press(event.position, event.shift_pressed)
-			else:
-				_end_left_press(event.position, event.shift_pressed)
-		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-			_handle_right_click(event.position)
 
 # Left-click down: start a drag candidate. We don't know yet whether the
 # player will band-box or simply click a unit, so we record the origin and
@@ -438,7 +456,12 @@ func _apply_selection(units: Array, additive: bool) -> void:
 			u.set_selected(true)
 
 func _handle_right_click(mouse: Vector2) -> void:
-	if _ended or selected_units.is_empty():
+	if _ended:
+		return
+	if selected_units.is_empty():
+		if _command_label != null:
+			_command_label.text = "Select one or more blue regiments before issuing an order."
+			_command_label.modulate = Color(0.95, 0.65, 0.40)
 		return
 	# If we clicked an enemy, every selected unit attacks it. Otherwise,
 	# spread the selection in a small clump around the target point so they
@@ -453,6 +476,7 @@ func _handle_right_click(mouse: Vector2) -> void:
 			_command_label.text = "Attack order: %d regiment%s focusing %s." % [
 				selected_units.size(), "" if selected_units.size() == 1 else "s", enemy.unit_name
 			]
+		_refresh_ui()
 		return
 	var target := Vector2(
 		clamp(mouse.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0),
@@ -482,6 +506,7 @@ func _handle_right_click(mouse: Vector2) -> void:
 		_command_label.text = "Move order: %d regiment%s to marked ground." % [
 			n, "" if n == 1 else "s"
 		]
+	_refresh_ui()
 
 func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 	var best: RTUnit = null
@@ -490,7 +515,7 @@ func _pick_unit_at(p: Vector2, pool: Array) -> RTUnit:
 		if not u.is_alive():
 			continue
 		var d: float = u.position.distance_to(p)
-		if d <= u.radius and d < best_d:
+		if d <= u.radius + PICK_RADIUS_PADDING and d < best_d:
 			best   = u
 			best_d = d
 	return best
@@ -548,6 +573,11 @@ func _age_waypoints(delta: float) -> void:
 # UI state
 # ---------------------------------------------------------------------------
 func _set_paused(v: bool) -> void:
+	if not v and not _battle_started:
+		_battle_started = true
+		_opening_ai_timer = OPENING_AI_DELAY
+		if _command_label != null:
+			_command_label.text = "Orders are live. Enemy regiments advance after a short setup beat."
 	_paused = v
 	_refresh_ui()
 
@@ -556,9 +586,15 @@ func _refresh_ui() -> void:
 		if _ended:
 			_status_label.text = "Battle over"
 			_status_label.modulate = Color(0.70, 0.70, 0.75)
+		elif not _battle_started:
+			_status_label.text = "PLANNING  (select units, right-click orders, SPACE to start)"
+			_status_label.modulate = Color(1.0, 0.80, 0.35)
 		elif _paused:
 			_status_label.text = "❚❚ PAUSED  (SPACE to resume)"
 			_status_label.modulate = Color(1.0, 0.80, 0.35)
+		elif _opening_ai_timer > 0.0:
+			_status_label.text = "▶ RUNNING  enemy advance in %.1fs" % _opening_ai_timer
+			_status_label.modulate = Color(0.70, 0.90, 1.0)
 		else:
 			_status_label.text = "▶ RUNNING  (SPACE to pause)"
 			_status_label.modulate = Color(0.55, 0.95, 0.55)
@@ -572,7 +608,7 @@ func _refresh_ui() -> void:
 		if alive_sel.size() != selected_units.size():
 			selected_units = alive_sel
 		if alive_sel.is_empty():
-			_selection_label.text = "No regiment selected — left-click one of your (blue) regiments, drag-box to select many, then right-click to give orders."
+			_selection_label.text = "No regiment selected — left-click or drag-box blue regiments, then right-click ground or enemies to queue orders."
 			if _command_label != null and not _ended:
 				_command_label.modulate = Color(0.64, 0.68, 0.74)
 		elif alive_sel.size() == 1:
@@ -598,7 +634,7 @@ func _refresh_ui() -> void:
 				total_hp  += u.hp
 				total_max += u.max_hp
 			_selection_label.text = (
-				"%d regiments selected  ·  %d / %d HP combined  ·  right-click to issue group order"
+				"%d regiments selected  ·  %d / %d HP combined  ·  right-click to queue group order"
 				% [alive_sel.size(), total_hp, total_max]
 			)
 			if _command_label != null:

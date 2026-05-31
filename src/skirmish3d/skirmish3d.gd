@@ -63,6 +63,43 @@ const REGIMENT_TYPES: Dictionary = {
 		"soldier_count": 16, "hp_per_soldier": 30, "damage_per_attack": 18,
 		"attack_cooldown": 1.3, "attack_range_px": 55.0, "move_speed_px": 44.0,
 	},
+	# Extra regiment types — mostly enemy variety per biome.
+	"pikemen": {
+		"name": "Pikemen", "sprite_key": "healer",
+		"soldier_count": 12, "hp_per_soldier": 20, "damage_per_attack": 11,
+		"attack_cooldown": 1.1, "attack_range_px": 78.0, "move_speed_px": 50.0,
+	},
+	"crossbow": {
+		"name": "Crossbows", "sprite_key": "archer",
+		"soldier_count": 8, "hp_per_soldier": 13, "damage_per_attack": 16,
+		"attack_cooldown": 1.8, "attack_range_px": 200.0, "move_speed_px": 50.0,
+	},
+	"berserker": {
+		"name": "Berserkers", "sprite_key": "soldier",
+		"soldier_count": 10, "hp_per_soldier": 13, "damage_per_attack": 15,
+		"attack_cooldown": 0.8, "attack_range_px": 52.0, "move_speed_px": 92.0,
+	},
+	"knight": {
+		"name": "Knights", "sprite_key": "scout",
+		"soldier_count": 7, "hp_per_soldier": 22, "damage_per_attack": 14,
+		"attack_cooldown": 1.0, "attack_range_px": 55.0, "move_speed_px": 100.0,
+	},
+	# Extra boss
+	"necromancer": {
+		"name": "Necromancer's Host", "sprite_key": "healer",
+		"soldier_count": 18, "hp_per_soldier": 20, "damage_per_attack": 13,
+		"attack_cooldown": 1.1, "attack_range_px": 120.0, "move_speed_px": 52.0,
+	},
+}
+
+# Enemy regiment composition by biome (campaign 3D battles). Picks count by
+# tier; the final tier prepends the run's boss.
+const BIOME_ENEMY_POOL: Dictionary = {
+	"Grassy Plains":   ["soldier", "archer"],
+	"Deep Woods":      ["archer", "scout", "pikemen"],
+	"Rocky Highlands": ["pikemen", "crossbow", "soldier"],
+	"Volcanic Wastes": ["berserker", "soldier", "berserker"],
+	"The Citadel":     ["knight", "crossbow", "pikemen", "necromancer"],
 }
 
 const FIELD_HALF_WIDTH: float = 36.0
@@ -86,6 +123,7 @@ var selected_units: Array[SkirmishUnit3D] = []
 var hovered_unit: SkirmishUnit3D = null
 var _ended: bool = false
 var _campaign: bool = false   # launched from the campaign map (vs standalone)
+var _formation: int = 0       # 0 = line, 1 = wedge (move-order arrangement)
 var _paused: bool = true
 
 var _drag_active: bool = false
@@ -488,7 +526,7 @@ func _build_ui() -> void:
 	_ui.add_child(_command_label)
 
 	var hint := Label.new()
-	hint.text = "Drag-box select  ·  Shift add  ·  WASD/edge pan  ·  Wheel zoom"
+	hint.text = "Drag-box select · Shift add · R-click move/attack · WASD/edge pan · wheel zoom · G shield-wall · V volley · F formation · SPACE pause"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.56, 0.56, 0.66)
 	hint.position = Vector2(326.0, 16.0)
@@ -580,8 +618,7 @@ func _spawn_campaign_armies() -> void:
 		u.roster_index = i
 		player_units.append(u)
 
-	var elist := GameManager.get_battle_enemy_roster(
-		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
+	var elist := _enemy_composition(GameManager.pending_battle_tier, GameManager.pending_battle_elite)
 	var ez := _line_positions(elist.size())
 	var hp_mult := GameManager.get_hp_multiplier(
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
@@ -591,6 +628,21 @@ func _spawn_campaign_armies() -> void:
 		u.max_hp = int(u.max_hp * hp_mult)
 		u.hp = u.max_hp
 		enemy_units.append(u)
+
+# Biome-flavoured enemy regiment list for a campaign battle. Final tier leads
+# with the run's boss.
+func _enemy_composition(tier: int, elite: bool) -> Array[String]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = tier * 911 + (37 if elite else 13)
+	var biome_name: String = String(_biome.get("name", "Grassy Plains"))
+	var pool: Array = BIOME_ENEMY_POOL.get(biome_name, ["soldier", "archer"])
+	var out: Array[String] = []
+	if GameManager.is_final_battle(tier, elite):
+		out.append(GameManager.boss_id)   # the run's chosen boss leads
+	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 6)
+	for _i in range(count):
+		out.append(String(pool[rng.randi() % pool.size()]))
+	return out
 
 # Evenly spread N regiments across the field depth.
 func _line_positions(n: int) -> Array[float]:
@@ -685,6 +737,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_SPACE:
 				_set_paused(not _paused)
+			KEY_G:
+				_command_shield_wall()
+			KEY_V:
+				_command_volley()
+			KEY_F:
+				_formation = (_formation + 1) % 2
+				if _command_label != null:
+					_command_label.text = "Formation: " + ("Wedge ▽" if _formation == 1 else "Line ▭")
 			KEY_R:
 				if _ended:
 					get_tree().reload_current_scene()
@@ -718,6 +778,30 @@ func _unhandled_input(event: InputEvent) -> void:
 func _set_paused(v: bool) -> void:
 	_paused = v
 	_refresh_ui()
+
+# Command abilities on the current selection.
+func _command_shield_wall() -> void:
+	if selected_units.is_empty():
+		return
+	var turn_on := false
+	for u: SkirmishUnit3D in selected_units:
+		if not u.guarding:
+			turn_on = true
+	for u: SkirmishUnit3D in selected_units:
+		u.set_guard(turn_on)
+	if _command_label != null:
+		_command_label.text = "Shield Wall " + ("RAISED — holding ground, armoured" if turn_on else "lowered")
+
+func _command_volley() -> void:
+	if selected_units.is_empty():
+		return
+	var any := false
+	for u: SkirmishUnit3D in selected_units:
+		if u.is_ranged:
+			u.arm_volley()
+			any = true
+	if _command_label != null:
+		_command_label.text = "Volley readied — next shot hits hard!" if any else "No ranged regiments selected"
 
 func _begin_left_press(mouse: Vector2, shift: bool) -> void:
 	if _ended:
@@ -788,7 +872,9 @@ func _handle_right_click(mouse: Vector2) -> void:
 				to_t = Vector3(1.0, 0.0, 0.0)
 			var right := Vector3(-to_t.z, 0.0, to_t.x).normalized()
 			var offset := float(i) - (float(n) - 1.0) * 0.5
-			dest += right * (u.radius * 0.014) * offset
+			dest += right * 2.4 * offset
+			if _formation == 1:
+				dest -= to_t.normalized() * 1.9 * abs(offset)
 			dest.x = clamp(dest.x, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH)
 			dest.z = clamp(dest.z, -FIELD_HALF_DEPTH, FIELD_HALF_DEPTH)
 		u.order_move(dest)
