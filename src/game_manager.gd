@@ -7,7 +7,7 @@ const UNIT_TYPES: Dictionary = {
 	"soldier": {
 		"name": "Soldier",
 		"max_hp": 100,
-		"move_range": 3,
+		"move_range": 2,
 		"attack_range": 1,
 		"damage": 35,
 		"color": Color(0.25, 0.5, 1.0),
@@ -27,7 +27,7 @@ const UNIT_TYPES: Dictionary = {
 	"scout": {
 		"name": "Scout",
 		"max_hp": 60,
-		"move_range": 5,
+		"move_range": 3,
 		"attack_range": 1,
 		"damage": 20,
 		"color": Color(0.95, 0.8, 0.1),
@@ -40,7 +40,7 @@ const UNIT_TYPES: Dictionary = {
 	"warlord": {
 		"name": "Warlord",
 		"max_hp": 220,
-		"move_range": 3,
+		"move_range": 2,
 		"attack_range": 1,
 		"damage": 35,
 		"color": Color(0.85, 0.20, 0.20),
@@ -55,7 +55,7 @@ const UNIT_TYPES: Dictionary = {
 	"pyromancer": {
 		"name": "Pyromancer",
 		"max_hp": 170,
-		"move_range": 3,
+		"move_range": 2,
 		"attack_range": 3,
 		"damage": 24,
 		"color": Color(0.95, 0.45, 0.12),
@@ -83,7 +83,7 @@ const UNIT_TYPES: Dictionary = {
 	"healer": {
 		"name": "Healer",
 		"max_hp": 65,
-		"move_range": 3,
+		"move_range": 2,
 		"attack_range": 1,
 		"damage": 10,
 		"color": Color(0.20, 0.82, 0.70),
