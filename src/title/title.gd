@@ -40,10 +40,19 @@ func _build_ui() -> void:
 	_add_menu_button("New Game", Vector2(490.0, new_game_y), Vector2(300.0, 64.0),
 		Color(0.18, 0.36, 0.65), _on_new_game)
 
-	# Skirmish (real-time) — self-contained battle mode, no campaign state.
+	# Skirmishes are self-contained battle modes, no campaign state touched.
 	var skirmish_y: float = new_game_y + 84.0
-	_add_menu_button("Skirmish (Real-Time)", Vector2(490.0, skirmish_y), Vector2(300.0, 56.0),
-		Color(0.45, 0.30, 0.62), _on_skirmish)
+	_add_menu_button("Skirmish 3D", Vector2(490.0, skirmish_y), Vector2(145.0, 56.0),
+		Color(0.45, 0.30, 0.62), _on_skirmish_3d)
+	_add_menu_button("Skirmish 2D", Vector2(645.0, skirmish_y), Vector2(145.0, 56.0),
+		Color(0.32, 0.40, 0.55), _on_skirmish_2d)
+
+	var hint := Label.new()
+	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
+	hint.add_theme_font_size_override("font_size", 13)
+	hint.modulate = Color(0.40, 0.40, 0.45)
+	hint.position = Vector2(60.0, 680.0)
+	add_child(hint)
 
 	if not has_save:
 		_build_meta_panel()
@@ -53,23 +62,13 @@ func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb:
 	btn.text     = text
 	btn.position = pos
 	btn.size     = sz
-	btn.add_theme_font_size_override("font_size", 26)
+	btn.add_theme_font_size_override("font_size", 19 if sz.x < 180.0 else 26)
 	btn.add_theme_stylebox_override("normal",  _btn_style(color))
 	btn.add_theme_stylebox_override("hover",   _btn_style(color.lightened(0.18)))
 	btn.add_theme_stylebox_override("pressed", _btn_style(color.darkened(0.25)))
 	btn.add_theme_stylebox_override("focus",   _btn_style(color))
 	btn.pressed.connect(cb)
 	add_child(btn)
-
-	# -----------------------------------------------------------------------
-	# Controls hint
-	# -----------------------------------------------------------------------
-	var hint := Label.new()
-	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
-	hint.add_theme_font_size_override("font_size", 13)
-	hint.modulate = Color(0.40, 0.40, 0.45)
-	hint.position = Vector2(60.0, 680.0)
-	add_child(hint)
 
 func _btn_style(color: Color) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -99,10 +98,13 @@ func _on_continue() -> void:
 		GameManager.reset()
 		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
-func _on_skirmish() -> void:
+func _on_skirmish_3d() -> void:
 	# Skirmish is a self-contained battle scene — no campaign state is
 	# touched, so the player can dip in and out without losing a run.
 	get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
+
+func _on_skirmish_2d() -> void:
+	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the

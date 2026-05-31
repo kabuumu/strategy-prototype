@@ -197,6 +197,8 @@ const RELICS: Dictionary = {
 # Set before switching to the battle scene
 var pending_battle_tier: int = 0
 var pending_battle_elite: bool = false
+# When true, the campaign battle is fought as a 3D skirmish (set by level_select).
+var pending_skirmish: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:

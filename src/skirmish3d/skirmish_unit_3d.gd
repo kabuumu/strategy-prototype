@@ -15,6 +15,7 @@ class Soldier:
 var unit_type: String = "soldier"
 var team: int = 0   # 0 = player, 1 = enemy
 var unit_name: String = "Soldier"
+var roster_index: int = -1   # campaign: which GameManager.player_roster entry this is
 
 var hp_per_soldier: int = 15
 var soldier_count: int = 9
