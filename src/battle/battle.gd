@@ -849,7 +849,8 @@ func _is_flanking(attacker: Unit, defender: Unit) -> bool:
 # bonus so flanking still hits harder than a straight shot, just less.
 func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	var base := attacker.get_damage()
-	var crit := randf() < CRIT_CHANCE
+	var crit_chance: float = CRIT_CHANCE + attacker.get_crit_chance_bonus()
+	var crit := randf() < crit_chance
 	var flank := _is_flanking(attacker, defender)
 	var mult: float = 1.0
 	if crit:
@@ -859,6 +860,8 @@ func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	var cover: bool = defender.grid_pos in forests
 	if cover:
 		mult *= FOREST_DMG_MULT
+	# Defender-side mitigation (Ironhide upgrade)
+	mult *= defender.get_damage_taken_mult()
 	return {
 		"damage": int(round(base * mult)),
 		"crit":   crit,

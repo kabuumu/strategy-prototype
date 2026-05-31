@@ -217,12 +217,36 @@ func get_attack_range() -> int:
 func get_damage() -> int:
 	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
 	var v: int = udata["damage"]
+	var berserker_stacks: int = 0
 	for u in upgrades:
 		if u == "sharpshooter":
 			v += 5
+		elif u == "berserker":
+			berserker_stacks += 1
+	if berserker_stacks > 0 and max_hp > 0:
+		# +5 damage per stack per 25% HP missing (rounded down)
+		var missing_q: int = int(floor(float(max_hp - hp) / float(max_hp) * 4.0))
+		v += 5 * berserker_stacks * missing_q
 	if enraged:
 		v += int(udata.get("enrage_damage_bonus", 0))
 	return v
+
+# Multiplier applied to damage this unit RECEIVES. Used by combat resolution
+# to honour the Ironhide upgrade (–20% per stack, capped to 60% reduction).
+func get_damage_taken_mult() -> float:
+	var stacks: int = 0
+	for u in upgrades:
+		if u == "ironhide":
+			stacks += 1
+	return maxf(0.40, 1.0 - 0.20 * float(stacks))
+
+# Bonus crit chance contributed by Lucky upgrades (+15% per stack).
+func get_crit_chance_bonus() -> float:
+	var stacks: int = 0
+	for u in upgrades:
+		if u == "lucky":
+			stacks += 1
+	return 0.15 * float(stacks)
 
 # Short labels for upgrades (e.g. ["VET", "SS"]) for compact UI display
 func upgrade_short_labels() -> Array[String]:
@@ -233,4 +257,7 @@ func upgrade_short_labels() -> Array[String]:
 			"sharpshooter": out.append("SS")
 			"swift":        out.append("SWF")
 			"eagle_eye":    out.append("EYE")
+			"ironhide":     out.append("IRN")
+			"lucky":        out.append("LCK")
+			"berserker":    out.append("BSK")
 	return out

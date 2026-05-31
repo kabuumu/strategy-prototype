@@ -64,8 +64,11 @@ const UPGRADE_TYPES: Dictionary = {
 	"sharpshooter": {"name": "Sharpshooter", "desc": "+5 damage",            "color": Color(0.95, 0.45, 0.30)},
 	"swift":        {"name": "Swift",        "desc": "+1 move range",        "color": Color(0.45, 0.75, 0.95)},
 	"eagle_eye":    {"name": "Eagle Eye",    "desc": "+1 attack range (max 4)", "color": Color(0.95, 0.85, 0.35)},
+	"ironhide":     {"name": "Ironhide",     "desc": "−20% damage taken",    "color": Color(0.70, 0.70, 0.85)},
+	"lucky":        {"name": "Lucky",        "desc": "+15% crit chance",     "color": Color(0.95, 0.65, 0.95)},
+	"berserker":    {"name": "Berserker",    "desc": "+5 dmg per 25% HP missing", "color": Color(0.95, 0.30, 0.20)},
 }
-const UPGRADE_IDS: Array[String] = ["veteran", "sharpshooter", "swift", "eagle_eye"]
+const UPGRADE_IDS: Array[String] = ["veteran", "sharpshooter", "swift", "eagle_eye", "ironhide", "lucky", "berserker"]
 
 # ---------------------------------------------------------------------------
 # Map constants
