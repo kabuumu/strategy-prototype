@@ -122,6 +122,21 @@ func _refresh_hp_bar() -> void:
 func is_alive() -> bool:
 	return hp > 0
 
+# Floating coloured label (e.g. "CRIT!" / "FLANKED!") shown above the unit.
+func show_combat_label(text: String, color: Color) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 14)
+	lbl.modulate = color
+	lbl.position = Vector2(-26.0, -54.0)
+	lbl.z_index  = 101
+	add_child(lbl)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:y", -78.0, 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.9).set_delay(0.30)
+	tw.chain().tween_callback(lbl.queue_free)
+
 func get_move_range() -> int:
 	return GameManager.UNIT_TYPES[unit_type]["move_range"]
 

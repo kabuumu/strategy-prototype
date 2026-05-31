@@ -52,10 +52,10 @@ func _build_ui() -> void:
 	# Controls hint
 	# -----------------------------------------------------------------------
 	var hint := Label.new()
-	hint.text = "Left-click to select and move units  ·  Right-click to deselect  ·  Skip Attack / End Turn buttons in battle"
+	hint.text = "Left-click to select / move / attack  ·  Right-click or Esc to cancel  ·  Tab cycles units  ·  Enter ends turn"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.40, 0.40, 0.45)
-	hint.position = Vector2(120.0, 680.0)
+	hint.position = Vector2(60.0, 680.0)
 	add_child(hint)
 
 func _btn_style(color: Color) -> StyleBoxFlat:

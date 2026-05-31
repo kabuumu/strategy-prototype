@@ -68,9 +68,16 @@ var _phase_label:      Label
 var _unit_info_label:  Label
 var _instruct_label:   Label
 var _obj_status_label: Label
+var _log_label:        Label
 var _skip_btn:         Button
 var _ability_btn:      Button
 var _end_btn:          Button
+
+var _battle_log: Array[String] = []
+const LOG_MAX_LINES: int = 5
+
+# Hover state used by the in-grid damage preview
+var _hover_cell: Vector2i = Vector2i(-1, -1)
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
@@ -208,7 +215,9 @@ func _draw() -> void:
 			gy * TILE_SIZE + TILE_SIZE - pad - 2.0
 		), icon, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.85))
 
-	# Damage forecast over targetable enemies (attack + ability phases)
+	# Damage forecast over targetable enemies (attack + ability phases) —
+	# always-on per-tile tag. Note: doesn't show flank bonus, so the hover
+	# preview below adds that detail during the attack phase.
 	if selected_unit and phase in [Phase.PLAYER_SELECT_ATTACK, Phase.PLAYER_SELECT_ABILITY]:
 		var cells := attack_cells if phase == Phase.PLAYER_SELECT_ATTACK else ability_cells
 		var dmg := selected_unit.get_damage()
@@ -223,6 +232,10 @@ func _draw() -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0, 0, 0, 0.8))  # shadow
 			draw_string(ThemeDB.fallback_font, base, txt,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, col)
+
+	# Hover tooltip: more detail (flank, resulting HP) for the currently
+	# hovered attackable tile during the attack phase only.
+	_draw_damage_preview()
 
 # ---------------------------------------------------------------------------
 # Build UI
@@ -280,6 +293,18 @@ func _build_ui() -> void:
 	_end_btn = _make_button("End Turn", Vector2(PANEL_X + 258.0, 560.0), Vector2(220.0, 50.0))
 	_end_btn.pressed.connect(_on_end_turn)
 	add_child(_end_btn)
+
+	# Battle log — last few combat events, sits below the action buttons
+	var log_header := _make_label(11, Color(0.45, 0.45, 0.50))
+	log_header.text     = "Battle log"
+	log_header.position = Vector2(PANEL_X + 20.0, 618.0)
+	add_child(log_header)
+
+	_log_label               = _make_label(12, Color(0.72, 0.78, 0.82))
+	_log_label.position      = Vector2(PANEL_X + 20.0, 634.0)
+	_log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_log_label.size          = Vector2(480.0, 82.0)
+	add_child(_log_label)
 
 func _build_unit_legend() -> void:
 	var header := _make_label(12, Color(0.50, 0.50, 0.55))
@@ -435,11 +460,85 @@ func _refresh_obj_status() -> void:
 	_obj_status_label.text = "Yours: %d  ·  Enemy: %d  ·  Neutral: %d" % [p, e, n]
 
 # ---------------------------------------------------------------------------
+# Battle log
+# ---------------------------------------------------------------------------
+func _log_event(text: String) -> void:
+	_battle_log.append(text)
+	while _battle_log.size() > LOG_MAX_LINES:
+		_battle_log.pop_front()
+	if _log_label:
+		_log_label.text = "\n".join(_battle_log)
+
+func _unit_label(u: Unit) -> String:
+	var name_str: String = GameManager.UNIT_TYPES[u.unit_type]["name"]
+	return ("You-" if u.team == 0 else "Enemy-") + name_str
+
+# ---------------------------------------------------------------------------
+# Damage preview overlay
+# ---------------------------------------------------------------------------
+func _draw_damage_preview() -> void:
+	if phase != Phase.PLAYER_SELECT_ATTACK or selected_unit == null:
+		return
+	if _hover_cell == Vector2i(-1, -1) or _hover_cell not in attack_cells:
+		return
+
+	var target: Unit = null
+	for t: Unit in enemy_units:
+		if t.is_alive() and t.grid_pos == _hover_cell:
+			target = t
+			break
+	if target == null:
+		return
+
+	# Use base damage + flank only — don't leak the random crit roll into preview
+	var base := selected_unit.get_damage()
+	var flank := _is_flanking(selected_unit, target)
+	var dmg: int = int(round(base * (FLANK_MULT if flank else 1.0)))
+	var lethal := dmg >= target.hp
+
+	var line1 := "%d dmg → HP %d/%d" % [dmg, max(0, target.hp - dmg), target.max_hp]
+	var line2 := ""
+	if lethal:
+		line2 = "LETHAL"
+	elif flank:
+		line2 = "FLANKED!"
+
+	var origin := GRID_OFFSET + Vector2(_hover_cell.x * TILE_SIZE, _hover_cell.y * TILE_SIZE)
+	# Position tooltip above the tile, or below if near top edge
+	var tip_above := _hover_cell.y >= 1
+	var tip_y: float = origin.y - 38.0 if tip_above else origin.y + TILE_SIZE + 4.0
+	var tip_rect := Rect2(origin.x - 10.0, tip_y, 130.0, 34.0)
+	draw_rect(tip_rect, Color(0.0, 0.0, 0.0, 0.78))
+	draw_rect(tip_rect, Color(0.95, 0.30, 0.25, 0.9), false, 1.5)
+	draw_string(ThemeDB.fallback_font, Vector2(tip_rect.position.x + 6.0, tip_rect.position.y + 14.0),
+			line1, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.95))
+	if line2 != "":
+		var col2: Color = Color(1.0, 0.55, 0.30) if lethal else Color(1.0, 0.85, 0.30)
+		draw_string(ThemeDB.fallback_font, Vector2(tip_rect.position.x + 6.0, tip_rect.position.y + 29.0),
+				line2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col2)
+
+
+# ---------------------------------------------------------------------------
 # Input
 # ---------------------------------------------------------------------------
 func _input(event: InputEvent) -> void:
 	if phase in [Phase.AI_ACTING, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
 		return
+
+	# Mouse motion → track hover cell for the damage preview overlay
+	if event is InputEventMouseMotion:
+		var hc := _world_to_grid(event.position)
+		if not _valid_cell(hc):
+			hc = Vector2i(-1, -1)
+		if hc != _hover_cell:
+			_hover_cell = hc
+			queue_redraw()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo:
+		_handle_key(event.keycode)
+		return
+
 	if not (event is InputEventMouseButton and event.pressed):
 		return
 	var cell := _world_to_grid(event.position)
@@ -448,6 +547,30 @@ func _input(event: InputEvent) -> void:
 	match event.button_index:
 		MOUSE_BUTTON_LEFT:  _handle_left_click(cell)
 		MOUSE_BUTTON_RIGHT: _handle_right_click()
+
+# ---------------------------------------------------------------------------
+# Keyboard shortcuts
+#   Esc       – deselect / cancel current action (same as right-click)
+#   Enter/Sp  – end turn (when not in the middle of an action)
+#   Tab       – cycle to next unacted player unit
+# ---------------------------------------------------------------------------
+func _handle_key(keycode: int) -> void:
+	match keycode:
+		KEY_ESCAPE:
+			_handle_right_click()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			if phase == Phase.PLAYER_SELECT_UNIT:
+				_on_end_turn()
+		KEY_TAB:
+			if phase == Phase.PLAYER_SELECT_UNIT:
+				_cycle_to_next_unacted_unit()
+
+func _cycle_to_next_unacted_unit() -> void:
+	for u: Unit in player_units:
+		if u.is_alive() and not u.has_acted:
+			_try_select_unit(u.grid_pos)
+			return
+
 
 func _world_to_grid(screen_pos: Vector2) -> Vector2i:
 	var local := screen_pos - GRID_OFFSET
@@ -523,13 +646,61 @@ func _try_attack(cell: Vector2i) -> void:
 			_commit_player_unit_turn()
 			return
 
+# ---------------------------------------------------------------------------
+# Combat resolution — crits + flanking bonuses
+# ---------------------------------------------------------------------------
+const FLANK_MULT: float = 1.25
+const CRIT_MULT:  float = 1.5
+const CRIT_CHANCE: float = 0.15
+
+# Flanking: an ally of the attacker is on the cell exactly opposite the attacker
+# along an orthogonal axis (defender between attacker and ally).
+func _is_flanking(attacker: Unit, defender: Unit) -> bool:
+	var dx := defender.grid_pos.x - attacker.grid_pos.x
+	var dy := defender.grid_pos.y - attacker.grid_pos.y
+	if (dx == 0) == (dy == 0):
+		return false  # not aligned on a single axis
+	var step := Vector2i(sign(dx), sign(dy))
+	var opposite := defender.grid_pos + step
+	var allies := player_units if attacker.team == 0 else enemy_units
+	for a: Unit in allies:
+		if a != attacker and a.is_alive() and a.grid_pos == opposite:
+			return true
+	return false
+
+# Returns { "damage": int, "crit": bool, "flank": bool }. Crit and flank don't
+# stack — crit takes precedence so the spotlight moments stay distinct.
+func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
+	var base := attacker.get_damage()
+	var crit := randf() < CRIT_CHANCE
+	var flank := _is_flanking(attacker, defender)
+	var mult: float = 1.0
+	if crit:
+		mult = CRIT_MULT
+	elif flank:
+		mult = FLANK_MULT
+	return {"damage": int(round(base * mult)), "crit": crit, "flank": flank and not crit}
+
 func _do_attack(attacker: Unit, defender: Unit) -> void:
+	var res := _resolve_damage(attacker, defender)
+	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
-	defender.take_damage(attacker.get_damage())
-	_shake_grid(2.5)
+	defender.take_damage(dmg)
+	if res["crit"]:
+		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
+		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
+		_shake_grid(4.5)
+	elif res["flank"]:
+		defender.show_combat_label("FLANKED!", Color(1.0, 0.85, 0.30))
+		_log_event("%s ⚔ flank %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
+		_shake_grid(3.5)
+	else:
+		_log_event("%s hits %s for %d" % [_unit_label(attacker), _unit_label(defender), dmg])
+		_shake_grid(2.5)
 	if not defender.is_alive():
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
+		_log_event("%s is defeated" % _unit_label(defender))
 
 # Attacker hops toward the target and back
 func _lunge(attacker: Unit, defender: Unit) -> void:
@@ -828,47 +999,103 @@ func _check_round_complete() -> void:
 
 # ---------------------------------------------------------------------------
 # AI decision-making (objectives + combat)
+#
+# Strategy: enumerate every viable (move_cell, attack_target) pair and score
+# them. Higher score wins. Falls back to objective/closing behaviour when no
+# attack is possible this turn.
+#
+# Scoring rewards:
+#   • Lethal hits (would kill the target)
+#   • Hitting low-HP targets
+#   • Ranged units staying away from melee threats (kiting)
+#   • Standing on a capturable objective (capture bonus)
 # ---------------------------------------------------------------------------
 func _ai_act(ai_unit: Unit) -> void:
-	var combat_target  := _nearest_alive(ai_unit, player_units)
-	var obj_cell       := _nearest_capturable_obj(ai_unit)
-	var go_for_obj     := false
+	var damage := ai_unit.get_damage()
+	var range_val := ai_unit.get_attack_range()
+	var is_ranged := range_val >= 2
 
-	if obj_cell != Vector2i(-1, -1):
-		var obj_dist    := _manhattan(ai_unit.grid_pos, obj_cell)
-		var enemy_dist  := 9999 if combat_target == null \
-			else _manhattan(ai_unit.grid_pos, combat_target.grid_pos)
-		# Prefer objectives when equal distance or closer; breaks ties toward objectives
-		go_for_obj = obj_dist <= enemy_dist
+	# All cells this unit could move to (plus staying in place)
+	var move_options: Array[Vector2i] = _get_move_cells(ai_unit)
+	move_options.append(ai_unit.grid_pos)
 
-	if go_for_obj:
-		# Move toward objective
-		var best := _best_move_to_cell(ai_unit, obj_cell)
-		if best != ai_unit.grid_pos:
-			ai_unit.grid_pos = best
+	var best_score: float = -INF
+	var best_cell: Vector2i = ai_unit.grid_pos
+	var best_target: Unit = null
+
+	for cell: Vector2i in move_options:
+		# Score this cell on its own merits (capture / kiting), independent of attack
+		var cell_value: float = _score_cell(ai_unit, cell, is_ranged)
+
+		for t: Unit in player_units:
+			if not t.is_alive():
+				continue
+			if _chebyshev(cell, t.grid_pos) > range_val:
+				continue
+			var hit_score: float = cell_value + 1000.0
+			# Hitting a low-HP target is better; killing is best of all
+			if damage >= t.hp:
+				hit_score += 2000.0 + t.max_hp  # finishing high-HP targets is extra valuable
+			else:
+				hit_score += float(damage) - float(t.hp) * 0.4
+
+			if hit_score > best_score:
+				best_score  = hit_score
+				best_cell   = cell
+				best_target = t
+
+	# Execute chosen move (only if we actually have a target — otherwise leave
+	# movement to the fallback so we don't end up moving twice)
+	if best_target != null:
+		if best_cell != ai_unit.grid_pos:
+			ai_unit.grid_pos = best_cell
 			ai_unit.update_visual_position()
 		_check_capture(ai_unit)
-		# Still attack if a player unit happens to be in range
-		if combat_target != null and \
-				_chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
+		_do_attack(ai_unit, best_target)
+		return
+
+	# Fallback — no target in range from any reachable cell. Move toward an
+	# uncaptured objective if it's the closest goal, else close on nearest enemy.
+	var combat_target := _nearest_alive(ai_unit, player_units)
+	var obj_cell      := _nearest_capturable_obj(ai_unit)
+	var target_cell: Vector2i = Vector2i(-1, -1)
+	if obj_cell != Vector2i(-1, -1):
+		var od := _manhattan(ai_unit.grid_pos, obj_cell)
+		var ed: int = 9999 if combat_target == null else _manhattan(ai_unit.grid_pos, combat_target.grid_pos)
+		target_cell = obj_cell if od <= ed else combat_target.grid_pos
+	elif combat_target != null:
+		target_cell = combat_target.grid_pos
+
+	if target_cell != Vector2i(-1, -1):
+		var closer := _best_move_to_cell(ai_unit, target_cell)
+		if closer != ai_unit.grid_pos:
+			ai_unit.grid_pos = closer
+			ai_unit.update_visual_position()
+		_check_capture(ai_unit)
+		# Opportunistic attack after closing
+		if combat_target != null and combat_target.is_alive() \
+				and _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= range_val:
 			_do_attack(ai_unit, combat_target)
-		return
 
-	# No worthwhile objective — default combat behaviour
-	if combat_target == null:
-		return
-
-	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
-		_do_attack(ai_unit, combat_target)
-		return
-
-	var best := _best_move_toward(ai_unit, combat_target)
-	if best != ai_unit.grid_pos:
-		ai_unit.grid_pos = best
-		ai_unit.update_visual_position()
-	_check_capture(ai_unit)
-	if _chebyshev(ai_unit.grid_pos, combat_target.grid_pos) <= ai_unit.get_attack_range():
-		_do_attack(ai_unit, combat_target)
+# Position-only score: rewards capturable objectives and (for ranged units)
+# distance from melee player threats.
+func _score_cell(ai_unit: Unit, cell: Vector2i, is_ranged: bool) -> float:
+	var score := 0.0
+	for obj: Dictionary in objectives:
+		if obj["grid_pos"] == cell and int(obj["owner"]) != ai_unit.team:
+			score += 60.0
+	if is_ranged:
+		for p: Unit in player_units:
+			if not p.is_alive():
+				continue
+			if p.get_attack_range() <= 1:
+				# Want to stay out of melee reach (1 tile) of melee player units
+				var d := _chebyshev(cell, p.grid_pos)
+				if d <= 1:
+					score -= 35.0
+				elif d == 2:
+					score += 5.0
+	return score
 
 # ---------------------------------------------------------------------------
 # Pathfinding / range helpers
@@ -1030,6 +1257,7 @@ func _trigger_win() -> void:
 	_gold_reward = GameManager.battle_gold_reward(
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
 	GameManager.add_gold(_gold_reward)
+	GameManager.register_battle_won(GameManager.pending_battle_elite)
 	_update_ui()
 	_show_result_overlay(true)
 
@@ -1071,12 +1299,15 @@ func _show_result_overlay(won: bool) -> void:
 
 	var sub := Label.new()
 	if won:
-		sub.text = "All enemies defeated.   +%d gold  (total %d)" % [_gold_reward, GameManager.gold]
+		sub.text = "All enemies defeated.   +%d gold  (total %d)\nBattles won this run: %d   ·   Best ever: %d" % [
+			_gold_reward, GameManager.gold,
+			GameManager.battles_won, GameManager.best_streak_ever
+		]
 	else:
-		sub.text = "All your units were destroyed."
-	sub.add_theme_font_size_override("font_size", 18)
+		sub.text = "All your units were destroyed.\nFinal streak: %d battles won" % GameManager.battles_won
+	sub.add_theme_font_size_override("font_size", 16)
 	sub.modulate  = Color(0.72, 0.72, 0.72)
-	sub.position  = Vector2(170.0, 130.0)
+	sub.position  = Vector2(120.0, 125.0)
 	panel.add_child(sub)
 
 	var btn1 := Button.new()

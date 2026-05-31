@@ -140,7 +140,7 @@ func _build_hud() -> void:
 	_depth_label = Label.new()
 	_depth_label.add_theme_font_size_override("font_size", 15)
 	_depth_label.modulate = Color(0.70, 0.70, 0.70)
-	_depth_label.position = Vector2(1100.0, 678.0)
+	_depth_label.position = Vector2(900.0, 678.0)
 	add_child(_depth_label)
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,10 @@ func _refresh() -> void:
 
 	_roster_label.text = "Roster: " + _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
-	_depth_label.text  = "Tier %d / %d" % [cur_tier, GameManager.MAP_TIERS]
+	_depth_label.text  = "Tier %d / %d   ·   Wins: %d   ·   Best: %d" % [
+		cur_tier, GameManager.MAP_TIERS,
+		GameManager.battles_won, GameManager.best_streak_ever
+	]
 
 	if cur_tier >= GameManager.MAP_TIERS:
 		_show_victory()
