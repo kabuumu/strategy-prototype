@@ -8,7 +8,19 @@ var team: int = 0          # 0 = player, 1 = enemy
 var hp: int = 100
 var max_hp: int = 100
 var grid_pos: Vector2i = Vector2i.ZERO
-var has_acted: bool = false
+var has_acted: bool = false   # mirrors ap <= 0 (kept for round-completion checks)
+var ap: int = 0               # action points remaining this turn
+var max_ap: int = 2
+
+func refill_ap() -> void:
+	max_ap = GameManager.ap_for(unit_type)
+	ap = max_ap
+	has_acted = false
+
+func spend_ap(n: int = 1) -> void:
+	ap = maxi(0, ap - n)
+	has_acted = ap <= 0
+
 var stunned: bool = false:       # skips its next activation
 	set(v):
 		stunned = v
@@ -98,7 +110,7 @@ func _build_visuals(udata: Dictionary) -> void:
 	_body = Sprite2D.new()
 	_body.texture        = tex
 	_body.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # crisp pixels
-	var s: float = 2.3 if is_boss else 1.7
+	var s: float = 1.85 if is_boss else 1.4
 	# Face inward: players look right (toward the enemy side), enemies look left.
 	_body.scale = Vector2(-s if team == 1 else s, s)
 	add_child(_body)
@@ -160,10 +172,8 @@ func _refresh_status_badge() -> void:
 
 # ---------------------------------------------------------------------------
 func update_visual_position() -> void:
-	position = Vector2(
-		grid_pos.x * TILE_SIZE + TILE_SIZE / 2,
-		grid_pos.y * TILE_SIZE + TILE_SIZE / 2
-	)
+	# Hex centre, local to _grid_node (the parent already carries GRID_OFFSET).
+	position = Hex.center_v(grid_pos)
 
 # Animate this unit walking along a sequence of world-space points (one per
 # tile, in visit order, starting from the unit's current tile). Returns the

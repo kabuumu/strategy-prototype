@@ -102,7 +102,7 @@ func _on_continue() -> void:
 func _on_skirmish() -> void:
 	# Skirmish is a self-contained battle scene — no campaign state is
 	# touched, so the player can dip in and out without losing a run.
-	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
+	get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the

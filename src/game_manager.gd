@@ -27,7 +27,7 @@ const UNIT_TYPES: Dictionary = {
 	"scout": {
 		"name": "Scout",
 		"max_hp": 60,
-		"move_range": 5,
+		"move_range": 4,
 		"attack_range": 1,
 		"damage": 20,
 		"color": Color(0.95, 0.8, 0.1),
@@ -55,7 +55,7 @@ const UNIT_TYPES: Dictionary = {
 	"pyromancer": {
 		"name": "Pyromancer",
 		"max_hp": 170,
-		"move_range": 3,
+		"move_range": 2,
 		"attack_range": 3,
 		"damage": 24,
 		"color": Color(0.95, 0.45, 0.12),
@@ -94,6 +94,16 @@ const UNIT_TYPES: Dictionary = {
 
 # How much the Healer's Field Heal restores
 const HEAL_ABILITY_AMOUNT: int = 35
+
+# Action points per class per turn. A unit spends 1 AP per move, attack, or
+# ability, and may act in any order until its AP runs out. Scouts get an extra.
+const UNIT_AP: Dictionary = {
+	"soldier": 2, "archer": 2, "scout": 3, "healer": 2,
+	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
+}
+
+func ap_for(unit_type: String) -> int:
+	return int(UNIT_AP.get(unit_type, 2))
 
 # Unit types the player can recruit/buy (excludes bosses).
 func recruitable_types() -> Array[String]:
