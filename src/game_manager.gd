@@ -51,8 +51,29 @@ const UNIT_TYPES: Dictionary = {
 		"enrage_damage_bonus": 15,
 		"enrage_move_bonus": 1,
 		"enrage_range_bonus": 1,
+	},
+	"healer": {
+		"name": "Healer",
+		"max_hp": 65,
+		"move_range": 3,
+		"attack_range": 1,
+		"damage": 10,
+		"color": Color(0.20, 0.82, 0.70),
+		# Field Heal: restore HP to a nearby ally
+		"ability": {"id": "heal_ally", "name": "Field Heal", "desc": "Heal a nearby ally for 35"}
 	}
 }
+
+# How much the Healer's Field Heal restores
+const HEAL_ABILITY_AMOUNT: int = 35
+
+# Unit types the player can recruit/buy (excludes bosses).
+func recruitable_types() -> Array[String]:
+	var out: Array[String] = []
+	for k: String in UNIT_TYPES:
+		if not bool(UNIT_TYPES[k].get("is_boss", false)):
+			out.append(k)
+	return out
 
 # ---------------------------------------------------------------------------
 # Persistent unit upgrades earned after battle wins
@@ -84,6 +105,7 @@ const MAP_TIERS: int = 5
 # and units that die in battle are removed (permadeath).
 var player_roster: Array[Dictionary] = []
 var gold: int = 0
+var relics: Array[String] = []   # owned relic ids (run-long passives)
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -104,6 +126,16 @@ const META_PATH: String = "user://meta.cfg"
 # Shop prices
 const SHOP_HEAL_COST: int = 25
 const SHOP_UNIT_COST: int = 60
+const SHOP_RELIC_COST: int = 80
+
+# Run-modifying relics
+const RELICS: Dictionary = {
+	"whetstone": {"name": "Whetstone",     "desc": "+8 damage to all your units"},
+	"boots":     {"name": "Swift Boots",   "desc": "+1 move range to all your units"},
+	"plating":   {"name": "Plating",       "desc": "+20 max HP to all your units"},
+	"venom":     {"name": "Venom Coating",  "desc": "Your melee hits poison the target"},
+	"medkit":    {"name": "Field Kit",     "desc": "Units start each battle +15 HP"},
+}
 
 # Set before switching to the battle scene
 var pending_battle_tier: int = 0
@@ -129,6 +161,7 @@ func reset() -> void:
 	for t: String in ["soldier", "soldier", "archer"]:
 		add_unit(t)
 	gold = 0
+	relics = []
 	current_tier = 0
 	last_chosen_index = -1
 	pending_battle_tier = 0
@@ -373,3 +406,40 @@ func spend_gold(amount: int) -> bool:
 		return false
 	gold -= amount
 	return true
+
+# ---------------------------------------------------------------------------
+# Relics
+# ---------------------------------------------------------------------------
+func has_relic(id: String) -> bool:
+	return id in relics
+
+func add_relic(id: String) -> void:
+	if id not in relics:
+		relics.append(id)
+
+func unowned_relics() -> Array[String]:
+	var out: Array[String] = []
+	for id: String in RELICS:
+		if id not in relics:
+			out.append(id)
+	return out
+
+# Grant a random unowned relic (e.g. elite reward). Returns its id, or "".
+func grant_random_relic() -> String:
+	var pool := unowned_relics()
+	if pool.is_empty():
+		return ""
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var id: String = pool[rng.randi() % pool.size()]
+	add_relic(id)
+	return id
+
+func relic_damage_bonus() -> int:
+	return 8 if has_relic("whetstone") else 0
+
+func relic_move_bonus() -> int:
+	return 1 if has_relic("boots") else 0
+
+func relic_max_hp_bonus() -> int:
+	return 20 if has_relic("plating") else 0

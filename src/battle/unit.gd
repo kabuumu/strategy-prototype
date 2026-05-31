@@ -13,6 +13,14 @@ var stunned: bool = false       # skips its next activation
 var ability_used: bool = false  # special ability is once per battle
 var upgrades: Array = []        # roguelike upgrades (see GameManager.UPGRADE_TYPES)
 var enraged: bool = false       # boss state: gives stat bonuses
+var poison_turns: int = 0       # damage-over-time at round start
+var burn_turns: int = 0
+
+func apply_poison(turns: int) -> void:
+	poison_turns = maxi(poison_turns, turns)
+
+func apply_burn(turns: int) -> void:
+	burn_turns = maxi(burn_turns, turns)
 
 var _body: Sprite2D
 var _hp_bar: ColorRect
@@ -25,10 +33,12 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 
 	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
 	max_hp = udata["max_hp"]
-	# VETERAN: +20 max HP per stack (applied here so HP bar/initial fill are right)
+	# VETERAN upgrade: +20 max HP per stack (applied here so HP bar/initial fill are right)
 	for u in upgrades:
 		if u == "veteran":
 			max_hp += 20
+	if team == 0:
+		max_hp += GameManager.relic_max_hp_bonus()
 	hp     = max_hp
 
 	_build_visuals(udata)
@@ -218,6 +228,8 @@ func get_move_range() -> int:
 			v += 1
 	if enraged:
 		v += int(udata.get("enrage_move_bonus", 0))
+	if team == 0:
+		v += GameManager.relic_move_bonus()
 	return v
 
 func get_attack_range() -> int:
@@ -245,6 +257,8 @@ func get_damage() -> int:
 		v += 5 * berserker_stacks * missing_q
 	if enraged:
 		v += int(udata.get("enrage_damage_bonus", 0))
+	if team == 0:
+		v += GameManager.relic_damage_bonus()
 	return v
 
 # Multiplier applied to damage this unit RECEIVES. Used by combat resolution
