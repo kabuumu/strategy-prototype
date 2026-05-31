@@ -874,6 +874,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
 	defender.take_damage(dmg)
+	Sfx.play("attack")
 	# Stat tracking — bucket by attacker identity so we can pick an MVP later
 	var aid: int = attacker.get_instance_id()
 	if attacker.team == 0:
@@ -896,6 +897,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
 		_kill_punch()
+		Sfx.play("kill")
 		defender.play_death_animation()
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
@@ -1638,6 +1640,7 @@ var _gold_reward: int = 0
 
 func _trigger_win() -> void:
 	phase = Phase.BATTLE_WON
+	Sfx.play("victory")
 	_persist_roster()
 	_gold_reward = GameManager.battle_gold_reward(
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
