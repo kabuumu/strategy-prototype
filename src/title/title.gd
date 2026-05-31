@@ -48,6 +48,8 @@ func _build_ui() -> void:
 	btn.pressed.connect(_on_new_game)
 	add_child(btn)
 
+	_build_meta_panel()
+
 	# -----------------------------------------------------------------------
 	# Controls hint
 	# -----------------------------------------------------------------------
@@ -75,3 +77,73 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 func _on_new_game() -> void:
 	GameManager.reset()
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+# ---------------------------------------------------------------------------
+# Meta-progression panel — shows previous run recap + lifetime bests so the
+# title screen rewards repeat play. Hidden entirely on first launch.
+# ---------------------------------------------------------------------------
+func _build_meta_panel() -> void:
+	var has_lifetime: bool = GameManager.total_runs > 0 or GameManager.best_streak_ever > 0
+	var has_last_run: bool = GameManager.last_run_tier_reached > 0
+	if not has_lifetime and not has_last_run:
+		return
+
+	var panel := ColorRect.new()
+	panel.color    = Color(0.10, 0.12, 0.18, 0.92)
+	panel.position = Vector2(440.0, 460.0)
+	panel.size     = Vector2(400.0, 170.0)
+	add_child(panel)
+
+	var border := ColorRect.new()
+	border.color    = Color(0.30, 0.32, 0.40, 1.0)
+	border.position = Vector2(440.0, 460.0)
+	border.size     = Vector2(400.0, 2.0)
+	add_child(border)
+
+	var header := Label.new()
+	header.text = "PROGRESS"
+	header.add_theme_font_size_override("font_size", 14)
+	header.modulate = Color(0.85, 0.85, 0.45)
+	header.position = Vector2(456.0, 470.0)
+	add_child(header)
+
+	var y: float = 494.0
+	if has_last_run:
+		var prefix: String = ("Cleared the campaign!" if GameManager.last_run_won
+			else "Reached tier %d / %d" % [GameManager.last_run_tier_reached, GameManager.MAP_TIERS])
+		var last := Label.new()
+		last.text = "Last run: %s  ·  %d battles won" % [prefix, GameManager.last_run_battles_won]
+		last.add_theme_font_size_override("font_size", 14)
+		last.modulate = Color(0.80, 0.85, 0.90)
+		last.position = Vector2(456.0, y)
+		add_child(last)
+		y += 24.0
+
+	if has_lifetime:
+		var best_tier_str: String = (
+			"Best tier:  %d / %d" % [GameManager.best_tier_reached, GameManager.MAP_TIERS]
+			if GameManager.best_tier_reached > 0
+			else "Best tier:  —"
+		)
+		var bt := Label.new()
+		bt.text = best_tier_str
+		bt.add_theme_font_size_override("font_size", 14)
+		bt.modulate = Color(0.70, 0.78, 0.90)
+		bt.position = Vector2(456.0, y)
+		add_child(bt)
+		y += 22.0
+
+		var bs := Label.new()
+		bs.text = "Best streak:  %d wins" % GameManager.best_streak_ever
+		bs.add_theme_font_size_override("font_size", 14)
+		bs.modulate = Color(0.70, 0.78, 0.90)
+		bs.position = Vector2(456.0, y)
+		add_child(bs)
+		y += 22.0
+
+		var tr := Label.new()
+		tr.text = "Total runs:  %d" % GameManager.total_runs
+		tr.add_theme_font_size_override("font_size", 14)
+		tr.modulate = Color(0.55, 0.60, 0.70)
+		tr.position = Vector2(456.0, y)
+		add_child(tr)

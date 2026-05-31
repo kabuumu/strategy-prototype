@@ -93,6 +93,13 @@ var battles_won: int = 0
 var elites_defeated: int = 0
 var units_lost: int = 0
 var best_streak_ever: int = 0   # persists across runs
+var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
+var total_runs: int = 0         # persists across runs
+var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
+var last_run_tier_reached: int = 0
+var last_run_won: bool = false
+
+const META_PATH: String = "user://meta.cfg"
 
 # Shop prices
 const SHOP_HEAL_COST: int = 25
@@ -104,9 +111,20 @@ var pending_battle_elite: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
+	_load_meta()
 	reset()
 
 func reset() -> void:
+	# Capture the just-ended run's stats so the title screen can show a recap.
+	# (Skipped on the very first call when no run has happened yet.)
+	if battles_won > 0 or current_tier > 0:
+		last_run_battles_won = battles_won
+		last_run_tier_reached = current_tier + 1  # 1-based
+		last_run_won = battles_won >= MAP_TIERS
+		total_runs += 1
+		if last_run_tier_reached > best_tier_reached:
+			best_tier_reached = last_run_tier_reached
+		_save_meta()
 	player_roster = []
 	for t: String in ["soldier", "soldier", "archer"]:
 		add_unit(t)
@@ -127,6 +145,25 @@ func register_battle_won(elite: bool) -> void:
 		elites_defeated += 1
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
+		_save_meta()
+
+# ---------------------------------------------------------------------------
+# Meta-progression persistence
+# ---------------------------------------------------------------------------
+func _load_meta() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(META_PATH) != OK:
+		return
+	best_streak_ever  = int(cfg.get_value("meta", "best_streak_ever",  0))
+	best_tier_reached = int(cfg.get_value("meta", "best_tier_reached", 0))
+	total_runs        = int(cfg.get_value("meta", "total_runs",        0))
+
+func _save_meta() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("meta", "best_streak_ever",  best_streak_ever)
+	cfg.set_value("meta", "best_tier_reached", best_tier_reached)
+	cfg.set_value("meta", "total_runs",        total_runs)
+	cfg.save(META_PATH)
 
 # ---------------------------------------------------------------------------
 # Map generation
