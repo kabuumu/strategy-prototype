@@ -43,6 +43,17 @@ var _cooldown: float = 0.0
 var _selected: bool = false
 var engage_radius_world: float = 100.0 * WORLD_SCALE
 
+# Terrain modifiers (set each tick by skirmish3d based on the cell underfoot)
+var terrain_def_mult: float = 1.0
+var terrain_atk_mult: float = 1.0
+var terrain_speed_mult: float = 1.0
+var _lava_accum: float = 0.0
+
+# Morale: drains as casualties mount; at 0 the regiment routs (flees, won't
+# fight) until it recovers away from the enemy.
+var morale: float = 100.0
+var routing: bool = false
+
 var _body: MeshInstance3D
 var _select_ring: MeshInstance3D
 var _hover_ring: MeshInstance3D
@@ -304,15 +315,19 @@ func _expected_alive_count() -> int:
 func take_damage(amount: int) -> void:
 	if hp <= 0:
 		return
+	# Terrain cover reduces incoming damage (e.g. forest)
+	amount = max(1, int(round(amount * terrain_def_mult)))
 	hp = max(0, hp - amount)
 	_refresh_hp_bar()
 	_flash_hit()
+	morale -= 2.0   # being hit shakes the regiment
 	var target_alive := _expected_alive_count()
 	while alive_soldier_count() > target_alive:
 		for i in range(_soldiers.size() - 1, -1, -1):
 			var s: Soldier = _soldiers[i]
 			if s.active:
 				_kill_soldier(i)
+				morale -= 11.0   # each lost rank hits morale hard
 				break
 	if hp <= 0:
 		emit_signal("died", self)
@@ -346,6 +361,31 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 	if _cooldown > 0.0:
 		_cooldown = max(0.0, _cooldown - delta)
 
+	# --- Morale / rout ---------------------------------------------------
+	var enemy_near: bool = _find_nearest_enemy_in_radius(neighbours, engage_radius_world * 2.5) != null
+	if routing:
+		morale = min(100.0, morale + 22.0 * delta)
+		if morale >= 55.0 and not enemy_near:
+			_set_routing(false)
+	else:
+		if not enemy_near:
+			morale = min(100.0, morale + 14.0 * delta)
+		if morale <= 18.0:
+			_set_routing(true)
+
+	if routing:
+		# Flee from the nearest enemy (or toward home edge) and never fight.
+		var foe := _find_nearest_enemy_in_radius(neighbours, 9999.0)
+		var flee := Vector3((-1.0 if team == 0 else 1.0), 0.0, 0.0)
+		if foe != null:
+			flee = global_position - foe.global_position
+			flee.y = 0.0
+		if flee.length() < 0.01:
+			flee = Vector3((-1.0 if team == 0 else 1.0), 0.0, 0.0)
+		global_position += flee.normalized() * move_speed_world * 1.25 * terrain_speed_mult * delta
+		_apply_separation(delta, neighbours)
+		return fired
+
 	# Keep alive orders in sync with battlefield state.
 	if order == Order.ATTACK and (attack_target == null or not attack_target.is_alive()):
 		clear_order()
@@ -375,12 +415,29 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 			pass
 
 	if want_move:
-		var step: Vector3 = move_intent.normalized() * move_speed_world * delta
+		var step: Vector3 = move_intent.normalized() * move_speed_world * terrain_speed_mult * delta
 		if order == Order.MOVE and step.length() > move_intent.length():
 			step = move_intent
 		global_position += step
 
-	# Soft unit separation (2D, x/z only)
+	_apply_separation(delta, neighbours)
+
+	if attack_target != null and attack_target.is_alive():
+		var dist: float = global_position.distance_to(attack_target.global_position)
+		var target_gap: float = attack_range_world + attack_target.radius
+		if dist <= target_gap and _cooldown <= 0.0:
+			_cooldown = attack_cooldown
+			# High ground (terrain_atk_mult) boosts the strike
+			var scaled: int = max(1, int(round(
+				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)) * terrain_atk_mult
+			)))
+			attack_target.take_damage(scaled)
+			_play_attack_animation()
+			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}
+	return fired
+
+# Soft unit separation (x/z only) so regiments don't stack.
+func _apply_separation(delta: float, neighbours: Array) -> void:
 	for other: CharacterBody3D in neighbours:
 		if other == self or not other.is_alive():
 			continue
@@ -392,18 +449,16 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 			var push := (min_dist - d) * 0.5
 			global_position += diff.normalized() * push * min(1.0, delta * 8.0)
 
-	if attack_target != null and attack_target.is_alive():
-		var dist: float = global_position.distance_to(attack_target.global_position)
-		var target_gap: float = attack_range_world + attack_target.radius
-		if dist <= target_gap and _cooldown <= 0.0:
-			_cooldown = attack_cooldown
-			var scaled: int = max(1, int(round(
-				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count))
-			)))
-			attack_target.take_damage(scaled)
-			_play_attack_animation()
-			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}
-	return fired
+# Toggle routing state + a visual cue (figure tints toward panic grey-red).
+func _set_routing(v: bool) -> void:
+	if routing == v:
+		return
+	routing = v
+	if v:
+		clear_order()
+	var mat := _body.material_override as StandardMaterial3D
+	if mat != null:
+		mat.albedo_color = Color(0.55, 0.45, 0.45) if v else team_color
 
 func _play_attack_animation() -> void:
 	if _body == null:

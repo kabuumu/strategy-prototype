@@ -1,0 +1,7 @@
+[mcp_servers.godot-mcp]
+command = "node"
+args = ["/home/richard/Projects/godot-mcp-enhanced/build/index.js"]
+
+[mcp_servers.godot-mcp.env]
+GODOT_MCP_MODE = "editor"
+GODOT_PATH = "/usr/bin/godot"
