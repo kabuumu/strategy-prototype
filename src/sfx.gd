@@ -8,6 +8,11 @@ const NAMES: Array[String] = [
 ]
 const POOL_SIZE: int = 8
 
+# Aliases so call sites using other naming (from merged work) still play.
+const ALIASES: Dictionary = {
+	"kill": "death", "victory": "win", "defeat": "lose",
+}
+
 var _streams: Dictionary = {}
 var _players: Array[AudioStreamPlayer] = []
 
@@ -22,6 +27,7 @@ func _ready() -> void:
 		_players.append(p)
 
 func play(name: String, volume_db: float = -6.0) -> void:
+	name = ALIASES.get(name, name)
 	if not _streams.has(name):
 		return
 	for p: AudioStreamPlayer in _players:

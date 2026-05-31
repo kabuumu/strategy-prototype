@@ -366,6 +366,9 @@ func _draw() -> void:
 	# hovered attackable tile during the attack phase only.
 	_draw_damage_preview()
 
+	# Initiative strip — shows who has and hasn't acted this round
+	_draw_initiative_strip()
+
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
@@ -643,6 +646,67 @@ func _unit_label(u: Unit) -> String:
 	return ("You-" if u.team == 0 else "Enemy-") + name_str
 
 # ---------------------------------------------------------------------------
+# Initiative strip
+# ---------------------------------------------------------------------------
+func _draw_initiative_strip() -> void:
+	var font: Font = ThemeDB.fallback_font
+	var y: float = 22.0
+	var x: float = 50.0
+	draw_string(font, Vector2(8.0, y + 12.0), "TURN:",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.55, 0.55, 0.60))
+	x = 50.0
+	for u: Unit in player_units:
+		if not u.is_alive():
+			continue
+		_draw_init_token(font, x, y, u, false)
+		x += 28.0
+	# Divider
+	draw_line(Vector2(x + 4.0, y - 6.0), Vector2(x + 4.0, y + 22.0),
+		Color(0.45, 0.45, 0.50, 0.6), 2.0)
+	x += 14.0
+	for u: Unit in enemy_units:
+		if not u.is_alive():
+			continue
+		_draw_init_token(font, x, y, u, true)
+		x += 28.0
+
+func _draw_init_token(font: Font, x: float, y: float, u: Unit, is_enemy: bool) -> void:
+	var udata: Dictionary = GameManager.UNIT_TYPES[u.unit_type]
+	var base_col: Color = udata["color"] if not is_enemy else Color(0.92, 0.32, 0.32)
+	var alpha: float = 0.30 if u.has_acted else 1.0
+	var col := Color(base_col.r, base_col.g, base_col.b, alpha)
+	var center := Vector2(x + 11.0, y + 9.0)
+	draw_circle(center, 11.0, col)
+	# Outline (yellow if this unit is the next to act)
+	var is_next: bool = _is_next_to_act(u)
+	var outline_col: Color = (Color(1.0, 0.92, 0.30, 0.95) if is_next
+		else Color(0.0, 0.0, 0.0, 0.6 * alpha))
+	var outline_w: float = 2.5 if is_next else 1.0
+	draw_arc(center, 11.0, 0.0, TAU, 20, outline_col, outline_w)
+	var letter: String = (udata["name"] as String).substr(0, 1).to_upper()
+	draw_string(font, Vector2(x + 6.0, y + 14.0), letter,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.05, 0.05, 0.05, alpha))
+
+func _is_next_to_act(u: Unit) -> bool:
+	# In PLAYER_SELECT_UNIT: next is first player with !has_acted and alive
+	# In AI_ACTING: next is first enemy with !has_acted and alive
+	if u.has_acted or not u.is_alive():
+		return false
+	if phase == Phase.AI_ACTING:
+		for e: Unit in enemy_units:
+			if e.is_alive() and not e.has_acted:
+				return e == u
+		return false
+	# Player phases — highlight the selected unit if any, otherwise first unacted
+	if selected_unit != null and u.team == 0:
+		return u == selected_unit
+	if u.team == 0:
+		for p: Unit in player_units:
+			if p.is_alive() and not p.has_acted:
+				return p == u
+	return false
+
+# ---------------------------------------------------------------------------
 # Damage preview overlay
 # ---------------------------------------------------------------------------
 func _draw_damage_preview() -> void:
@@ -912,6 +976,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
 	defender.take_damage(dmg)
+	Sfx.play("attack")
 	# Stat tracking — bucket by attacker identity so we can pick an MVP later
 	var aid: int = attacker.get_instance_id()
 	if attacker.team == 0:
@@ -936,6 +1001,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
 		_kill_punch()
+		Sfx.play("kill")
 		defender.play_death_animation()
 		defender.modulate = DEATH_TINT
 		Sfx.play("death")
@@ -1769,6 +1835,7 @@ var _relic_reward: String = ""
 
 func _trigger_win() -> void:
 	phase = Phase.BATTLE_WON
+	Sfx.play("victory")
 	_persist_roster()
 	_gold_reward = GameManager.battle_gold_reward(
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
