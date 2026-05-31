@@ -86,6 +86,12 @@ var _obj_status_label: Label
 var _log_label:        Label
 var _skip_btn:         Button
 var _ability_btn:      Button
+var _ability_panel:    Control
+var _ability_name_lbl: Label
+var _ability_desc_lbl: Label
+var _ability_icon_lbl: Label
+var _ability_hint_lbl: Label
+var _ability_bg:       ColorRect
 var _end_btn:          Button
 
 var _battle_log: Array[String] = []
@@ -440,10 +446,7 @@ func _build_ui() -> void:
 
 	_build_unit_legend()
 
-	_ability_btn = _make_button("Ability", Vector2(PANEL_X + 20.0, 502.0), Vector2(458.0, 46.0))
-	_ability_btn.add_theme_color_override("font_color", STUN_COLOR)
-	_ability_btn.pressed.connect(_on_ability_pressed)
-	add_child(_ability_btn)
+	_build_ability_bar()
 
 	_skip_btn = _make_button("Skip Attack", Vector2(PANEL_X + 20.0, 560.0), Vector2(220.0, 50.0))
 	_skip_btn.pressed.connect(_on_skip_pressed)
@@ -547,6 +550,100 @@ func _make_button(txt: String, pos: Vector2, sz: Vector2) -> Button:
 	btn.add_theme_font_size_override("font_size", 16)
 	return btn
 
+# Single-character glyph that visually represents each ability id.
+const ABILITY_ICONS: Dictionary = {
+	"bash":      "⚡",
+	"pierce":    "➤",
+	"dash":      "»",
+	"heal_ally": "✚",
+}
+
+# Builds the ability action bar below the grid. The bar contains a large
+# icon, the ability's name and description, and a [Q] hotkey hint. The whole
+# bar is hidden when the currently selected unit has no usable ability so the
+# space stays unobtrusive.
+func _build_ability_bar() -> void:
+	_ability_panel              = Control.new()
+	_ability_panel.position     = Vector2(40.0, 625.0)
+	_ability_panel.size         = Vector2(700.0, 80.0)
+	_ability_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	_ability_panel.visible      = false
+	add_child(_ability_panel)
+
+	_ability_bg = ColorRect.new()
+	_ability_bg.color    = Color(0.18, 0.13, 0.26, 0.92)
+	_ability_bg.position = Vector2.ZERO
+	_ability_bg.size     = Vector2(700.0, 80.0)
+	_ability_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ability_panel.add_child(_ability_bg)
+
+	# The button itself fills the panel so the whole bar is clickable.
+	_ability_btn = Button.new()
+	_ability_btn.text     = ""
+	_ability_btn.position = Vector2.ZERO
+	_ability_btn.size     = Vector2(700.0, 80.0)
+	_ability_btn.flat     = true
+	_ability_btn.pressed.connect(_on_ability_pressed)
+	_ability_panel.add_child(_ability_btn)
+
+	_ability_icon_lbl = _make_label(46, STUN_COLOR)
+	_ability_icon_lbl.position = Vector2(16.0, 8.0)
+	_ability_icon_lbl.size     = Vector2(70.0, 70.0)
+	_ability_icon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_ability_icon_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	_ability_icon_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ability_panel.add_child(_ability_icon_lbl)
+
+	_ability_name_lbl = _make_label(18, Color(0.95, 0.92, 1.0))
+	_ability_name_lbl.position = Vector2(100.0, 12.0)
+	_ability_name_lbl.size     = Vector2(520.0, 26.0)
+	_ability_name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ability_panel.add_child(_ability_name_lbl)
+
+	_ability_desc_lbl = _make_label(13, Color(0.75, 0.72, 0.85))
+	_ability_desc_lbl.position = Vector2(100.0, 42.0)
+	_ability_desc_lbl.size     = Vector2(520.0, 30.0)
+	_ability_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_ability_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ability_panel.add_child(_ability_desc_lbl)
+
+	_ability_hint_lbl = _make_label(13, Color(0.70, 0.65, 0.85))
+	_ability_hint_lbl.text     = "[Q]"
+	_ability_hint_lbl.position = Vector2(640.0, 32.0)
+	_ability_hint_lbl.size     = Vector2(50.0, 18.0)
+	_ability_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_ability_hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ability_panel.add_child(_ability_hint_lbl)
+
+# Refresh the ability bar's contents and visibility based on the current
+# selection and phase. Called every time _update_ui runs.
+func _refresh_ability_bar() -> void:
+	if _ability_panel == null:
+		return
+	var show: bool = phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK] \
+			and selected_unit != null \
+			and not selected_unit.ability_used
+	if not show:
+		_ability_panel.visible = false
+		return
+	var abil: Dictionary = selected_unit.get_ability()
+	if abil.is_empty():
+		_ability_panel.visible = false
+		return
+	var has_target: bool = not _ability_target_cells(selected_unit, abil["id"]).is_empty()
+	_ability_panel.visible = true
+	_ability_btn.disabled  = not has_target
+	_ability_icon_lbl.text = String(ABILITY_ICONS.get(abil["id"], "✦"))
+	_ability_name_lbl.text = String(abil.get("name", "Ability"))
+	_ability_desc_lbl.text = String(abil.get("desc", ""))
+	# Dim everything when the ability has no valid target right now
+	var dim: float = 0.45 if not has_target else 1.0
+	_ability_bg.color        = Color(0.18, 0.13, 0.26, 0.92 if has_target else 0.55)
+	_ability_icon_lbl.modulate = Color(STUN_COLOR.r, STUN_COLOR.g, STUN_COLOR.b, dim)
+	_ability_name_lbl.modulate = Color(0.95, 0.92, 1.0, dim)
+	_ability_desc_lbl.modulate = Color(0.75, 0.72, 0.85, dim)
+	_ability_hint_lbl.modulate = Color(0.70, 0.65, 0.85, dim)
+
 # ---------------------------------------------------------------------------
 # Spawn units
 # ---------------------------------------------------------------------------
@@ -625,12 +722,11 @@ func _update_ui() -> void:
 			_instruct_label.text = "Click a unit to select it.\nStep on an objective (★) to capture it."
 			_unit_info_label.text = ""
 			_skip_btn.visible    = false
-			_ability_btn.visible = false
 			_end_btn.visible     = true
 			_refresh_end_turn_button()
 		Phase.PLAYER_SELECT_MOVE:
 			_phase_label.text    = "Move Unit"
-			_instruct_label.text = "Click a blue tile to move, or Skip Move to attack from here.\nRight-click to deselect."
+			_instruct_label.text = "Click a blue tile to move, a red tile to attack from here, or Skip Move.\nRight-click to deselect."
 			_skip_btn.visible    = true
 			_skip_btn.text       = "Skip Move"
 			_end_btn.visible     = true
@@ -646,28 +742,20 @@ func _update_ui() -> void:
 			_phase_label.text    = abil_ui.get("name", "Ability")
 			_instruct_label.text = "Click a purple tile to use %s.\nRight-click to cancel." % abil_ui.get("name", "ability")
 			_skip_btn.visible    = false
-			_ability_btn.visible = false
 			_end_btn.visible     = false
 		Phase.AI_ACTING:
 			_phase_label.text    = "Enemy Turn"
 			_instruct_label.text = "Enemy is acting…"
 			_unit_info_label.text = ""
 			_skip_btn.visible    = false
-			_ability_btn.visible = false
 			_end_btn.visible     = false
 		Phase.BATTLE_WON, Phase.BATTLE_LOST:
 			_skip_btn.visible    = false
-			_ability_btn.visible = false
 			_end_btn.visible     = false
 
-	# Ability button: shown while a unit is selected, ability unused, and it
-	# currently has a valid target/use.
-	if phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK] \
-			and selected_unit and not selected_unit.ability_used:
-		var abil: Dictionary = selected_unit.get_ability()
-		if not abil.is_empty() and not _ability_target_cells(selected_unit, abil["id"]).is_empty():
-			_ability_btn.visible = true
-			_ability_btn.text    = "%s — %s" % [abil["name"], abil["desc"]]
+	# The ability action bar (icon-rich panel below the grid) figures out
+	# its own visibility/disabled state based on the current phase and unit.
+	_refresh_ability_bar()
 
 	if selected_unit and phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK]:
 		var udata: Dictionary = GameManager.UNIT_TYPES[selected_unit.unit_type]
@@ -777,7 +865,12 @@ func _is_next_to_act(u: Unit) -> bool:
 # Damage preview overlay
 # ---------------------------------------------------------------------------
 func _draw_damage_preview() -> void:
-	if phase != Phase.PLAYER_SELECT_ATTACK or selected_unit == null:
+	# Damage forecast is helpful both when standing in attack-select phase
+	# and when surveying attack targets reachable from the unit's current
+	# cell during the move phase.
+	if phase != Phase.PLAYER_SELECT_ATTACK and phase != Phase.PLAYER_SELECT_MOVE:
+		return
+	if selected_unit == null:
 		return
 	if _hover_cell == Vector2i(-1, -1) or _hover_cell not in attack_cells:
 		return
@@ -883,6 +976,11 @@ func _handle_key(keycode: int) -> void:
 			queue_redraw()
 		KEY_F:
 			_set_fast_mode(not _fast_mode)
+		KEY_Q:
+			# Trigger the ability bar if it's currently usable.
+			if _ability_btn != null and _ability_panel != null \
+					and _ability_panel.visible and not _ability_btn.disabled:
+				_on_ability_pressed()
 
 # Apply the speed multiplier engine-wide so AI timers, attack lunges and
 # move tweens all fast-forward together. Reset on scene exit.
@@ -981,12 +1079,22 @@ func _try_select_unit(cell: Vector2i) -> void:
 			selected_unit        = u
 			_selected_unit_origin = u.grid_pos
 			move_cells           = _get_move_cells(u)
-			attack_cells.clear()
+			# Surface attack targets reachable from the unit's current cell
+			# so the player can attack without having to commit a move first.
+			attack_cells         = _get_attack_cells(u, enemy_units)
 			phase = Phase.PLAYER_SELECT_MOVE
 			_update_ui()
 			return
 
 func _try_move_unit(cell: Vector2i) -> void:
+	# Clicking an in-range enemy from the move phase performs an attack from
+	# the current cell without consuming a move step. Attack cells take
+	# precedence over move cells if they ever overlap (they shouldn't, since
+	# enemies block movement, but defend against it anyway).
+	if cell in attack_cells:
+		move_cells.clear()
+		_try_attack(cell)
+		return
 	if cell not in move_cells:
 		return
 	if cell != selected_unit.grid_pos:
