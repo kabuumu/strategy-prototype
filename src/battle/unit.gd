@@ -9,6 +9,8 @@ var hp: int = 100
 var max_hp: int = 100
 var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false
+var stunned: bool = false       # skips its next activation
+var ability_used: bool = false  # special ability is once per battle
 
 var _body: Sprite2D
 var _hp_bar: ColorRect
@@ -92,6 +94,24 @@ func _flash_hit() -> void:
 	_body.modulate = Color(1.8, 0.5, 0.5)
 	var tw := create_tween()
 	tw.tween_property(_body, "modulate", Color(1.0, 1.0, 1.0), 0.25)
+
+# Floating status word (e.g. "STUNNED!") that rises and fades
+func show_status_popup(text: String, color: Color) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 15)
+	lbl.modulate = color
+	lbl.position = Vector2(-26.0, -48.0)
+	lbl.z_index  = 100
+	add_child(lbl)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:y", -70.0, 0.9)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.9).set_delay(0.3)
+	tw.chain().tween_callback(lbl.queue_free)
+
+func get_ability() -> Dictionary:
+	return GameManager.UNIT_TYPES[unit_type].get("ability", {})
 
 func _refresh_hp_bar() -> void:
 	var ratio: float = float(hp) / float(max_hp)

@@ -29,6 +29,7 @@ enum Phase {
 	PLAYER_SELECT_UNIT,
 	PLAYER_SELECT_MOVE,
 	PLAYER_SELECT_ATTACK,
+	PLAYER_SELECT_ABILITY,
 	AI_ACTING,
 	BATTLE_WON,
 	BATTLE_LOST
@@ -37,8 +38,10 @@ enum Phase {
 var phase: Phase = Phase.PLAYER_SELECT_UNIT
 var selected_unit: Unit = null
 var _selected_unit_origin: Vector2i = Vector2i.ZERO
-var move_cells:   Array[Vector2i] = []
-var attack_cells: Array[Vector2i] = []
+var move_cells:    Array[Vector2i] = []
+var attack_cells:  Array[Vector2i] = []
+var ability_cells: Array[Vector2i] = []
+const STUN_COLOR := Color(0.75, 0.55, 1.0)
 
 # ---------------------------------------------------------------------------
 # Units
@@ -66,6 +69,7 @@ var _unit_info_label:  Label
 var _instruct_label:   Label
 var _obj_status_label: Label
 var _skip_btn:         Button
+var _ability_btn:      Button
 var _end_btn:          Button
 
 # ---------------------------------------------------------------------------
@@ -137,7 +141,9 @@ func _draw() -> void:
 				Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)
 			)
 			var color: Color
-			if cell in attack_cells:
+			if cell in ability_cells:
+				color = Color(0.52, 0.30, 0.78, 0.85)
+			elif cell in attack_cells:
 				color = Color(0.65, 0.16, 0.16, 0.82)
 			elif cell in move_cells:
 				color = Color(0.16, 0.36, 0.65, 0.80)
@@ -202,6 +208,22 @@ func _draw() -> void:
 			gy * TILE_SIZE + TILE_SIZE - pad - 2.0
 		), icon, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.85))
 
+	# Damage forecast over targetable enemies (attack + ability phases)
+	if selected_unit and phase in [Phase.PLAYER_SELECT_ATTACK, Phase.PLAYER_SELECT_ABILITY]:
+		var cells := attack_cells if phase == Phase.PLAYER_SELECT_ATTACK else ability_cells
+		var dmg := selected_unit.get_damage()
+		for t: Unit in enemy_units:
+			if not t.is_alive() or t.grid_pos not in cells:
+				continue
+			var lethal: bool = t.hp <= dmg
+			var txt: String = "KILL" if lethal else "-%d" % dmg
+			var col: Color = Color(1.0, 0.35, 0.3) if lethal else Color(1.0, 0.92, 0.4)
+			var base := GRID_OFFSET + Vector2(t.grid_pos.x * TILE_SIZE + 6.0, t.grid_pos.y * TILE_SIZE + 18.0)
+			draw_string(ThemeDB.fallback_font, base + Vector2(1, 1), txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0, 0, 0, 0.8))  # shadow
+			draw_string(ThemeDB.fallback_font, base, txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, col)
+
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
@@ -245,6 +267,11 @@ func _build_ui() -> void:
 	add_child(_obj_status_label)
 
 	_build_unit_legend()
+
+	_ability_btn = _make_button("Ability", Vector2(PANEL_X + 20.0, 502.0), Vector2(458.0, 46.0))
+	_ability_btn.add_theme_color_override("font_color", STUN_COLOR)
+	_ability_btn.pressed.connect(_on_ability_pressed)
+	add_child(_ability_btn)
 
 	_skip_btn = _make_button("Skip Attack", Vector2(PANEL_X + 20.0, 560.0), Vector2(220.0, 50.0))
 	_skip_btn.pressed.connect(_on_skip_pressed)
@@ -340,6 +367,7 @@ func _update_ui() -> void:
 			_instruct_label.text = "Click a unit to select it.\nStep on an objective (★) to capture it."
 			_unit_info_label.text = ""
 			_skip_btn.visible    = false
+			_ability_btn.visible = false
 			_end_btn.visible     = true
 			_end_btn.text        = "End Turn"
 		Phase.PLAYER_SELECT_MOVE:
@@ -351,19 +379,37 @@ func _update_ui() -> void:
 			_end_btn.text        = "Forfeit Unit"
 		Phase.PLAYER_SELECT_ATTACK:
 			_phase_label.text    = "Attack"
-			_instruct_label.text = "Click a red tile to attack.\nSkip Attack to pass. Right-click to cancel move."
+			_instruct_label.text = "Click a red tile to attack, use your ability, or Skip Attack.\nRight-click to cancel move."
 			_skip_btn.visible    = true
 			_skip_btn.text       = "Skip Attack"
+			_end_btn.visible     = false
+		Phase.PLAYER_SELECT_ABILITY:
+			var abil_ui: Dictionary = selected_unit.get_ability() if selected_unit else {}
+			_phase_label.text    = abil_ui.get("name", "Ability")
+			_instruct_label.text = "Click a purple tile to use %s.\nRight-click to cancel." % abil_ui.get("name", "ability")
+			_skip_btn.visible    = false
+			_ability_btn.visible = false
 			_end_btn.visible     = false
 		Phase.AI_ACTING:
 			_phase_label.text    = "Enemy Turn"
 			_instruct_label.text = "Enemy is acting…"
 			_unit_info_label.text = ""
 			_skip_btn.visible    = false
+			_ability_btn.visible = false
 			_end_btn.visible     = false
 		Phase.BATTLE_WON, Phase.BATTLE_LOST:
-			_skip_btn.visible = false
-			_end_btn.visible  = false
+			_skip_btn.visible    = false
+			_ability_btn.visible = false
+			_end_btn.visible     = false
+
+	# Ability button: shown while a unit is selected, ability unused, and it
+	# currently has a valid target/use.
+	if phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK] \
+			and selected_unit and not selected_unit.ability_used:
+		var abil: Dictionary = selected_unit.get_ability()
+		if not abil.is_empty() and not _ability_target_cells(selected_unit, abil["id"]).is_empty():
+			_ability_btn.visible = true
+			_ability_btn.text    = "%s — %s" % [abil["name"], abil["desc"]]
 
 	if selected_unit and phase in [Phase.PLAYER_SELECT_MOVE, Phase.PLAYER_SELECT_ATTACK]:
 		var udata: Dictionary = GameManager.UNIT_TYPES[selected_unit.unit_type]
@@ -412,9 +458,10 @@ func _valid_cell(cell: Vector2i) -> bool:
 
 func _handle_left_click(cell: Vector2i) -> void:
 	match phase:
-		Phase.PLAYER_SELECT_UNIT:   _try_select_unit(cell)
-		Phase.PLAYER_SELECT_MOVE:   _try_move_unit(cell)
-		Phase.PLAYER_SELECT_ATTACK: _try_attack(cell)
+		Phase.PLAYER_SELECT_UNIT:    _try_select_unit(cell)
+		Phase.PLAYER_SELECT_MOVE:    _try_move_unit(cell)
+		Phase.PLAYER_SELECT_ATTACK:  _try_attack(cell)
+		Phase.PLAYER_SELECT_ABILITY: _try_ability(cell)
 
 func _handle_right_click() -> void:
 	match phase:
@@ -422,6 +469,7 @@ func _handle_right_click() -> void:
 			selected_unit = null
 			move_cells.clear()
 			attack_cells.clear()
+			ability_cells.clear()
 			phase = Phase.PLAYER_SELECT_UNIT
 			_update_ui()
 		Phase.PLAYER_SELECT_ATTACK:
@@ -431,7 +479,14 @@ func _handle_right_click() -> void:
 			selected_unit = null
 			move_cells.clear()
 			attack_cells.clear()
+			ability_cells.clear()
 			phase = Phase.PLAYER_SELECT_UNIT
+			_update_ui()
+		Phase.PLAYER_SELECT_ABILITY:
+			# Cancel ability targeting, back to attack phase
+			ability_cells.clear()
+			attack_cells = _get_attack_cells(selected_unit, enemy_units)
+			phase = Phase.PLAYER_SELECT_ATTACK
 			_update_ui()
 
 # ---------------------------------------------------------------------------
@@ -500,6 +555,7 @@ func _commit_player_unit_turn() -> void:
 	selected_unit           = null
 	move_cells.clear()
 	attack_cells.clear()
+	ability_cells.clear()
 
 	if _all_dead(enemy_units):
 		_trigger_win()
@@ -518,6 +574,80 @@ func _on_skip_pressed() -> void:
 		Phase.PLAYER_SELECT_ATTACK:
 			_commit_player_unit_turn()
 
+# ---------------------------------------------------------------------------
+# Abilities (once per battle per unit)
+# ---------------------------------------------------------------------------
+# Cells a unit may target/use its ability on right now (empty = unusable).
+func _ability_target_cells(unit: Unit, id: String) -> Array[Vector2i]:
+	match id:
+		"dash":
+			# Usable if it can still move somewhere
+			return _get_move_cells(unit)
+		"pierce":
+			# Any enemy within attack range (the behind-hit is a bonus)
+			return _get_attack_cells(unit, enemy_units)
+		"bash":
+			# Adjacent (incl. diagonal) enemies only
+			var cells: Array[Vector2i] = []
+			for t: Unit in enemy_units:
+				if t.is_alive() and _chebyshev(unit.grid_pos, t.grid_pos) <= 1:
+					cells.append(t.grid_pos)
+			return cells
+	return []
+
+func _on_ability_pressed() -> void:
+	if not selected_unit or selected_unit.ability_used:
+		return
+	var id: String = selected_unit.get_ability().get("id", "")
+	if id == "dash":
+		# Grant a second move immediately
+		selected_unit.ability_used = true
+		selected_unit.show_status_popup("DASH!", Color(0.95, 0.85, 0.2))
+		move_cells   = _get_move_cells(selected_unit)
+		attack_cells.clear()
+		ability_cells.clear()
+		phase = Phase.PLAYER_SELECT_MOVE
+		_update_ui()
+	else:
+		# Targeted abilities: enter ability-targeting phase
+		ability_cells = _ability_target_cells(selected_unit, id)
+		attack_cells.clear()
+		phase = Phase.PLAYER_SELECT_ABILITY
+		_update_ui()
+
+func _try_ability(cell: Vector2i) -> void:
+	if cell not in ability_cells:
+		return
+	var target: Unit = null
+	for t: Unit in enemy_units:
+		if t.is_alive() and t.grid_pos == cell:
+			target = t
+			break
+	if target == null:
+		return
+
+	var id: String = selected_unit.get_ability().get("id", "")
+	match id:
+		"pierce":
+			_do_attack(selected_unit, target)
+			# Hit the unit directly behind the target (same direction)
+			var d := target.grid_pos - selected_unit.grid_pos
+			var step := Vector2i(signi(d.x), signi(d.y))
+			var behind := target.grid_pos + step
+			for t: Unit in enemy_units:
+				if t.is_alive() and t.grid_pos == behind:
+					_do_attack(selected_unit, t)
+					break
+		"bash":
+			_do_attack(selected_unit, target)
+			if target.is_alive():
+				target.stunned = true
+				target.show_status_popup("STUNNED!", STUN_COLOR)
+
+	selected_unit.ability_used = true
+	ability_cells.clear()
+	_commit_player_unit_turn()
+
 func _on_end_turn() -> void:
 	if selected_unit:
 		selected_unit.has_acted = true
@@ -525,6 +655,7 @@ func _on_end_turn() -> void:
 		selected_unit           = null
 	move_cells.clear()
 	attack_cells.clear()
+	ability_cells.clear()
 
 	if _all_dead(enemy_units):
 		_trigger_win()
@@ -610,6 +741,11 @@ func _execute_one_ai_unit() -> void:
 		_check_round_complete()
 		return
 
+	# Stunned units lose this activation (it counts as their turn)
+	if _consume_stun(ai_unit):
+		_check_round_complete()
+		return
+
 	_ai_act(ai_unit)
 	ai_unit.has_acted = true
 	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
@@ -642,6 +778,10 @@ func _execute_remaining_ai_units() -> void:
 	await get_tree().create_timer(0.55).timeout
 
 	var ai_unit: Unit = unacted[0]
+	if _consume_stun(ai_unit):
+		_execute_remaining_ai_units()
+		return
+
 	_ai_act(ai_unit)
 	ai_unit.has_acted = true
 	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
@@ -847,6 +987,19 @@ func _reset_acted_flags(units: Array[Unit]) -> void:
 		if u.is_alive():
 			u.has_acted = false
 			u.modulate  = Color(1.0, 1.0, 1.0, 1.0)
+			# A unit that began the round stunned loses it
+			_consume_stun(u)
+
+# If the unit is stunned, clear it and mark it as having spent its turn.
+# Returns true when the activation was consumed by the stun.
+func _consume_stun(u: Unit) -> bool:
+	if not u.stunned:
+		return false
+	u.stunned   = false
+	u.has_acted = true
+	u.modulate  = Color(0.58, 0.58, 0.58, 1.0)
+	u.show_status_popup("STUNNED!", STUN_COLOR)
+	return true
 
 func _all_dead(units: Array[Unit]) -> bool:
 	return units.all(func(u: Unit) -> bool: return not u.is_alive())

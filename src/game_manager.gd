@@ -10,7 +10,9 @@ const UNIT_TYPES: Dictionary = {
 		"move_range": 3,
 		"attack_range": 1,
 		"damage": 35,
-		"color": Color(0.25, 0.5, 1.0)
+		"color": Color(0.25, 0.5, 1.0),
+		# Shield Bash: melee strike that stuns the target for a turn
+		"ability": {"id": "bash", "name": "Shield Bash", "desc": "Melee hit that stuns the target"}
 	},
 	"archer": {
 		"name": "Archer",
@@ -18,7 +20,9 @@ const UNIT_TYPES: Dictionary = {
 		"move_range": 2,
 		"attack_range": 3,
 		"damage": 25,
-		"color": Color(0.2, 0.75, 0.35)
+		"color": Color(0.2, 0.75, 0.35),
+		# Piercing Shot: hits the target and the cell directly behind it
+		"ability": {"id": "pierce", "name": "Piercing Shot", "desc": "Hits the target and the unit behind it"}
 	},
 	"scout": {
 		"name": "Scout",
@@ -26,7 +30,9 @@ const UNIT_TYPES: Dictionary = {
 		"move_range": 5,
 		"attack_range": 1,
 		"damage": 20,
-		"color": Color(0.95, 0.8, 0.1)
+		"color": Color(0.95, 0.8, 0.1),
+		# Dash: take a second move this activation
+		"ability": {"id": "dash", "name": "Dash", "desc": "Move a second time this turn"}
 	}
 }
 
