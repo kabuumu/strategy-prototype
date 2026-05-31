@@ -92,6 +92,7 @@ var _ability_name_lbl: Label
 var _ability_desc_lbl: Label
 var _ability_icon_lbl: Label
 var _ability_hint_lbl: Label
+var _help_overlay: Control = null
 var _ability_bg:       ColorRect
 var _end_btn:          Button
 
@@ -135,8 +136,12 @@ func _ready() -> void:
 	_generate_terrain()
 	_spawn_units()
 	_update_ui()
+	# First battle ever → auto-open the help panel once.
+	if not GameManager.tutorial_seen:
+		_toggle_help()
+		GameManager.mark_tutorial_seen()
 	# Boss-fight intro overlay
-	if GameManager.is_final_battle(GameManager.pending_battle_tier,
+	elif GameManager.is_final_battle(GameManager.pending_battle_tier,
 			GameManager.pending_battle_elite):
 		_show_boss_intro()
 
@@ -456,6 +461,11 @@ func _build_ui() -> void:
 	_end_btn = _make_button("End Turn", Vector2(PANEL_X + 258.0, 560.0), Vector2(220.0, 50.0))
 	_end_btn.pressed.connect(_on_end_turn)
 	add_child(_end_btn)
+
+	var help_hint := _make_label(13, Color(0.60, 0.62, 0.72))
+	help_hint.text     = "[H] Help"
+	help_hint.position = Vector2(PANEL_X + 410.0, 26.0)
+	add_child(help_hint)
 
 	# Battle log — last few combat events, sits below the action buttons
 	var log_header := _make_label(11, Color(0.45, 0.45, 0.50))
@@ -923,6 +933,17 @@ func _draw_damage_preview() -> void:
 # Input
 # ---------------------------------------------------------------------------
 func _input(event: InputEvent) -> void:
+	# Help toggle works in any phase (and while the help panel is open).
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode in [KEY_H, KEY_SLASH, KEY_QUESTION]:
+		_toggle_help()
+		return
+	# While help is open: Esc closes it; swallow all other input so board clicks
+	# don't fall through.
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_help()
+		return
 	if phase in [Phase.AI_ACTING, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
 		return
 
@@ -2051,6 +2072,86 @@ func _show_toast(text: String, color: Color) -> void:
 	tw.tween_interval(2.2)
 	tw.tween_property(holder, "modulate:a", 0.0, 0.4)
 	tw.tween_callback(holder.queue_free)
+
+# ---------------------------------------------------------------------------
+# Help overlay
+# ---------------------------------------------------------------------------
+const HELP_TEXT := """[ CONTROLS ]
+Left-click a unit to select.  Click a blue tile to move, a red tile to attack.
+Right-click / Esc cancels.   Tab = next unit.   Enter = end turn.
+Q = ability.   T = threat overlay.   F = fast-forward.   H = toggle this help.
+
+[ COMBAT ]
+Each unit moves then attacks once per round; you can attack diagonally.
+CRIT (random) and FLANK (an ally on the opposite side of the target) add damage.
+
+[ TERRAIN ]
+Mountain blocks movement.   Forest = cover (defender takes less).
+Hill = high ground (attacker hits harder).   Lava = burns the occupant each round.
+
+[ STATUSES ]  (badges on the unit)
+Stun ⚡ skips its next turn.   Poison ☠ and Burn 🔥 deal damage each round.
+
+[ ABILITIES ]  (Q — once per battle)
+Soldier: Shield Bash (stun)   ·   Archer: Piercing Shot (hits unit behind)
+Scout: Dash (move again)   ·   Healer: Field Heal (heal an ally)
+
+[ MAP & ROSTER ]
+Step on ★ objectives for heal/reinforce bonuses.
+Win battles for gold + a unit upgrade; elites drop relics; spend gold at Shops.
+HP carries between battles and the fallen stay dead — permadeath."""
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = _build_help_overlay()
+	add_child(_help_overlay)
+
+func _build_help_overlay() -> Control:
+	var root := Control.new()
+	root.z_index = 200
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.78)
+	dim.size  = Vector2(1280.0, 720.0)
+	root.add_child(dim)
+
+	var panel := Panel.new()
+	panel.position = Vector2(150.0, 60.0)
+	panel.size     = Vector2(980.0, 600.0)
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0.10, 0.11, 0.16, 0.98)
+	for side in ["left", "right", "top", "bottom"]:
+		s.set("border_width_" + side, 2)
+	s.border_color = Color(0.55, 0.60, 0.80)
+	for corner in ["corner_radius_top_left", "corner_radius_top_right",
+			"corner_radius_bottom_left", "corner_radius_bottom_right"]:
+		s.set(corner, 10)
+	panel.add_theme_stylebox_override("panel", s)
+	root.add_child(panel)
+
+	var title := Label.new()
+	title.text = "How to Play"
+	title.add_theme_font_size_override("font_size", 30)
+	title.modulate = Color(0.95, 0.92, 0.70)
+	title.position = Vector2(34.0, 20.0)
+	panel.add_child(title)
+
+	var body := Label.new()
+	body.text = HELP_TEXT
+	body.add_theme_font_size_override("font_size", 16)
+	body.modulate = Color(0.85, 0.88, 0.92)
+	body.position = Vector2(34.0, 72.0)
+	body.size     = Vector2(912.0, 470.0)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(body)
+
+	var close := _make_button("Close  [H / Esc]", Vector2(360.0, 532.0), Vector2(260.0, 46.0))
+	close.pressed.connect(_toggle_help)
+	panel.add_child(close)
+	return root
 
 # ---------------------------------------------------------------------------
 # Win / Loss overlays
