@@ -96,6 +96,42 @@ const CAM_PAN_SPEED: float = 38.0
 const CAM_EDGE_MARGIN: float = 8.0
 var _cam_focus: Vector3 = Vector3.ZERO
 var _cam_zoom: float = 1.0   # 0.5 (close) .. 1.8 (far)
+var _combat_sfx_cd: float = 0.0   # throttles the combat hit din
+
+# Flying arrow (ranged) or impact puff (charge / arrow landing).
+func _spawn_projectile(from: Vector3, to: Vector3, charge: bool) -> void:
+	if charge or from.distance_to(to) < 0.05:
+		_spawn_impact_puff(to)
+		return
+	var p := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.07, 0.07, 0.7)
+	p.mesh = bm
+	p.material_override = _make_mat(Color(0.92, 0.86, 0.5), true)
+	add_child(p)
+	p.global_position = from + Vector3(0.0, 0.6, 0.0)
+	p.look_at(to + Vector3(0.0, 0.5, 0.0), Vector3.UP)
+	var tw := create_tween()
+	tw.tween_property(p, "global_position", to + Vector3(0.0, 0.5, 0.0), 0.18)
+	tw.tween_callback(func() -> void:
+		_spawn_impact_puff(to)
+		p.queue_free())
+
+func _spawn_impact_puff(at: Vector3) -> void:
+	var puff := MeshInstance3D.new()
+	var s := SphereMesh.new()
+	s.radius = 0.2
+	s.height = 0.4
+	puff.mesh = s
+	puff.material_override = _make_mat(Color(1.0, 0.8, 0.4), true)
+	add_child(puff)
+	puff.global_position = at + Vector3(0.0, 0.5, 0.0)
+	puff.scale = Vector3(0.3, 0.3, 0.3)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(puff, "scale", Vector3(1.4, 1.4, 1.4), 0.2)
+	tw.tween_property(puff, "transparency", 1.0, 0.2)
+	tw.chain().tween_callback(puff.queue_free)
 
 var _ui: CanvasLayer
 var _status_label: Label
@@ -531,9 +567,22 @@ func _process(delta: float) -> void:
 	all_units.append_array(enemy_units)
 	_apply_terrain(delta)   # cover / high-ground / rough / lava onto each unit
 	_ai_tick(delta)
+	if _combat_sfx_cd > 0.0:
+		_combat_sfx_cd -= delta
+	var any_hit := false
 	for u: SkirmishUnit3D in all_units:
 		if u.is_alive():
-			u.tick(delta, all_units)
+			var fired: Dictionary = u.tick(delta, all_units)
+			if fired.get("fired", false):
+				any_hit = true
+				if fired.get("ranged", false):
+					_spawn_projectile(fired["from"], fired["target"].global_position, false)
+				elif fired.get("charge", false):
+					_spawn_projectile(fired["from"], fired["target"].global_position, true)
+	# Throttled combat din so many simultaneous hits don't machine-gun the SFX
+	if any_hit and _combat_sfx_cd <= 0.0:
+		_combat_sfx_cd = 0.18
+		Sfx.play("hit", -10.0)
 	# keep on field and a little above ground
 	for u: SkirmishUnit3D in all_units:
 		if not u.is_alive():
@@ -893,6 +942,7 @@ func _refresh_ui() -> void:
 		_restart_hint_label.visible = true
 
 func _on_unit_died(u: SkirmishUnit3D) -> void:
+	Sfx.play("death", -8.0)
 	if selected_units.has(u):
 		selected_units.erase(u)
 	if hovered_unit == u:
@@ -928,9 +978,11 @@ func _check_end_condition() -> void:
 		if p_alive and not e_alive:
 			_result_label.text = "VICTORY"
 			_result_label.modulate = Color(0.55, 0.95, 0.55)
+			Sfx.play("win")
 		elif e_alive and not p_alive:
 			_result_label.text = "DEFEAT"
 			_result_label.modulate = Color(0.95, 0.45, 0.45)
+			Sfx.play("lose")
 		else:
 			_result_label.text = "DRAW"
 			_result_label.modulate = Color(0.88, 0.88, 0.5)
