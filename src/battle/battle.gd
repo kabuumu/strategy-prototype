@@ -79,6 +79,12 @@ const LOG_MAX_LINES: int = 5
 # Hover state used by the in-grid damage preview
 var _hover_cell: Vector2i = Vector2i(-1, -1)
 
+# Threat overlay: per-cell count of alive enemies that could attack that cell
+# from their current position. Recomputed whenever enemies move/die.
+var _threat_cells: Dictionary = {}
+# Player can toggle the overlay with the T key
+var _show_threat: bool = true
+
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	_build_ui()
@@ -160,6 +166,16 @@ func _draw() -> void:
 				color = Color(0.10, 0.14, 0.09)
 			draw_rect(rect, color)
 			draw_rect(rect, Color(0.45, 0.54, 0.40, 0.85), false, 1.5)
+
+			# Enemy threat overlay — faint red tint on tiles within reach of
+			# alive enemies. Stacks with multiple threats up to a cap so the
+			# danger zone is unmistakable. Only shown during the player's
+			# planning phases (not during attack-targeting / AI / end states).
+			if _show_threat and phase in [Phase.PLAYER_SELECT_UNIT, Phase.PLAYER_SELECT_MOVE]:
+				var n: int = int(_threat_cells.get(cell, 0))
+				if n > 0:
+					var a: float = min(0.10 + 0.10 * float(n - 1), 0.30)
+					draw_rect(rect, Color(0.95, 0.18, 0.18, a))
 
 	# Mountain tiles — drawn over the grid, block all movement
 	for m: Vector2i in mountains:
@@ -368,6 +384,25 @@ func _spawn_units() -> void:
 		u._refresh_hp_bar()
 		enemy_units.append(u)
 
+	_recompute_threat()
+
+# Recompute which cells are currently within attack reach of any alive enemy.
+# Cheap (O(enemies × range²)) and only called when the situation changes.
+func _recompute_threat() -> void:
+	_threat_cells.clear()
+	for u: Unit in enemy_units:
+		if not u.is_alive() or u.stunned:
+			continue
+		var r := u.get_attack_range()
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if dx == 0 and dy == 0:
+					continue
+				var c := u.grid_pos + Vector2i(dx, dy)
+				if not _valid_cell(c):
+					continue
+				_threat_cells[c] = int(_threat_cells.get(c, 0)) + 1
+
 func _distribute_rows(count: int) -> Array[int]:
 	var rows: Array[int] = []
 	var step := float(GRID_ROWS) / float(count + 1)
@@ -564,6 +599,11 @@ func _handle_key(keycode: int) -> void:
 		KEY_TAB:
 			if phase == Phase.PLAYER_SELECT_UNIT:
 				_cycle_to_next_unacted_unit()
+		KEY_T:
+			_show_threat = not _show_threat
+			_show_toast("Threat overlay: " + ("ON" if _show_threat else "OFF"),
+					Color(0.85, 0.55, 0.55))
+			queue_redraw()
 
 func _cycle_to_next_unacted_unit() -> void:
 	for u: Unit in player_units:
@@ -704,6 +744,9 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
+	# Enemy roster/positions may have changed (death, position via lunge is
+	# temporary). Refresh the threat overlay.
+	_recompute_threat()
 
 # Attacker hops toward the target and back
 func _lunge(attacker: Unit, defender: Unit) -> void:
@@ -817,6 +860,7 @@ func _try_ability(cell: Vector2i) -> void:
 			if target.is_alive():
 				target.stunned = true
 				target.show_status_popup("STUNNED!", STUN_COLOR)
+				_recompute_threat()   # stunned enemy no longer threatens
 
 	selected_unit.ability_used = true
 	ability_cells.clear()
@@ -973,6 +1017,7 @@ func _execute_remaining_ai_units() -> void:
 func _start_new_round() -> void:
 	_reset_acted_flags(player_units)
 	_reset_acted_flags(enemy_units)
+	_recompute_threat()   # stuns cleared at round start may re-enable threats
 	phase = Phase.PLAYER_SELECT_UNIT
 	_update_ui()
 
@@ -1076,6 +1121,7 @@ func _ai_act(ai_unit: Unit) -> void:
 			var origin := ai_unit.grid_pos
 			ai_unit.grid_pos = closer
 			await _animate_unit_to(ai_unit, origin, closer).finished
+			_recompute_threat()   # enemy position changed
 		_check_capture(ai_unit)
 		# Opportunistic attack after closing
 		if combat_target != null and combat_target.is_alive() \
