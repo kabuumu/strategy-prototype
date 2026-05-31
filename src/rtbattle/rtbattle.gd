@@ -73,6 +73,7 @@ var _hovered_unit: RTUnit = null
 
 var _paused: bool = true
 var _battle_started: bool = false
+var _player_has_issued_order: bool = false
 var _ended: bool = false
 
 # Drag-rectangle selection state
@@ -285,10 +286,11 @@ func _process(delta: float) -> void:
 	var all_units: Array = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
-	if _opening_ai_timer > 0.0:
-		_opening_ai_timer = max(0.0, _opening_ai_timer - delta)
-	else:
-		_ai_tick(delta)
+	if _player_has_issued_order:
+		if _opening_ai_timer > 0.0:
+			_opening_ai_timer = max(0.0, _opening_ai_timer - delta)
+		else:
+			_ai_tick(delta)
 	for u: RTUnit in all_units:
 		if u.is_alive():
 			u.tick(delta, all_units)
@@ -468,13 +470,18 @@ func _handle_right_click(mouse: Vector2) -> void:
 	# don't all try to converge on a single pixel and shove each other.
 	var enemy: RTUnit = _pick_unit_at(mouse, enemy_units)
 	if enemy != null:
+		var ordered_count: int = 0
 		for u: RTUnit in selected_units:
 			if u.is_alive():
 				u.order_attack(enemy)
+				ordered_count += 1
+		if ordered_count <= 0:
+			return
+		_mark_player_order_issued()
 		_spawn_waypoint(enemy.position, Color(1.0, 0.40, 0.40), 0.6)
 		if _command_label != null:
 			_command_label.text = "Attack order: %d regiment%s focusing %s." % [
-				selected_units.size(), "" if selected_units.size() == 1 else "s", enemy.unit_name
+				ordered_count, "" if ordered_count == 1 else "s", enemy.unit_name
 			]
 		_refresh_ui()
 		return
@@ -488,6 +495,8 @@ func _handle_right_click(mouse: Vector2) -> void:
 		if u.is_alive():
 			alive_sel.append(u)
 	var n: int = alive_sel.size()
+	if n <= 0:
+		return
 	for i in range(n):
 		var u: RTUnit = alive_sel[i]
 		var dest: Vector2 = target
@@ -501,6 +510,7 @@ func _handle_right_click(mouse: Vector2) -> void:
 			dest.x = clamp(dest.x, FIELD_RECT.position.x + 10.0, FIELD_RECT.end.x - 10.0)
 			dest.y = clamp(dest.y, FIELD_RECT.position.y + 10.0, FIELD_RECT.end.y - 10.0)
 		u.order_move(dest)
+	_mark_player_order_issued()
 	_spawn_waypoint(target, Color(0.55, 0.95, 0.55), 0.6)
 	if _command_label != null:
 		_command_label.text = "Move order: %d regiment%s to marked ground." % [
@@ -575,11 +585,19 @@ func _age_waypoints(delta: float) -> void:
 func _set_paused(v: bool) -> void:
 	if not v and not _battle_started:
 		_battle_started = true
-		_opening_ai_timer = OPENING_AI_DELAY
+		if _player_has_issued_order:
+			_opening_ai_timer = OPENING_AI_DELAY
 		if _command_label != null:
-			_command_label.text = "Orders are live. Enemy regiments advance after a short setup beat."
+			_command_label.text = "Orders are live. Select and right-click to redirect regiments mid-fight."
 	_paused = v
 	_refresh_ui()
+
+func _mark_player_order_issued() -> void:
+	if _player_has_issued_order:
+		return
+	_player_has_issued_order = true
+	if _battle_started and not _paused:
+		_opening_ai_timer = OPENING_AI_DELAY
 
 func _refresh_ui() -> void:
 	if _status_label != null:
@@ -592,6 +610,9 @@ func _refresh_ui() -> void:
 		elif _paused:
 			_status_label.text = "❚❚ PAUSED  (SPACE to resume)"
 			_status_label.modulate = Color(1.0, 0.80, 0.35)
+		elif not _player_has_issued_order:
+			_status_label.text = "▶ RUNNING  awaiting your first order"
+			_status_label.modulate = Color(0.70, 0.90, 1.0)
 		elif _opening_ai_timer > 0.0:
 			_status_label.text = "▶ RUNNING  enemy advance in %.1fs" % _opening_ai_timer
 			_status_label.modulate = Color(0.70, 0.90, 1.0)

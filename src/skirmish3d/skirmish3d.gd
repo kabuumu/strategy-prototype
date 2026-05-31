@@ -124,6 +124,16 @@ var hovered_unit: SkirmishUnit3D = null
 var _ended: bool = false
 var _campaign: bool = false   # launched from the campaign map (vs standalone)
 var _formation: int = 0       # 0 = line, 1 = wedge (move-order arrangement)
+
+# Capture points — hold ALL of them for CAPTURE_WIN_TIME to win by objective.
+const CAPTURE_POINTS: Array[Vector3] = [
+	Vector3(0.0, 0.0, 0.0), Vector3(-15.0, 0.0, -7.0), Vector3(15.0, 0.0, 7.0),
+]
+const CAPTURE_RADIUS: float = 6.0
+const CAPTURE_WIN_TIME: float = 12.0
+var _cap_points: Array = []        # [{pos, owner, ring}]
+var _cap_hold: float = 0.0         # seconds one side has held them all
+var _forced_winner: int = -1       # set when a side wins by capture
 var _paused: bool = true
 
 var _drag_active: bool = false
@@ -299,6 +309,7 @@ func _build_field() -> void:
 	_ground.material_override = gm
 	world.add_child(_ground)
 	_build_terrain_visuals(world)
+	_build_capture_points(world)
 
 	_ground_body = StaticBody3D.new()
 	var cs := CollisionShape3D.new()
@@ -308,6 +319,71 @@ func _build_field() -> void:
 	_ground_body.add_child(cs)
 	world.add_child(_ground_body)
 	_ground_body.position = Vector3(0.0, 0.0, 0.0)
+
+func _build_capture_points(world: Node3D) -> void:
+	_cap_points.clear()
+	for p: Vector3 in CAPTURE_POINTS:
+		var ring := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = CAPTURE_RADIUS
+		cyl.bottom_radius = CAPTURE_RADIUS
+		cyl.height = 0.06
+		ring.mesh = cyl
+		ring.position = p + Vector3(0.0, 0.05, 0.0)
+		ring.material_override = _make_mat(Color(0.7, 0.7, 0.7, 0.35), true)
+		world.add_child(ring)
+		var pole := MeshInstance3D.new()
+		var pm := CylinderMesh.new()
+		pm.top_radius = 0.12
+		pm.bottom_radius = 0.12
+		pm.height = 3.0
+		pole.mesh = pm
+		pole.position = p + Vector3(0.0, 1.5, 0.0)
+		pole.material_override = _make_mat(Color(0.7, 0.7, 0.7), true)
+		world.add_child(pole)
+		_cap_points.append({"pos": p, "owner": -1, "ring": ring, "pole": pole})
+
+func _capture_owner_color(owner: int) -> Color:
+	match owner:
+		0: return Color(0.30, 0.55, 1.0)
+		1: return Color(0.95, 0.30, 0.30)
+		_: return Color(0.7, 0.7, 0.7)
+
+# Recompute each point's owner (whichever team has units in range, uncontested)
+# and the all-points hold timer; returns a winning team or -1.
+func _update_capture_points(delta: float) -> int:
+	if _cap_points.is_empty():
+		return -1
+	var all_owner := -2   # -2 = uninitialised, -1 = mixed/neutral
+	for cp: Dictionary in _cap_points:
+		var p0 := 0
+		var p1 := 0
+		for u: SkirmishUnit3D in player_units:
+			if u.is_alive() and u.global_position.distance_to(cp["pos"]) <= CAPTURE_RADIUS:
+				p0 += 1
+		for u: SkirmishUnit3D in enemy_units:
+			if u.is_alive() and u.global_position.distance_to(cp["pos"]) <= CAPTURE_RADIUS:
+				p1 += 1
+		if p0 > 0 and p1 == 0:
+			cp["owner"] = 0
+		elif p1 > 0 and p0 == 0:
+			cp["owner"] = 1
+		# contested or empty → keep current owner
+		var col := _capture_owner_color(cp["owner"])
+		cp["ring"].material_override.albedo_color = Color(col.r, col.g, col.b, 0.35)
+		cp["pole"].material_override.albedo_color = col
+		if all_owner == -2:
+			all_owner = cp["owner"]
+		elif all_owner != cp["owner"]:
+			all_owner = -1
+	# All points held by one real team → tick the hold timer
+	if all_owner >= 0:
+		_cap_hold += delta
+		if _cap_hold >= CAPTURE_WIN_TIME:
+			return all_owner
+	else:
+		_cap_hold = max(0.0, _cap_hold - delta)
+	return -1
 
 func _build_terrain_visuals(world: Node3D) -> void:
 	_terrain_node = Node3D.new()
@@ -616,6 +692,7 @@ func _spawn_campaign_armies() -> void:
 		var rtype: String = roster[i].get("type", "soldier")
 		var u := _spawn_regiment(rtype, 0, Vector3(-22.0, 0.0, pz[i]))
 		u.roster_index = i
+		u.apply_upgrades(roster[i].get("upgrades", []))
 		player_units.append(u)
 
 	var elist := _enemy_composition(GameManager.pending_battle_tier, GameManager.pending_battle_elite)
@@ -725,6 +802,9 @@ func _process(delta: float) -> void:
 		)
 	_age_waypoints(delta)
 	_update_hover()
+	var cap_winner := _update_capture_points(delta)
+	if cap_winner >= 0:
+		_forced_winner = cap_winner
 	_check_end_condition()
 	_refresh_ui()
 
@@ -1158,17 +1238,21 @@ func _check_end_condition() -> void:
 		if u.is_alive():
 			e_alive = true
 			break
-	if p_alive and e_alive:
+	if _forced_winner < 0 and p_alive and e_alive:
 		return
 	_ended = true
 	_paused = true
+	var winner := _forced_winner
+	if winner < 0:
+		winner = 0 if (p_alive and not e_alive) else (1 if (e_alive and not p_alive) else -1)
+	var by_obj := _forced_winner >= 0
 	if _result_label != null:
-		if p_alive and not e_alive:
-			_result_label.text = "VICTORY"
+		if winner == 0:
+			_result_label.text = "VICTORY" + (" (objectives held)" if by_obj else "")
 			_result_label.modulate = Color(0.55, 0.95, 0.55)
 			Sfx.play("win")
-		elif e_alive and not p_alive:
-			_result_label.text = "DEFEAT"
+		elif winner == 1:
+			_result_label.text = "DEFEAT" + (" (objectives lost)" if by_obj else "")
 			_result_label.modulate = Color(0.95, 0.45, 0.45)
 			Sfx.play("lose")
 		else:
@@ -1192,7 +1276,8 @@ func _finish_campaign_battle() -> void:
 	for u: SkirmishUnit3D in player_units:
 		if u.is_alive() and u.roster_index >= 0 and u.roster_index < GameManager.player_roster.size():
 			survivors.append(GameManager.player_roster[u.roster_index])
-	var won: bool = (not e_alive) and survivors.size() > 0
+	# Win by wiping the enemy OR by holding all capture points
+	var won: bool = (_forced_winner == 0) or ((not e_alive) and survivors.size() > 0)
 	GameManager.set_roster(survivors)
 	if won:
 		var tier := GameManager.pending_battle_tier
