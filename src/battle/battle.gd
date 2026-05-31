@@ -1186,6 +1186,8 @@ func _ai_act(ai_unit: Unit) -> void:
 				hit_score += 2000.0 + t.max_hp  # finishing high-HP targets is extra valuable
 			else:
 				hit_score += float(damage) - float(t.hp) * 0.4
+			# Per-class target preference (scouts/archers snipe the wounded)
+			hit_score += _target_priority(ai_unit, t)
 
 			if hit_score > best_score:
 				best_score  = hit_score
@@ -1229,24 +1231,62 @@ func _ai_act(ai_unit: Unit) -> void:
 			_do_attack(ai_unit, combat_target)
 
 # Position-only score: rewards capturable objectives and (for ranged units)
-# distance from melee player threats.
+# distance from melee player threats. Per-class personalities:
+#   • soldier  — neutral, charges and brawls
+#   • archer   — strongest kiter, hates being adjacent to melee
+#   • scout    — assassin, prefers being adjacent to wounded targets
+#   • warlord  — boss, ignores positional caution
 func _score_cell(ai_unit: Unit, cell: Vector2i, is_ranged: bool) -> float:
 	var score := 0.0
 	for obj: Dictionary in objectives:
 		if obj["grid_pos"] == cell and int(obj["owner"]) != ai_unit.team:
 			score += 60.0
+
+	var personality: String = ai_unit.unit_type
+	# Boss never kites and never camps objectives — it hunts the party.
+	if personality == "warlord":
+		var closest_d: int = 99
+		for p: Unit in player_units:
+			if not p.is_alive():
+				continue
+			closest_d = mini(closest_d, _chebyshev(cell, p.grid_pos))
+		# Reward closing the gap (1 tile away ideal for melee boss)
+		score += float(max(0, 8 - closest_d)) * 4.0
+		return score
+
 	if is_ranged:
+		# Archer kites HARDER than the generic ranged baseline
+		var adj_penalty: float = -50.0 if personality == "archer" else -35.0
+		var spacing_bonus: float = 12.0 if personality == "archer" else 5.0
 		for p: Unit in player_units:
 			if not p.is_alive():
 				continue
 			if p.get_attack_range() <= 1:
-				# Want to stay out of melee reach (1 tile) of melee player units
 				var d := _chebyshev(cell, p.grid_pos)
 				if d <= 1:
-					score -= 35.0
+					score += adj_penalty
 				elif d == 2:
-					score += 5.0
+					score += spacing_bonus
+	elif personality == "scout":
+		# Scouts WANT to be next to a wounded target — gives them a tiny
+		# offensive bias toward closing for the kill rather than caution
+		for p: Unit in player_units:
+			if not p.is_alive():
+				continue
+			if _chebyshev(cell, p.grid_pos) == 1 and p.hp < p.max_hp * 0.6:
+				score += 10.0
 	return score
+
+# Per-class target-selection bias added to hit_score. Scouts and archers
+# strongly prefer wounded targets (snipers/assassins); soldiers and the
+# boss go for whatever's already efficient.
+func _target_priority(ai_unit: Unit, target: Unit) -> float:
+	var wound_ratio: float = 1.0 - float(target.hp) / float(max(1, target.max_hp))
+	match ai_unit.unit_type:
+		"scout":   return wound_ratio * 150.0
+		"archer":  return wound_ratio * 80.0
+		"warlord": return wound_ratio * 100.0
+		_:         return 0.0
 
 # ---------------------------------------------------------------------------
 # Pathfinding / range helpers
