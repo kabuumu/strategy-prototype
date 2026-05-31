@@ -36,6 +36,7 @@ enum Phase {
 
 var phase: Phase = Phase.PLAYER_SELECT_UNIT
 var selected_unit: Unit = null
+var _selected_unit_origin: Vector2i = Vector2i.ZERO
 var move_cells:   Array[Vector2i] = []
 var attack_cells: Array[Vector2i] = []
 
@@ -350,7 +351,7 @@ func _update_ui() -> void:
 			_end_btn.text        = "Forfeit Unit"
 		Phase.PLAYER_SELECT_ATTACK:
 			_phase_label.text    = "Attack"
-			_instruct_label.text = "Click a red tile to attack.\nOr click Skip Attack."
+			_instruct_label.text = "Click a red tile to attack.\nSkip Attack to pass. Right-click to cancel move."
 			_skip_btn.visible    = true
 			_skip_btn.text       = "Skip Attack"
 			_end_btn.visible     = false
@@ -416,12 +417,22 @@ func _handle_left_click(cell: Vector2i) -> void:
 		Phase.PLAYER_SELECT_ATTACK: _try_attack(cell)
 
 func _handle_right_click() -> void:
-	if phase == Phase.PLAYER_SELECT_MOVE:
-		selected_unit = null
-		move_cells.clear()
-		attack_cells.clear()
-		phase = Phase.PLAYER_SELECT_UNIT
-		_update_ui()
+	match phase:
+		Phase.PLAYER_SELECT_MOVE:
+			selected_unit = null
+			move_cells.clear()
+			attack_cells.clear()
+			phase = Phase.PLAYER_SELECT_UNIT
+			_update_ui()
+		Phase.PLAYER_SELECT_ATTACK:
+			# Restore the unit to where it was before the move and cancel the whole action
+			selected_unit.grid_pos = _selected_unit_origin
+			selected_unit.update_visual_position()
+			selected_unit = null
+			move_cells.clear()
+			attack_cells.clear()
+			phase = Phase.PLAYER_SELECT_UNIT
+			_update_ui()
 
 # ---------------------------------------------------------------------------
 # Player actions
@@ -429,8 +440,9 @@ func _handle_right_click() -> void:
 func _try_select_unit(cell: Vector2i) -> void:
 	for u: Unit in player_units:
 		if u.is_alive() and u.grid_pos == cell and not u.has_acted:
-			selected_unit = u
-			move_cells    = _get_move_cells(u)
+			selected_unit        = u
+			_selected_unit_origin = u.grid_pos
+			move_cells           = _get_move_cells(u)
 			attack_cells.clear()
 			phase = Phase.PLAYER_SELECT_MOVE
 			_update_ui()
