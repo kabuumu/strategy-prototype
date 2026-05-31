@@ -141,7 +141,82 @@ def healer(d, p):
     outline_box(d, 17, 25, 20, 30, p["armor_d"])
 
 
-DRAW = {"soldier": soldier, "archer": archer, "scout": scout, "healer": healer}
+GOLD = (235, 200, 70, 255)
+GOLD_D = (170, 135, 35, 255)
+FLAME = (255, 140, 30, 255)
+FLAME_HOT = (255, 225, 90, 255)
+
+
+def warlord(d, p):
+    # Tattered cape behind the body
+    d.polygon([(7, 14), (25, 14), (28, 31), (4, 31)], fill=p["armor_d"])
+    # Broad armoured torso
+    outline_box(d, 8, 13, 24, 27, p["armor"])
+    rect(d, 15, 14, 16, 26, p["armor_d"])         # central seam
+    # Gold pauldrons
+    outline_box(d, 5, 13, 9, 18, GOLD, GOLD_D)
+    outline_box(d, 23, 13, 27, 18, GOLD, GOLD_D)
+    # Horned, crowned helm
+    outline_box(d, 10, 4, 22, 12, p["armor"])
+    rect(d, 12, 8, 20, 11, SKIN)                  # face slit
+    rect(d, 13, 9, 14, 10, OUTLINE); rect(d, 18, 9, 19, 10, OUTLINE)  # eyes
+    d.polygon([(10, 4), (7, -1), (13, 3)], fill=GOLD)   # left horn
+    d.polygon([(22, 4), (25, -1), (19, 3)], fill=GOLD)  # right horn
+    for cx in (13, 16, 19):                       # crown spikes
+        d.polygon([(cx - 1, 4), (cx + 1, 4), (cx, 0)], fill=GOLD)
+    # Massive sword on the right
+    rect(d, 26, 2, 28, 24, OUTLINE)
+    rect(d, 26, 3, 27, 23, METAL)
+    rect(d, 24, 22, 30, 24, GOLD)                 # crossguard
+    rect(d, 26, 24, 27, 28, WOOD_D)
+    # Legs
+    outline_box(d, 10, 27, 14, 31, p["armor_d"])
+    outline_box(d, 18, 27, 22, 31, p["armor_d"])
+
+
+def pyromancer(d, p):
+    # Long hooded robe
+    d.polygon([(16, 3), (9, 14), (23, 14)], fill=OUTLINE)     # hood outline
+    d.polygon([(16, 5), (10, 13), (22, 13)], fill=p["armor"])
+    rect(d, 13, 10, 19, 13, SKIN)
+    rect(d, 13, 11, 14, 12, FLAME); rect(d, 18, 11, 19, 12, FLAME)  # glowing eyes
+    # Robe body, flares to the base
+    d.polygon([(11, 14), (21, 14), (24, 30), (8, 30)], fill=OUTLINE)
+    d.polygon([(12, 14), (20, 14), (22, 29), (10, 29)], fill=p["armor"])
+    rect(d, 15, 15, 16, 28, p["armor_d"])
+    # Staff with a flaming orb (left hand)
+    rect(d, 6, 6, 7, 30, WOOD_D)
+    d.ellipse((2, 1, 11, 10), fill=FLAME)
+    d.ellipse((4, 3, 9, 8), fill=FLAME_HOT)
+    # Little flames licking off the shoulders
+    d.polygon([(21, 16), (24, 10), (26, 17)], fill=FLAME)
+    d.polygon([(22, 16), (24, 13), (25, 17)], fill=FLAME_HOT)
+
+
+def juggernaut(d, p):
+    # Enormous spiked shoulders
+    outline_box(d, 3, 11, 29, 22, p["armor"])
+    for sx in (4, 27):
+        d.polygon([(sx, 11), (sx + 1, 5), (sx + 2, 11)], fill=METAL)  # spikes
+    # Heavy chest plate
+    outline_box(d, 9, 13, 23, 25, p["armor_d"])
+    rect(d, 11, 15, 21, 17, GOLD_D)               # belt/trim
+    # Tiny sunken head
+    outline_box(d, 13, 6, 19, 12, p["armor"])
+    rect(d, 14, 9, 18, 11, OUTLINE)               # visor slit
+    rect(d, 15, 10, 16, 10, FLAME)                # glowing visor
+    # Massive fists
+    outline_box(d, 2, 20, 8, 27, p["armor_d"])
+    outline_box(d, 24, 20, 30, 27, p["armor_d"])
+    # Stubby legs
+    outline_box(d, 11, 25, 15, 31, p["armor_d"])
+    outline_box(d, 17, 25, 21, 31, p["armor_d"])
+
+
+DRAW = {
+    "soldier": soldier, "archer": archer, "scout": scout, "healer": healer,
+    "warlord": warlord, "pyromancer": pyromancer, "juggernaut": juggernaut,
+}
 
 
 def main():

@@ -44,7 +44,6 @@ const UNIT_TYPES: Dictionary = {
 		"attack_range": 1,
 		"damage": 35,
 		"color": Color(0.85, 0.20, 0.20),
-		"sprite_unit": "soldier",   # which sprite file to load
 		"is_boss": true,
 		# Enrage bonuses applied when hp/max_hp drops to (or below) threshold
 		"enrage_threshold": 0.5,
@@ -60,7 +59,6 @@ const UNIT_TYPES: Dictionary = {
 		"attack_range": 3,
 		"damage": 24,
 		"color": Color(0.95, 0.45, 0.12),
-		"sprite_unit": "archer",
 		"is_boss": true,
 		"attack_burn": 2,           # applies 2 turns of burn on every hit
 		"enrage_threshold": 0.5,
@@ -76,7 +74,6 @@ const UNIT_TYPES: Dictionary = {
 		"attack_range": 1,
 		"damage": 40,
 		"color": Color(0.55, 0.30, 0.75),
-		"sprite_unit": "soldier",
 		"is_boss": true,
 		"enrage_threshold": 0.4,
 		"enrage_damage_bonus": 25,

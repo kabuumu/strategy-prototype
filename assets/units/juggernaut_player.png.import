@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://co0h8daop80mi"
-path="res://.godot/imported/archer_enemy.png-cabea3a29aa1b3571fd73123e05e3596.ctex"
+uid="uid://ci8ta5586wjs1"
+path="res://.godot/imported/juggernaut_player.png-6d46e3aa4b85a68b5be8d215a7c35d30.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/units/archer_enemy.png"
-dest_files=["res://.godot/imported/archer_enemy.png-cabea3a29aa1b3571fd73123e05e3596.ctex"]
+source_file="res://assets/units/juggernaut_player.png"
+dest_files=["res://.godot/imported/juggernaut_player.png-6d46e3aa4b85a68b5be8d215a7c35d30.ctex"]
 
 [params]
 

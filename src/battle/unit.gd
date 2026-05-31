@@ -35,6 +35,7 @@ var _body: Sprite2D
 var _status_label: Label
 var _hp_bar: ColorRect
 var _float_slot: int = 0   # next free vertical slot for stacked floating text
+var _bob_tween: Tween      # looping idle breathing animation
 
 # ---------------------------------------------------------------------------
 func setup(type: String, p_team: int, pos: Vector2i) -> void:
@@ -54,6 +55,21 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 
 	_build_visuals(udata)
 	update_visual_position()
+	_start_idle_bob()
+
+# Gentle looping breathing bob so idle units feel alive. Killed before the
+# death animation (which drives _body.position.y itself).
+func _start_idle_bob() -> void:
+	if _body == null:
+		return
+	_bob_tween = create_tween().set_loops()
+	# Slight per-unit phase offset so a formation doesn't bob in lockstep
+	var off := float((grid_pos.x + grid_pos.y) % 3) * 0.1
+	_bob_tween.tween_interval(off)
+	_bob_tween.tween_property(_body, "position:y", -3.0, 0.95) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_bob_tween.tween_property(_body, "position:y", 0.0, 0.95) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func _build_visuals(udata: Dictionary) -> void:
 	var is_boss: bool = bool(udata.get("is_boss", false))
@@ -74,18 +90,17 @@ func _build_visuals(udata: Dictionary) -> void:
 	stripe.color    = Color(0.2, 0.5, 1.0) if team == 0 else Color(1.0, 0.2, 0.2)
 	add_child(stripe)
 
-	# Main body — pixel-art sprite (class by silhouette, team by palette).
-	# Boss reuses an existing sprite via the sprite_unit override.
+	# Main body — pixel-art sprite (class by silhouette, team by palette;
+	# bosses have their own sprite under their type name).
 	var sprite_key: String = String(udata.get("sprite_unit", unit_type))
 	var team_name: String = "player" if team == 0 else "enemy"
 	var tex: Texture2D = load("res://assets/units/%s_%s.png" % [sprite_key, team_name])
 	_body = Sprite2D.new()
 	_body.texture        = tex
 	_body.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # crisp pixels
-	_body.scale          = Vector2(2.3, 2.3) if is_boss else Vector2(1.7, 1.7)
-	# Subtle red tint on bosses so they don't blend with normal enemy units
-	if is_boss:
-		_body.modulate   = Color(1.15, 0.85, 0.85)
+	var s: float = 2.3 if is_boss else 1.7
+	# Face inward: players look right (toward the enemy side), enemies look left.
+	_body.scale = Vector2(-s if team == 1 else s, s)
 	add_child(_body)
 
 	# Boss nameplate
@@ -182,6 +197,9 @@ func take_damage(amount: int) -> void:
 func play_death_animation() -> void:
 	if not _body:
 		return
+	# Stop the idle bob so it doesn't fight the collapse tween
+	if _bob_tween and _bob_tween.is_valid():
+		_bob_tween.kill()
 	var tw := create_tween()
 	tw.set_parallel(true)
 	# Drop and tilt — like the unit collapsing
