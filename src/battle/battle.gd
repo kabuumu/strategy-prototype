@@ -79,6 +79,12 @@ var _end_btn:          Button
 var _battle_log: Array[String] = []
 const LOG_MAX_LINES: int = 5
 
+# End-turn confirmation: when units are still ready and the player hits End
+# Turn, the first press just arms the button. The next press within
+# END_TURN_ARM_WINDOW seconds actually ends the turn.
+var _end_turn_armed_at: float = -1.0
+const END_TURN_ARM_WINDOW: float = 3.0
+
 # Hover state used by the in-grid damage preview
 var _hover_cell: Vector2i = Vector2i(-1, -1)
 
@@ -512,6 +518,11 @@ func _create_unit(unit_type: String, team: int, pos: Vector2i, ups: Array = []) 
 # Update UI
 # ---------------------------------------------------------------------------
 func _update_ui() -> void:
+	# Disarm the end-turn confirmation whenever we're not in the unit-select
+	# phase — the user took an action, so the previous "are you sure?" state
+	# should be discarded.
+	if phase != Phase.PLAYER_SELECT_UNIT:
+		_end_turn_armed_at = -1.0
 	match phase:
 		Phase.PLAYER_SELECT_UNIT:
 			_phase_label.text    = "Your Turn"
@@ -520,7 +531,7 @@ func _update_ui() -> void:
 			_skip_btn.visible    = false
 			_ability_btn.visible = false
 			_end_btn.visible     = true
-			_end_btn.text        = "End Turn"
+			_refresh_end_turn_button()
 		Phase.PLAYER_SELECT_MOVE:
 			_phase_label.text    = "Move Unit"
 			_instruct_label.text = "Click a blue tile to move, or Skip Move to attack from here.\nRight-click to deselect."
@@ -1036,6 +1047,24 @@ func _try_ability(cell: Vector2i) -> void:
 	_commit_player_unit_turn()
 
 func _on_end_turn() -> void:
+	# Confirmation gate — if there are still units that haven't acted, first
+	# press just arms the button. The next press within END_TURN_ARM_WINDOW
+	# actually skips them.
+	var unacted: int = _unacted_player_count()
+	if unacted > 0 and phase == Phase.PLAYER_SELECT_UNIT:
+		var now: float = Time.get_ticks_msec() / 1000.0
+		if now - _end_turn_armed_at > END_TURN_ARM_WINDOW:
+			_end_turn_armed_at = now
+			_refresh_end_turn_button()
+			_show_toast(
+				"%d unit%s still ready — press End Turn again to skip them" % [
+					unacted, "" if unacted == 1 else "s"
+				],
+				Color(0.95, 0.75, 0.30)
+			)
+			return
+	_end_turn_armed_at = -1.0
+
 	if selected_unit:
 		selected_unit.has_acted = true
 		selected_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
@@ -1050,6 +1079,31 @@ func _on_end_turn() -> void:
 
 	_mark_all_acted(player_units)
 	_run_all_remaining_ai_units()
+
+func _unacted_player_count() -> int:
+	var n := 0
+	for u: Unit in player_units:
+		if u.is_alive() and not u.has_acted:
+			n += 1
+	return n
+
+# Updates the End Turn button label + tint based on how many of the player's
+# units still have a pending action this round.
+func _refresh_end_turn_button() -> void:
+	if _end_btn == null:
+		return
+	var n: int = _unacted_player_count()
+	var armed: bool = _end_turn_armed_at >= 0.0 \
+			and (Time.get_ticks_msec() / 1000.0 - _end_turn_armed_at) <= END_TURN_ARM_WINDOW
+	if n == 0:
+		_end_btn.text = "End Turn"
+		_end_btn.add_theme_color_override("font_color", Color(1, 1, 1))
+	elif armed:
+		_end_btn.text = "Confirm: skip %d unit%s?" % [n, "" if n == 1 else "s"]
+		_end_btn.add_theme_color_override("font_color", Color(1.0, 0.55, 0.25))
+	else:
+		_end_btn.text = "End Turn  (%d ready)" % n
+		_end_btn.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
 
 # ---------------------------------------------------------------------------
 # Objective capture
