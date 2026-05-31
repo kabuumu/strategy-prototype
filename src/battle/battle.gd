@@ -465,6 +465,40 @@ func _build_ui() -> void:
 	_log_label.size          = Vector2(480.0, 82.0)
 	add_child(_log_label)
 
+func _refresh_hover_unit_info() -> void:
+	if _unit_info_label == null:
+		return
+	if _hover_cell == Vector2i(-1, -1):
+		_unit_info_label.text = ""
+		return
+	var hovered: Unit = null
+	for u: Unit in player_units + enemy_units:
+		if u.is_alive() and u.grid_pos == _hover_cell:
+			hovered = u
+			break
+	if hovered == null:
+		_unit_info_label.text = ""
+		return
+	var udata: Dictionary = GameManager.UNIT_TYPES[hovered.unit_type]
+	var tag: String = "You" if hovered.team == 0 else "Enemy"
+	var status_parts: PackedStringArray = []
+	if hovered.stunned:
+		status_parts.append("STUNNED")
+	if hovered.poison_turns > 0:
+		status_parts.append("POISON %d" % hovered.poison_turns)
+	if hovered.burn_turns > 0:
+		status_parts.append("BURN %d" % hovered.burn_turns)
+	if hovered.has_acted:
+		status_parts.append("acted")
+	var status_str: String = "  ·  " + ", ".join(status_parts) if status_parts.size() > 0 else ""
+	_unit_info_label.text = "[%s] %s%s\nHP: %d / %d\nMove: %d  ·  Range: %d  ·  Dmg: %d" % [
+		tag, udata["name"], status_str,
+		hovered.hp, hovered.max_hp,
+		hovered.get_move_range(),
+		hovered.get_attack_range(),
+		hovered.get_damage()
+	]
+
 func _refresh_relics_label() -> void:
 	if _relics_label == null:
 		return
@@ -806,6 +840,11 @@ func _input(event: InputEvent) -> void:
 		if hc != _hover_cell:
 			_hover_cell = hc
 			queue_redraw()
+			# Hovering over a unit during the unit-select phase pre-fills the
+			# unit info panel so the player can scout enemy stats without
+			# having to commit a selection first.
+			if phase == Phase.PLAYER_SELECT_UNIT:
+				_refresh_hover_unit_info()
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo:
