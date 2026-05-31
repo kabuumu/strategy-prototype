@@ -9,12 +9,21 @@ var hp: int = 100
 var max_hp: int = 100
 var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false
-var stunned: bool = false       # skips its next activation
+var stunned: bool = false:       # skips its next activation
+	set(v):
+		stunned = v
+		_refresh_status_badge()
 var ability_used: bool = false  # special ability is once per battle
 var upgrades: Array = []        # roguelike upgrades (see GameManager.UPGRADE_TYPES)
 var enraged: bool = false       # boss state: gives stat bonuses
-var poison_turns: int = 0       # damage-over-time at round start
-var burn_turns: int = 0
+var poison_turns: int = 0:       # damage-over-time at round start
+	set(v):
+		poison_turns = v
+		_refresh_status_badge()
+var burn_turns: int = 0:
+	set(v):
+		burn_turns = v
+		_refresh_status_badge()
 
 func apply_poison(turns: int) -> void:
 	poison_turns = maxi(poison_turns, turns)
@@ -23,6 +32,7 @@ func apply_burn(turns: int) -> void:
 	burn_turns = maxi(burn_turns, turns)
 
 var _body: Sprite2D
+var _status_label: Label
 var _hp_bar: ColorRect
 
 # ---------------------------------------------------------------------------
@@ -100,6 +110,37 @@ func _build_visuals(udata: Dictionary) -> void:
 	_hp_bar.position = Vector2(-bar_w * 0.5, 32.0 if is_boss else 28.0)
 	_hp_bar.color    = Color(0.2, 0.9, 0.2)
 	add_child(_hp_bar)
+
+	# Persistent status badge (stun / poison / burn icons). Empty until a
+	# status flag flips, then updated via the property setters above.
+	_status_label = Label.new()
+	_status_label.add_theme_font_size_override("font_size", 11)
+	_status_label.position = Vector2(-26.0, -52.0 if is_boss else -48.0)
+	_status_label.size     = Vector2(52.0, 14.0)
+	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(_status_label)
+	_refresh_status_badge()
+
+func _refresh_status_badge() -> void:
+	# Setter is called during initial var assignment before _build_visuals
+	# runs, so guard against the label not existing yet.
+	if _status_label == null:
+		return
+	var parts: PackedStringArray = []
+	if stunned:
+		parts.append("[⚡STUN]")
+	if poison_turns > 0:
+		parts.append("[☠%d]" % poison_turns)
+	if burn_turns > 0:
+		parts.append("[🔥%d]" % burn_turns)
+	_status_label.text = " ".join(parts)
+	# Colour the whole badge by the highest-priority effect
+	if stunned:
+		_status_label.modulate = Color(1.0, 0.85, 0.30)
+	elif burn_turns > 0:
+		_status_label.modulate = Color(1.0, 0.55, 0.20)
+	elif poison_turns > 0:
+		_status_label.modulate = Color(0.55, 1.0, 0.40)
 
 # ---------------------------------------------------------------------------
 func update_visual_position() -> void:
