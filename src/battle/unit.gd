@@ -123,6 +123,22 @@ func take_damage(amount: int) -> void:
 	_spawn_damage_number(amount)
 	_flash_hit()
 
+# Plays a quick fall-and-fade on the dying unit's body. Called by battle.gd
+# after _kill_punch so the death animation lands during the slow-mo window.
+# Caller is responsible for the grey-tint final state and any logic — this
+# is purely cosmetic and never queue_frees self.
+func play_death_animation() -> void:
+	if not _body:
+		return
+	var tw := create_tween()
+	tw.set_parallel(true)
+	# Drop and tilt — like the unit collapsing
+	tw.tween_property(_body, "rotation", deg_to_rad(80.0), 0.45) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_body, "position:y",
+			_body.position.y + 18.0, 0.45).set_trans(Tween.TRANS_QUAD)
+	tw.tween_property(_body, "modulate:a", 0.55, 0.45)
+
 # Floating damage number that drifts up and fades
 func _spawn_damage_number(amount: int) -> void:
 	var lbl := Label.new()

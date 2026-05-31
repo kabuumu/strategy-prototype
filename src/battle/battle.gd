@@ -896,6 +896,7 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
 	if not defender.is_alive():
 		_kill_punch()
+		defender.play_death_animation()
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
 		if attacker.team == 0:
