@@ -630,8 +630,11 @@ func _try_move_unit(cell: Vector2i) -> void:
 	if cell not in move_cells:
 		return
 	if cell != selected_unit.grid_pos:
+		var origin := selected_unit.grid_pos
 		selected_unit.grid_pos = cell
-		selected_unit.update_visual_position()
+		# Visually walk along the BFS path. Fire-and-forget — the tween plays
+		# while the player is reading their attack options.
+		_animate_unit_to(selected_unit, origin, cell)
 	move_cells.clear()
 	# Check for objective capture after landing
 	_check_capture(selected_unit)
@@ -895,7 +898,7 @@ func _run_one_ai_unit() -> void:
 	_execute_one_ai_unit()
 
 func _execute_one_ai_unit() -> void:
-	await get_tree().create_timer(0.55).timeout
+	await get_tree().create_timer(0.35).timeout
 
 	if _all_dead(enemy_units):
 		_trigger_win()
@@ -917,7 +920,7 @@ func _execute_one_ai_unit() -> void:
 		_check_round_complete()
 		return
 
-	_ai_act(ai_unit)
+	await _ai_act(ai_unit)
 	ai_unit.has_acted = true
 	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
 	queue_redraw()
@@ -946,14 +949,14 @@ func _execute_remaining_ai_units() -> void:
 		_start_new_round()
 		return
 
-	await get_tree().create_timer(0.55).timeout
+	await get_tree().create_timer(0.35).timeout
 
 	var ai_unit: Unit = unacted[0]
 	if _consume_stun(ai_unit):
 		_execute_remaining_ai_units()
 		return
 
-	_ai_act(ai_unit)
+	await _ai_act(ai_unit)
 	ai_unit.has_acted = true
 	ai_unit.modulate  = Color(0.58, 0.58, 0.58, 1.0)
 	queue_redraw()
@@ -1048,8 +1051,9 @@ func _ai_act(ai_unit: Unit) -> void:
 	# movement to the fallback so we don't end up moving twice)
 	if best_target != null:
 		if best_cell != ai_unit.grid_pos:
+			var origin := ai_unit.grid_pos
 			ai_unit.grid_pos = best_cell
-			ai_unit.update_visual_position()
+			await _animate_unit_to(ai_unit, origin, best_cell).finished
 		_check_capture(ai_unit)
 		_do_attack(ai_unit, best_target)
 		return
@@ -1069,8 +1073,9 @@ func _ai_act(ai_unit: Unit) -> void:
 	if target_cell != Vector2i(-1, -1):
 		var closer := _best_move_to_cell(ai_unit, target_cell)
 		if closer != ai_unit.grid_pos:
+			var origin := ai_unit.grid_pos
 			ai_unit.grid_pos = closer
-			ai_unit.update_visual_position()
+			await _animate_unit_to(ai_unit, origin, closer).finished
 		_check_capture(ai_unit)
 		# Opportunistic attack after closing
 		if combat_target != null and combat_target.is_alive() \
@@ -1128,6 +1133,56 @@ func _get_move_cells(unit: Unit) -> Array[Vector2i]:
 				queue.append({"pos": next, "steps": steps + 1})
 
 	return result
+
+# BFS path from `start` to `end` (orthogonal, mountain-aware, treating only
+# `excluded` as walkable among unit-occupied cells). Returns the list of
+# cells AFTER start, ending at `end` — i.e. the cells the unit walks through.
+# Returns empty if no path is found.
+func _bfs_path(start: Vector2i, end: Vector2i, excluded: Unit) -> Array[Vector2i]:
+	if start == end:
+		return []
+	var blockers := _occupied_cells_except(excluded)
+	var came_from: Dictionary = {start: start}
+	var queue: Array[Vector2i] = [start]
+	var found := false
+	while not queue.is_empty():
+		var pos: Vector2i = queue.pop_front()
+		if pos == end:
+			found = true
+			break
+		for dir: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var next := pos + dir
+			if next in came_from:
+				continue
+			if not _valid_cell(next) or next in mountains:
+				continue
+			# Blockers are passable only as the final destination
+			if next != end and next in blockers:
+				continue
+			came_from[next] = pos
+			queue.append(next)
+	if not found:
+		return []
+	# Reconstruct (excluding the starting cell)
+	var path: Array[Vector2i] = []
+	var cur := end
+	while cur != start:
+		path.insert(0, cur)
+		cur = came_from[cur]
+	return path
+
+# Kick off a walk animation for `unit` from `origin` to `dest`. Logical
+# grid_pos must already be set to `dest` by the caller. Returns the tween
+# so AI flows can `await tw.finished`.
+func _animate_unit_to(unit: Unit, origin: Vector2i, dest: Vector2i) -> Tween:
+	var path := _bfs_path(origin, dest, unit)
+	# Fallback to a straight slide if no path exists (e.g. for abilities)
+	if path.is_empty():
+		path = [dest]
+	var pts: Array = []
+	for c: Vector2i in path:
+		pts.append(Vector2(c.x * TILE_SIZE + TILE_SIZE / 2.0, c.y * TILE_SIZE + TILE_SIZE / 2.0))
+	return unit.animate_move_along(pts)
 
 func _get_attack_cells(attacker: Unit, targets: Array[Unit]) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []

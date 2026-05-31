@@ -66,6 +66,25 @@ func update_visual_position() -> void:
 		grid_pos.y * TILE_SIZE + TILE_SIZE / 2
 	)
 
+# Animate this unit walking along a sequence of world-space points (one per
+# tile, in visit order, starting from the unit's current tile). Returns the
+# tween so callers can `await tw.finished`. Snaps to the final point at the
+# end so logical/visual state stay in sync.
+func animate_move_along(world_points: Array) -> Tween:
+	var tw := create_tween()
+	if world_points.is_empty():
+		# No-op tween that completes immediately, so await is safe
+		tw.tween_interval(0.0)
+		return tw
+	# Per-tile hop duration with a tiny ease — feels like running, not gliding
+	var per_step := 0.07
+	tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	for p: Vector2 in world_points:
+		tw.tween_property(self, "position", p, per_step)
+	# Safety snap in case any property tween rounded oddly
+	tw.tween_callback(update_visual_position)
+	return tw
+
 func take_damage(amount: int) -> void:
 	hp = max(0, hp - amount)
 	_refresh_hp_bar()
