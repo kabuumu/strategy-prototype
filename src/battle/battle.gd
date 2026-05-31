@@ -22,6 +22,11 @@ const OBJECTIVE_CELLS: Array[Vector2i] = [
 const OBJECTIVE_TYPES: Array[String] = ["heal", "reinforce", "heal"]
 const HEAL_AMOUNT: int = 30
 
+# Status damage-over-time (applied at the start of the unit's side's round)
+const POISON_DMG: int = 8
+const BURN_DMG: int = 12
+const DEATH_TINT := Color(0.32, 0.32, 0.32, 0.50)
+
 # ---------------------------------------------------------------------------
 # Turn state machine
 # ---------------------------------------------------------------------------
@@ -57,9 +62,18 @@ var _grid_node:   Node2D
 var objectives: Array[Dictionary] = []
 
 # ---------------------------------------------------------------------------
-# Terrain — mountain cells block all movement through and onto them
+# Terrain
+#   mountains — block all movement
+#   forests   — cover: occupant takes less damage
+#   hills     — high ground: occupant deals more damage
+#   lava      — burns the occupant each round (still walkable)
 # ---------------------------------------------------------------------------
 var mountains: Array[Vector2i] = []
+var forests:   Array[Vector2i] = []
+var hills:     Array[Vector2i] = []
+var lava:      Array[Vector2i] = []
+const FOREST_DEFENSE: float = 0.65   # damage multiplier to a defender in forest
+const HILL_ATTACK:    float = 1.30   # damage multiplier from an attacker on a hill
 
 # ---------------------------------------------------------------------------
 # UI
@@ -164,6 +178,22 @@ func _generate_terrain() -> void:
 			if not candidates.is_empty():
 				mountains.append(candidates[rng.randi() % candidates.size()])
 
+	# Scatter special terrain on free passable cells (cols 1–8, off spawn edges)
+	forests.clear(); hills.clear(); lava.clear()
+	var taken: Array[Vector2i] = reserved.duplicate()
+	taken.append_array(mountains)
+	var _place := func(target: Array[Vector2i], count: int) -> void:
+		var tries := 0
+		while target.size() < count and tries < 60:
+			tries += 1
+			var c := Vector2i(rng.randi_range(1, GRID_COLS - 2), rng.randi_range(0, GRID_ROWS - 1))
+			if c not in taken:
+				target.append(c)
+				taken.append(c)
+	_place.call(forests, 5)
+	_place.call(hills, 4)
+	_place.call(lava, 3)
+
 # ---------------------------------------------------------------------------
 # Custom drawing — grid tiles + objective highlights
 # ---------------------------------------------------------------------------
@@ -231,6 +261,31 @@ func _draw() -> void:
 			]),
 			PackedColorArray([Color(0.88, 0.88, 0.93)]))
 
+	# Special terrain tiles
+	for f: Vector2i in forests:
+		var fx: float = GRID_OFFSET.x + f.x * TILE_SIZE
+		var fy: float = GRID_OFFSET.y + f.y * TILE_SIZE
+		draw_rect(Rect2(Vector2(fx, fy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.12, 0.24, 0.13))
+		draw_polygon(PackedVector2Array([
+			Vector2(fx + 35, fy + 14), Vector2(fx + 18, fy + 46), Vector2(fx + 52, fy + 46)]),
+			PackedColorArray([Color(0.20, 0.55, 0.25)]))
+		draw_rect(Rect2(Vector2(fx + 31, fy + 46), Vector2(8, 12)), Color(0.40, 0.27, 0.14))
+	for h: Vector2i in hills:
+		var hx: float = GRID_OFFSET.x + h.x * TILE_SIZE
+		var hy: float = GRID_OFFSET.y + h.y * TILE_SIZE
+		draw_rect(Rect2(Vector2(hx, hy), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.28, 0.23, 0.13))
+		draw_polygon(PackedVector2Array([
+			Vector2(hx + 6, hy + 58), Vector2(hx + 35, hy + 24), Vector2(hx + 64, hy + 58)]),
+			PackedColorArray([Color(0.55, 0.45, 0.28)]))
+		draw_string(ThemeDB.fallback_font, Vector2(hx + 4, hy + 16), "↑",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.5))
+	for l: Vector2i in lava:
+		var lx: float = GRID_OFFSET.x + l.x * TILE_SIZE
+		var ly: float = GRID_OFFSET.y + l.y * TILE_SIZE
+		draw_rect(Rect2(Vector2(lx, ly), Vector2(TILE_SIZE - 1.0, TILE_SIZE - 1.0)), Color(0.55, 0.18, 0.06))
+		draw_rect(Rect2(Vector2(lx + 10, ly + 24), Vector2(48, 20)), Color(0.95, 0.5, 0.1))
+		draw_rect(Rect2(Vector2(lx + 20, ly + 30), Vector2(28, 9)), Color(1.0, 0.82, 0.2))
+
 	# Objectives drawn on top of the tiles (only while uncaptured)
 	for obj: Dictionary in objectives:
 		if int(obj["owner"]) != -1:
@@ -262,10 +317,10 @@ func _draw() -> void:
 	# preview below adds that detail during the attack phase.
 	if selected_unit and phase in [Phase.PLAYER_SELECT_ATTACK, Phase.PLAYER_SELECT_ABILITY]:
 		var cells := attack_cells if phase == Phase.PLAYER_SELECT_ATTACK else ability_cells
-		var dmg := selected_unit.get_damage()
 		for t: Unit in enemy_units:
 			if not t.is_alive() or t.grid_pos not in cells:
 				continue
+			var dmg := _attack_damage(selected_unit, t)
 			var lethal: bool = t.hp <= dmg
 			var txt: String = "KILL" if lethal else "-%d" % dmg
 			var col: Color = Color(1.0, 0.35, 0.3) if lethal else Color(1.0, 0.92, 0.4)
@@ -360,7 +415,7 @@ func _build_unit_legend() -> void:
 	header.position = Vector2(PANEL_X + 20.0, 424.0)
 	add_child(header)
 	var y := 442.0
-	for utype: String in GameManager.UNIT_TYPES.keys():
+	for utype: String in GameManager.recruitable_types():
 		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
 		var dot := ColorRect.new()
 		dot.color    = udata["color"]
@@ -401,6 +456,9 @@ func _spawn_units() -> void:
 		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]), entry.get("upgrades", []))
 		# Carry persisted HP forward (clamped to current max — VETERAN may have raised it)
 		u.hp = clampi(int(entry["hp"]), 1, u.max_hp)
+		# Field Kit relic: start each battle a little healed
+		if GameManager.has_relic("medkit"):
+			u.hp = mini(u.max_hp, u.hp + 15)
 		u._refresh_hp_bar()
 		player_units.append(u)
 
@@ -747,7 +805,7 @@ func _try_attack(cell: Vector2i) -> void:
 			return
 
 # ---------------------------------------------------------------------------
-# Combat resolution — crits + flanking bonuses
+# Combat resolution — crits + flanking bonuses + terrain
 # ---------------------------------------------------------------------------
 const FLANK_MULT: float = 1.25
 const CRIT_MULT:  float = 1.5
@@ -768,8 +826,22 @@ func _is_flanking(attacker: Unit, defender: Unit) -> bool:
 			return true
 	return false
 
+# Terrain damage multiplier: hill boosts the attacker, forest protects the defender.
+func _terrain_mult(attacker: Unit, defender: Unit) -> float:
+	var m := 1.0
+	if attacker.grid_pos in hills:
+		m *= HILL_ATTACK
+	if defender.grid_pos in forests:
+		m *= FOREST_DEFENSE
+	return m
+
+# Deterministic damage (terrain only, no crit/flank) — used by the forecast UI.
+func _attack_damage(attacker: Unit, defender: Unit) -> int:
+	return maxi(1, int(round(attacker.get_damage() * _terrain_mult(attacker, defender))))
+
 # Returns { "damage": int, "crit": bool, "flank": bool }. Crit and flank don't
 # stack — crit takes precedence so the spotlight moments stay distinct.
+# Terrain multiplies on top of whichever bonus applies.
 func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 	var base := attacker.get_damage()
 	var crit := randf() < CRIT_CHANCE
@@ -779,13 +851,16 @@ func _resolve_damage(attacker: Unit, defender: Unit) -> Dictionary:
 		mult = CRIT_MULT
 	elif flank:
 		mult = FLANK_MULT
-	return {"damage": int(round(base * mult)), "crit": crit, "flank": flank and not crit}
+	mult *= _terrain_mult(attacker, defender)
+	return {"damage": maxi(1, int(round(base * mult))), "crit": crit, "flank": flank and not crit}
 
 func _do_attack(attacker: Unit, defender: Unit) -> void:
 	var res := _resolve_damage(attacker, defender)
 	var dmg: int = res["damage"]
 	_lunge(attacker, defender)
 	defender.take_damage(dmg)
+	Sfx.play("attack")
+	Sfx.play("hit")
 	if res["crit"]:
 		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
 		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
@@ -799,13 +874,18 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		_shake_grid(2.5)
 	if not defender.is_alive():
 		_shake_grid(5.0)   # bigger jolt on a kill
-		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
+		defender.modulate = DEATH_TINT
+		Sfx.play("death")
 		_log_event("%s is defeated" % _unit_label(defender))
 	else:
 		# Boss enrage check: cross the HP threshold once → permanent buff
 		_check_enrage(defender)
-	# Enemy roster/positions may have changed (death, position via lunge is
-	# temporary). Refresh the threat overlay.
+	# Venom relic: melee hits poison the target
+	if GameManager.has_relic("venom") and attacker.team == 0 \
+			and _chebyshev(attacker.grid_pos, defender.grid_pos) <= 1 and defender.is_alive():
+		defender.apply_poison(2)
+		defender.show_status_popup("POISONED", Color(0.45, 0.85, 0.30))
+	# Enemy roster/positions may have changed — refresh the threat overlay.
 	_recompute_threat()
 
 # If the defender is a boss whose HP just crossed its enrage threshold,
@@ -894,6 +974,15 @@ func _ability_target_cells(unit: Unit, id: String) -> Array[Vector2i]:
 				if t.is_alive() and _chebyshev(unit.grid_pos, t.grid_pos) <= 1:
 					cells.append(t.grid_pos)
 			return cells
+		"heal_ally":
+			# Wounded allies within 2 tiles (excluding self)
+			var allies := player_units if unit.team == 0 else enemy_units
+			var cells: Array[Vector2i] = []
+			for a: Unit in allies:
+				if a != unit and a.is_alive() and a.hp < a.max_hp \
+						and _chebyshev(unit.grid_pos, a.grid_pos) <= 2:
+					cells.append(a.grid_pos)
+			return cells
 	return []
 
 func _on_ability_pressed() -> void:
@@ -903,6 +992,7 @@ func _on_ability_pressed() -> void:
 	if id == "dash":
 		# Grant a second move immediately
 		selected_unit.ability_used = true
+		Sfx.play("ability")
 		selected_unit.show_status_popup("DASH!", Color(0.95, 0.85, 0.2))
 		move_cells   = _get_move_cells(selected_unit)
 		attack_cells.clear()
@@ -919,6 +1009,22 @@ func _on_ability_pressed() -> void:
 func _try_ability(cell: Vector2i) -> void:
 	if cell not in ability_cells:
 		return
+	var id: String = selected_unit.get_ability().get("id", "")
+
+	# Healer targets a friendly unit
+	if id == "heal_ally":
+		for a: Unit in player_units:
+			if a.is_alive() and a.grid_pos == cell:
+				a.hp = mini(a.max_hp, a.hp + GameManager.HEAL_ABILITY_AMOUNT)
+				a._refresh_hp_bar()
+				a.show_status_popup("+%d" % GameManager.HEAL_ABILITY_AMOUNT, Color(0.4, 0.95, 0.5))
+				Sfx.play("heal")
+				break
+		selected_unit.ability_used = true
+		ability_cells.clear()
+		_commit_player_unit_turn()
+		return
+
 	var target: Unit = null
 	for t: Unit in enemy_units:
 		if t.is_alive() and t.grid_pos == cell:
@@ -927,7 +1033,6 @@ func _try_ability(cell: Vector2i) -> void:
 	if target == null:
 		return
 
-	var id: String = selected_unit.get_ability().get("id", "")
 	match id:
 		"pierce":
 			_do_attack(selected_unit, target)
@@ -944,6 +1049,7 @@ func _try_ability(cell: Vector2i) -> void:
 			if target.is_alive():
 				target.stunned = true
 				target.show_status_popup("STUNNED!", STUN_COLOR)
+				Sfx.play("stun")
 				_recompute_threat()   # stunned enemy no longer threatens
 
 	selected_unit.ability_used = true
@@ -977,6 +1083,7 @@ func _check_capture(unit: Unit) -> void:
 			return  # Already owned — no bonus
 		obj["owner"] = unit.team
 		_apply_bonus(unit.team, obj["type"])
+		Sfx.play("capture")
 		var bonus_desc: String = "+%d HP to all allies" % HEAL_AMOUNT \
 			if obj["type"] == "heal" else "Scout reinforcement!"
 		var who: String = "You" if unit.team == 0 else "Enemy"
@@ -1143,6 +1250,10 @@ func _check_round_complete() -> void:
 #   • Standing on a capturable objective (capture bonus)
 # ---------------------------------------------------------------------------
 func _ai_act(ai_unit: Unit) -> void:
+	# Healers prioritise patching up wounded allies
+	if _try_ai_heal(ai_unit):
+		return
+
 	var damage := ai_unit.get_damage()
 	var range_val := ai_unit.get_attack_range()
 	var is_ranged := range_val >= 2
@@ -1366,6 +1477,39 @@ func _nearest_alive(from: Unit, targets: Array[Unit]) -> Unit:
 				nearest  = t
 	return nearest
 
+# Most-wounded living ally (by missing HP), excluding the unit itself.
+func _most_wounded_ally(unit: Unit, allies: Array[Unit]) -> Unit:
+	var worst: Unit = null
+	var most_missing := 0
+	for a: Unit in allies:
+		if a != unit and a.is_alive():
+			var missing := a.max_hp - a.hp
+			if missing > most_missing:
+				most_missing = missing
+				worst = a
+	return worst
+
+# Enemy healer behaviour: move toward and heal the most-wounded ally.
+# Returns true when it has taken the healer's action this turn.
+func _try_ai_heal(ai_unit: Unit) -> bool:
+	if ai_unit.get_ability().get("id", "") != "heal_ally" or ai_unit.ability_used:
+		return false
+	var wounded := _most_wounded_ally(ai_unit, enemy_units)
+	if wounded == null:
+		return false  # nobody hurt — behave like a normal unit
+	if _chebyshev(ai_unit.grid_pos, wounded.grid_pos) > 2:
+		var best := _best_move_to_cell(ai_unit, wounded.grid_pos)
+		if best != ai_unit.grid_pos:
+			ai_unit.grid_pos = best
+			ai_unit.update_visual_position()
+		_check_capture(ai_unit)
+	if _chebyshev(ai_unit.grid_pos, wounded.grid_pos) <= 2:
+		wounded.hp = mini(wounded.max_hp, wounded.hp + GameManager.HEAL_ABILITY_AMOUNT)
+		wounded._refresh_hp_bar()
+		wounded.show_status_popup("+%d" % GameManager.HEAL_ABILITY_AMOUNT, Color(0.4, 0.95, 0.5))
+		ai_unit.ability_used = true
+	return true
+
 func _nearest_capturable_obj(ai_unit: Unit) -> Vector2i:
 	var nearest := Vector2i(-1, -1)
 	var min_dist := 9999
@@ -1396,11 +1540,32 @@ func _mark_all_acted(units: Array[Unit]) -> void:
 
 func _reset_acted_flags(units: Array[Unit]) -> void:
 	for u: Unit in units:
-		if u.is_alive():
-			u.has_acted = false
-			u.modulate  = Color(1.0, 1.0, 1.0, 1.0)
-			# A unit that began the round stunned loses it
-			_consume_stun(u)
+		if not u.is_alive():
+			continue
+		# Damage-over-time ticks at the start of the unit's round (may kill)
+		_tick_statuses(u)
+		if not u.is_alive():
+			continue
+		u.has_acted = false
+		u.modulate  = Color(1.0, 1.0, 1.0, 1.0)
+		# A unit that began the round stunned loses it
+		_consume_stun(u)
+
+# Apply poison/burn damage-over-time and lava terrain burn to a unit.
+func _tick_statuses(u: Unit) -> void:
+	# Standing in lava refreshes burn
+	if u.grid_pos in lava and u.is_alive():
+		u.apply_burn(2)
+	if u.poison_turns > 0:
+		u.take_damage(POISON_DMG)
+		u.show_status_popup("-%d poison" % POISON_DMG, Color(0.45, 0.85, 0.30))
+		u.poison_turns -= 1
+	if u.is_alive() and u.burn_turns > 0:
+		u.take_damage(BURN_DMG)
+		u.show_status_popup("-%d burn" % BURN_DMG, Color(1.0, 0.5, 0.15))
+		u.burn_turns -= 1
+	if not u.is_alive():
+		u.modulate = DEATH_TINT
 
 # If the unit is stunned, clear it and mark it as having spent its turn.
 # Returns true when the activation was consumed by the stun.
@@ -1435,6 +1600,7 @@ func _show_toast(text: String, color: Color) -> void:
 # Win / Loss overlays
 # ---------------------------------------------------------------------------
 var _gold_reward: int = 0
+var _relic_reward: String = ""
 
 func _trigger_win() -> void:
 	phase = Phase.BATTLE_WON
@@ -1443,6 +1609,11 @@ func _trigger_win() -> void:
 		GameManager.pending_battle_tier, GameManager.pending_battle_elite)
 	GameManager.add_gold(_gold_reward)
 	GameManager.register_battle_won(GameManager.pending_battle_elite)
+	# Elite battles award a random relic
+	_relic_reward = ""
+	if GameManager.pending_battle_elite:
+		_relic_reward = GameManager.grant_random_relic()
+	Sfx.play("win")
 	_update_ui()
 	_show_result_overlay(true)
 
@@ -1461,6 +1632,7 @@ func _persist_roster() -> void:
 
 func _trigger_loss() -> void:
 	phase = Phase.BATTLE_LOST
+	Sfx.play("lose")
 	_update_ui()
 	_show_result_overlay(false)
 
@@ -1492,6 +1664,9 @@ func _show_result_overlay(won: bool) -> void:
 			_gold_reward, GameManager.gold,
 			GameManager.battles_won, GameManager.best_streak_ever
 		]
+		if _relic_reward != "":
+			sub.text += "\nRelic found: %s — %s" % [
+				GameManager.RELICS[_relic_reward]["name"], GameManager.RELICS[_relic_reward]["desc"]]
 	else:
 		sub.text = "All your units were destroyed.\nFinal streak: %d battles won" % GameManager.battles_won
 	sub.add_theme_font_size_override("font_size", 16)

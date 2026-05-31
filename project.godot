@@ -22,6 +22,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 GameManager="*res://src/game_manager.gd"
+Sfx="*res://src/sfx.gd"
 
 [display]
 

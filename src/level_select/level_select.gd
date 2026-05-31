@@ -32,8 +32,10 @@ const TYPE_DESC: Dictionary = {
 var _node_buttons: Array = []
 var _roster_label: Label
 var _gold_label: Label
+var _relics_label: Label
 var _depth_label: Label
 var _popup: Control = null
+var _shop_relic_offer: String = ""
 
 # Hover preview — built once, shown when the cursor enters a battle node so
 # the player can see what they're walking into before committing.
@@ -213,6 +215,14 @@ func _build_hud() -> void:
 	_gold_label.position = Vector2(12.0, 654.0)
 	add_child(_gold_label)
 
+	_relics_label = Label.new()
+	_relics_label.add_theme_font_size_override("font_size", 13)
+	_relics_label.modulate = Color(0.75, 0.85, 0.95)
+	_relics_label.position = Vector2(220.0, 656.0)
+	_relics_label.size = Vector2(860.0, 40.0)
+	_relics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_relics_label)
+
 	_depth_label = Label.new()
 	_depth_label.add_theme_font_size_override("font_size", 15)
 	_depth_label.modulate = Color(0.70, 0.70, 0.70)
@@ -257,6 +267,7 @@ func _refresh() -> void:
 
 	_roster_label.text = "Roster: " + _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
+	_relics_label.text = "Relics: " + _relics_text()
 	_depth_label.text  = "Tier %d / %d   ·   Wins: %d   ·   Best: %d" % [
 		cur_tier, GameManager.MAP_TIERS,
 		GameManager.battles_won, GameManager.best_streak_ever
@@ -266,6 +277,14 @@ func _refresh() -> void:
 		_show_victory()
 
 	queue_redraw()
+
+func _relics_text() -> String:
+	if GameManager.relics.is_empty():
+		return "(none)"
+	var names: Array[String] = []
+	for id: String in GameManager.relics:
+		names.append(GameManager.RELICS[id]["name"])
+	return "  ·  ".join(names)
 
 func _roster_text() -> String:
 	if GameManager.player_roster.is_empty():
@@ -304,6 +323,7 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			_show_shop_popup()
 		"heal":
 			GameManager.heal_roster()
+			Sfx.play("heal")
 			_refresh()
 			_show_toast("Party fully healed!", Color(0.20, 0.72, 0.35))
 		_:
@@ -314,8 +334,8 @@ func _on_node_pressed(tier: int, index: int) -> void:
 # ---------------------------------------------------------------------------
 func _show_unit_select_popup() -> void:
 	_popup = Panel.new()
-	_popup.position = Vector2(190.0, 180.0)
-	_popup.size = Vector2(900.0, 360.0)
+	_popup.position = Vector2(130.0, 180.0)
+	_popup.size = Vector2(1020.0, 360.0)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.09, 0.09, 0.16, 0.97)
@@ -332,22 +352,21 @@ func _show_unit_select_popup() -> void:
 	title.text = "Choose a Unit to Add to Your Roster"
 	title.add_theme_font_size_override("font_size", 22)
 	title.modulate = Color(0.95, 0.90, 1.0)
-	title.position = Vector2(220.0, 18.0)
+	title.position = Vector2(330.0, 16.0)
 	_popup.add_child(title)
 
-	var keys := GameManager.UNIT_TYPES.keys()
+	var keys := GameManager.recruitable_types()
 	for i in range(keys.size()):
 		var utype: String = keys[i]
 		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
 		var btn := Button.new()
-		btn.position = Vector2(30.0 + i * 285.0, 65.0)
-		btn.size = Vector2(260.0, 240.0)
-		btn.text = "%s\n\nHP:     %d\nMove:  %d tiles\nRange: %d tile%s\nDmg:   %d" % [
+		btn.position = Vector2(20.0 + i * 245.0, 60.0)
+		btn.size = Vector2(230.0, 250.0)
+		btn.text = "%s\n\nHP:    %d\nMove:  %d\nRange: %d\nDmg:   %d\n\n%s" % [
 			udata["name"], udata["max_hp"], udata["move_range"],
-			udata["attack_range"], ("s" if udata["attack_range"] > 1 else ""),
-			udata["damage"]
+			udata["attack_range"], udata["damage"], udata["ability"]["name"]
 		]
-		btn.add_theme_font_size_override("font_size", 16)
+		btn.add_theme_font_size_override("font_size", 15)
 		var bs := _circle_style(udata["color"].darkened(0.15), 8)
 		btn.add_theme_stylebox_override("normal",  bs)
 		btn.add_theme_stylebox_override("hover",   _circle_style(udata["color"].lightened(0.15), 8))
@@ -367,9 +386,12 @@ func _on_unit_chosen(unit_type: String) -> void:
 # Shop popup — spend gold; stays open for multiple purchases until "Leave"
 # ---------------------------------------------------------------------------
 func _show_shop_popup() -> void:
+	# Pick one relic to offer for this visit (random unowned)
+	var pool := GameManager.unowned_relics()
+	_shop_relic_offer = pool[0] if not pool.is_empty() else ""
 	_popup = Panel.new()
-	_popup.position = Vector2(190.0, 150.0)
-	_popup.size = Vector2(900.0, 420.0)
+	_popup.position = Vector2(130.0, 130.0)
+	_popup.size = Vector2(1020.0, 460.0)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.12, 0.10, 0.05, 0.97)
 	for side in ["left", "right", "top", "bottom"]:
@@ -397,36 +419,50 @@ func _populate_shop() -> void:
 	gold_lbl.text = "Gold: %d" % GameManager.gold
 	gold_lbl.add_theme_font_size_override("font_size", 18)
 	gold_lbl.modulate = Color(0.95, 0.82, 0.25)
-	gold_lbl.position = Vector2(740.0, 20.0)
+	gold_lbl.position = Vector2(860.0, 20.0)
 	_popup.add_child(gold_lbl)
 
 	# Heal party
 	var heal_btn := _make_shop_button(
-		"Heal Party to Full\n\n%d gold" % GameManager.SHOP_HEAL_COST,
-		Vector2(30.0, 70.0), Vector2(260.0, 150.0),
+		"Heal Party to Full   (%d gold)" % GameManager.SHOP_HEAL_COST,
+		Vector2(24.0, 56.0), Vector2(480.0, 70.0),
 		Color(0.20, 0.55, 0.30), GameManager.gold >= GameManager.SHOP_HEAL_COST)
 	heal_btn.pressed.connect(_on_shop_heal)
 	_popup.add_child(heal_btn)
 
+	# Buy a relic (one offered per visit)
+	var relic_enabled := _shop_relic_offer != "" and GameManager.gold >= GameManager.SHOP_RELIC_COST
+	var relic_txt: String
+	if _shop_relic_offer == "":
+		relic_txt = "All relics owned"
+	else:
+		var r: Dictionary = GameManager.RELICS[_shop_relic_offer]
+		relic_txt = "Relic: %s   (%d gold)\n%s" % [r["name"], GameManager.SHOP_RELIC_COST, r["desc"]]
+	var relic_btn := _make_shop_button(relic_txt,
+		Vector2(516.0, 56.0), Vector2(480.0, 70.0),
+		Color(0.45, 0.35, 0.62), relic_enabled)
+	relic_btn.pressed.connect(_on_shop_relic)
+	_popup.add_child(relic_btn)
+
 	# Buy a unit (one button per class)
-	var keys := GameManager.UNIT_TYPES.keys()
+	var keys := GameManager.recruitable_types()
 	for i in range(keys.size()):
 		var utype: String = keys[i]
 		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
 		var can_afford := GameManager.gold >= GameManager.SHOP_UNIT_COST
 		var btn := _make_shop_button(
-			"Buy %s\n\nHP:%d Mv:%d Rng:%d Dmg:%d\n\n%d gold" % [
+			"Buy %s\n\nHP:%d Mv:%d\nRng:%d Dmg:%d\n\n%d gold" % [
 				udata["name"], udata["max_hp"], udata["move_range"],
 				udata["attack_range"], udata["damage"], GameManager.SHOP_UNIT_COST],
-			Vector2(310.0 + i * 195.0, 70.0), Vector2(180.0, 230.0),
+			Vector2(20.0 + i * 248.0, 140.0), Vector2(235.0, 230.0),
 			udata["color"].darkened(0.1), can_afford)
 		btn.pressed.connect(_on_shop_buy_unit.bind(utype))
 		_popup.add_child(btn)
 
 	var leave := Button.new()
 	leave.text = "Leave"
-	leave.position = Vector2(30.0, 340.0)
-	leave.size = Vector2(260.0, 50.0)
+	leave.position = Vector2(24.0, 400.0)
+	leave.size = Vector2(972.0, 44.0)
 	leave.add_theme_font_size_override("font_size", 18)
 	leave.pressed.connect(func() -> void:
 		_popup.queue_free()
@@ -450,14 +486,29 @@ func _make_shop_button(txt: String, pos: Vector2, sz: Vector2, color: Color, ena
 func _on_shop_heal() -> void:
 	if GameManager.spend_gold(GameManager.SHOP_HEAL_COST):
 		GameManager.heal_roster()
+		Sfx.play("heal")
 		_show_toast("Party healed!", Color(0.30, 0.85, 0.45))
 		_populate_shop()
 
 func _on_shop_buy_unit(unit_type: String) -> void:
 	if GameManager.spend_gold(GameManager.SHOP_UNIT_COST):
 		GameManager.add_unit(unit_type)
+		Sfx.play("gold")
 		var name_str: String = GameManager.UNIT_TYPES[unit_type]["name"]
 		_show_toast("Bought %s!" % name_str, GameManager.UNIT_TYPES[unit_type]["color"])
+		_populate_shop()
+
+func _on_shop_relic() -> void:
+	if _shop_relic_offer == "":
+		return
+	if GameManager.spend_gold(GameManager.SHOP_RELIC_COST):
+		var id := _shop_relic_offer
+		GameManager.add_relic(id)
+		Sfx.play("gold")
+		_show_toast("Acquired %s!" % GameManager.RELICS[id]["name"], Color(0.65, 0.55, 0.95))
+		# Offer the next unowned relic (if any)
+		var pool := GameManager.unowned_relics()
+		_shop_relic_offer = pool[0] if not pool.is_empty() else ""
 		_populate_shop()
 
 # ---------------------------------------------------------------------------

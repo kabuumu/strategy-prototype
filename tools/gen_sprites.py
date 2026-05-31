@@ -121,7 +121,27 @@ def scout(d, p):
     rect(d, 13, 27, 16, 28, OUTLINE)         # trailing foot
 
 
-DRAW = {"soldier": soldier, "archer": archer, "scout": scout}
+def healer(d, p):
+    WHITE = (255, 255, 255, 255)
+    # Rounded hood/head
+    outline_box(d, 12, 5, 20, 12, p["armor"])
+    rect(d, 13, 9, 19, 12, SKIN)
+    # Robe body
+    outline_box(d, 11, 13, 21, 25, p["armor"])
+    rect(d, 15, 14, 16, 24, p["armor_d"])
+    # White medic cross on the chest
+    rect(d, 15, 16, 16, 22, WHITE)
+    rect(d, 13, 18, 18, 19, WHITE)
+    # Staff with a healing orb
+    rect(d, 24, 6, 25, 26, WOOD_D)
+    d.ellipse((22, 3, 28, 9), fill=p["accent"])
+    d.ellipse((23, 4, 27, 8), fill=WHITE)
+    # Legs
+    outline_box(d, 12, 25, 15, 30, p["armor_d"])
+    outline_box(d, 17, 25, 20, 30, p["armor_d"])
+
+
+DRAW = {"soldier": soldier, "archer": archer, "scout": scout, "healer": healer}
 
 
 def main():
@@ -139,7 +159,8 @@ def main():
 
     # Preview sheet: 3 cols (classes) x 2 rows (teams), scaled 8x
     scale = 8
-    sheet = Image.new("RGBA", (3 * S * scale, 2 * S * scale), (40, 44, 40, 255))
+    cols = len(DRAW)
+    sheet = Image.new("RGBA", (cols * S * scale, 2 * S * scale), (40, 44, 40, 255))
     for ci, cls in enumerate(DRAW):
         for ri, team in enumerate(PALETTES):
             big = sprites[(cls, team)].resize((S * scale, S * scale), Image.NEAREST)
