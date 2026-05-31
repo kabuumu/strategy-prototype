@@ -61,6 +61,27 @@ var facing: Vector3 = Vector3.RIGHT   # xz heading the regiment is turned toward
 var guarding: bool = false        # Shield Wall: hold ground, take much less damage
 var _volley_ready: bool = false   # Volley: next ranged attack hits far harder
 
+# Apply campaign unit upgrades (carried from the roster) to regiment stats.
+func apply_upgrades(upgrades: Array) -> void:
+	for up in upgrades:
+		match String(up):
+			"veteran":
+				max_hp = int(max_hp * 1.2)
+			"ironhide":
+				max_hp = int(max_hp * 1.15)
+			"sharpshooter":
+				damage_per_attack += 4
+			"lucky":
+				damage_per_attack += 2
+			"swift":
+				move_speed_world *= 1.2
+			"eagle_eye":
+				attack_range_world *= 1.15
+			"berserker":
+				attack_cooldown *= 0.8
+	hp = max_hp
+	_refresh_hp_bar()
+
 func set_guard(v: bool) -> void:
 	guarding = v
 
