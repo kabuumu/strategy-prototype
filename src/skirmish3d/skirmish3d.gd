@@ -89,6 +89,14 @@ var _ground: MeshInstance3D
 var _ground_body: StaticBody3D
 var _terrain_node: Node3D
 
+# Camera rig — focus point on the field + zoom; pan with WASD/arrows/edge,
+# zoom with the mouse wheel.
+const CAM_OFFSET: Vector3 = Vector3(0.0, 24.0, 34.0)
+const CAM_PAN_SPEED: float = 38.0
+const CAM_EDGE_MARGIN: float = 8.0
+var _cam_focus: Vector3 = Vector3.ZERO
+var _cam_zoom: float = 1.0   # 0.5 (close) .. 1.8 (far)
+
 var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
@@ -233,6 +241,52 @@ func _terrain_cell_world(cell: Vector2i) -> Vector3:
 	var z: float = TERRAIN_ORIGIN_Z + float(cell.y) * TERRAIN_Z_SPACING
 	return Vector3(x, 0.03, z)
 
+# Inverse of _terrain_cell_world: nearest terrain cell to a world position.
+func _terrain_cell_at_world(pos: Vector3) -> Vector2i:
+	var row: int = int(round((pos.z - TERRAIN_ORIGIN_Z) / TERRAIN_Z_SPACING))
+	row = clampi(row, 0, TERRAIN_ROWS - 1)
+	var off: float = TERRAIN_X_SPACING * 0.5 if (row & 1) == 1 else 0.0
+	var col: int = int(round((pos.x - TERRAIN_ORIGIN_X - off) / TERRAIN_X_SPACING))
+	col = clampi(col, 0, TERRAIN_COLS - 1)
+	return Vector2i(col, row)
+
+const LAVA_DPS: int = 6
+const FOREST_DEF_MULT: float = 0.7
+const FOREST_SPEED_MULT: float = 0.7
+const HILL_ATK_MULT: float = 1.25
+const MOUNTAIN_SPEED_MULT: float = 0.4
+
+# Each tick, stamp terrain effects (cover / high-ground / rough / lava) onto
+# every living unit based on the cell it's standing on.
+func _apply_terrain(delta: float) -> void:
+	for u: SkirmishUnit3D in _all_living_units():
+		var cell := _terrain_cell_at_world(u.global_position)
+		u.terrain_def_mult = 1.0
+		u.terrain_atk_mult = 1.0
+		u.terrain_speed_mult = 1.0
+		if cell in _forests:
+			u.terrain_def_mult = FOREST_DEF_MULT
+			u.terrain_speed_mult = FOREST_SPEED_MULT
+		if cell in _hills:
+			u.terrain_atk_mult = HILL_ATK_MULT
+		if cell in _mountains:
+			u.terrain_speed_mult = MOUNTAIN_SPEED_MULT
+		if cell in _lava:
+			u._lava_accum += delta
+			if u._lava_accum >= 1.0:
+				u._lava_accum -= 1.0
+				u.take_damage(LAVA_DPS)
+		else:
+			u._lava_accum = 0.0
+
+func _all_living_units() -> Array[SkirmishUnit3D]:
+	var out: Array[SkirmishUnit3D] = []
+	for u: SkirmishUnit3D in player_units:
+		if u.is_alive(): out.append(u)
+	for u: SkirmishUnit3D in enemy_units:
+		if u.is_alive(): out.append(u)
+	return out
+
 func _terrain_cell_color(cell: Vector2i) -> Color:
 	if cell in _mountains:
 		return Color(0.19, 0.17, 0.15)
@@ -368,7 +422,7 @@ func _build_ui() -> void:
 	_ui.add_child(_status_label)
 
 	var hint := Label.new()
-	hint.text = "L-click select / drag-box  ·  Shift = additive  ·  R-click move/attack  ·  SPACE pause  ·  R restart  ·  ESC menu"
+	hint.text = "L-click select / drag-box  ·  Shift add  ·  R-click move/attack  ·  WASD/edge pan  ·  wheel zoom  ·  SPACE pause  ·  R restart  ·  ESC menu     (hills boost · forests shield · lava burns · routed units flee)"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.56, 0.56, 0.66)
 	hint.position = Vector2(420.0, 22.0)
@@ -441,7 +495,30 @@ func _spawn_regiment(type: String, team: int, pos: Vector3) -> SkirmishUnit3D:
 	u.died.connect(_on_unit_died)
 	return u
 
+func _update_camera(delta: float) -> void:
+	if _camera == null:
+		return
+	# Keyboard / edge-scroll pan (scaled by zoom so it feels consistent)
+	var pan := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):    pan.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):  pan.y += 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):  pan.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): pan.x += 1.0
+	var mp := get_viewport().get_mouse_position()
+	var vs := get_viewport().get_visible_rect().size
+	if mp.x < CAM_EDGE_MARGIN: pan.x -= 1.0
+	elif mp.x > vs.x - CAM_EDGE_MARGIN: pan.x += 1.0
+	if mp.y < CAM_EDGE_MARGIN: pan.y -= 1.0
+	elif mp.y > vs.y - CAM_EDGE_MARGIN: pan.y += 1.0
+	if pan != Vector2.ZERO:
+		var step := CAM_PAN_SPEED * _cam_zoom * delta
+		_cam_focus.x = clamp(_cam_focus.x + pan.x * step, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH)
+		_cam_focus.z = clamp(_cam_focus.z + pan.y * step, -FIELD_HALF_DEPTH, FIELD_HALF_DEPTH)
+	_camera.position = _cam_focus + CAM_OFFSET * _cam_zoom
+	_camera.look_at(_cam_focus, Vector3.UP)
+
 func _process(delta: float) -> void:
+	_update_camera(delta)   # camera is always controllable, even while paused
 	if _ended:
 		_age_waypoints(delta)
 		return
@@ -452,6 +529,7 @@ func _process(delta: float) -> void:
 	var all_units: Array[SkirmishUnit3D] = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
+	_apply_terrain(delta)   # cover / high-ground / rough / lava onto each unit
 	_ai_tick(delta)
 	for u: SkirmishUnit3D in all_units:
 		if u.is_alive():
@@ -495,6 +573,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_end_left_press(event.position, event.shift_pressed)
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_handle_right_click(event.position)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_cam_zoom = clamp(_cam_zoom - 0.12, 0.5, 1.8)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			_cam_zoom = clamp(_cam_zoom + 0.12, 0.5, 1.8)
 
 func _set_paused(v: bool) -> void:
 	_paused = v
