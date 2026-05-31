@@ -97,6 +97,7 @@ var _ability_desc_lbl: Label
 var _ability_icon_lbl: Label
 var _ability_hint_lbl: Label
 var _help_overlay: Control = null
+var _settings_overlay: Control = null
 var _ability_bg:       ColorRect
 var _end_btn:          Button
 
@@ -1028,6 +1029,12 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 			_toggle_help()
 		return
+	# While the pause menu is open: Esc closes it; swallow board input (the menu's
+	# own buttons still receive mouse events through the GUI layer).
+	if _settings_overlay != null:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_settings_menu()
+		return
 	if phase in [Phase.AI_TURN, Phase.BATTLE_WON, Phase.BATTLE_LOST]:
 		return
 
@@ -1068,7 +1075,12 @@ func _input(event: InputEvent) -> void:
 func _handle_key(keycode: int) -> void:
 	match keycode:
 		KEY_ESCAPE:
-			_handle_right_click()
+			# Esc first cancels an in-progress selection; with nothing selected it
+			# opens the pause menu (Resume / Exit to Main Menu).
+			if selected_unit != null:
+				_handle_right_click()
+			else:
+				_toggle_settings_menu()
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			if phase == Phase.PLAYER_TURN and selected_unit == null:
 				_on_end_turn()
@@ -2267,6 +2279,20 @@ func _toggle_help() -> void:
 		return
 	_help_overlay = _build_help_overlay()
 	add_child(_help_overlay)
+
+func _toggle_settings_menu() -> void:
+	if _settings_overlay != null:
+		_settings_overlay.queue_free()
+		_settings_overlay = null
+		return
+	_settings_overlay = UITheme.pause_menu(_toggle_settings_menu, _on_exit_to_menu,
+		"Leaving abandons this battle. Continue resumes from the map.")
+	add_child(_settings_overlay)
+
+func _on_exit_to_menu() -> void:
+	# The run was saved on entering the map, so the title's Continue resumes there.
+	Engine.time_scale = 1.0
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _build_help_overlay() -> Control:
 	var root := Control.new()

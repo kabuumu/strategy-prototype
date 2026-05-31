@@ -210,6 +210,7 @@ var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
 var _command_label: Label
+var _settings_overlay: Control = null
 var _info_panel: Panel
 var _info_label: Label
 var _result_label: Label
@@ -698,7 +699,17 @@ func _on_restart_button() -> void:
 	get_tree().reload_current_scene()
 
 func _on_menu_button() -> void:
+	Engine.time_scale = 1.0
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
+func _toggle_settings_menu() -> void:
+	if _settings_overlay != null:
+		_settings_overlay.queue_free()
+		_settings_overlay = null
+		return
+	var note := "Leaving abandons this battle. Continue resumes from the map." if _campaign else ""
+	_settings_overlay = UITheme.pause_menu(_toggle_settings_menu, _on_menu_button, note)
+	_ui.add_child(_settings_overlay)
 
 func _spawn_armies() -> void:
 	if _campaign:
@@ -854,6 +865,11 @@ func _process(delta: float) -> void:
 	_refresh_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Pause menu open: Esc closes it, swallow everything else.
+	if _settings_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			_toggle_settings_menu()
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		# When a campaign battle has ended, any of these continue the run
 		if _ended and _campaign and event.keycode in [KEY_R, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_ESCAPE]:
@@ -878,9 +894,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if _ended:
 					get_tree().reload_current_scene()
 			KEY_ESCAPE:
-				if _campaign:
-					return   # no quitting mid campaign battle
-				get_tree().change_scene_to_file("res://src/title/title.tscn")
+				_toggle_settings_menu()
 
 	if event is InputEventMouseMotion:
 		if _drag_active:

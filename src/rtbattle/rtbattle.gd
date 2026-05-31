@@ -72,6 +72,7 @@ var selected_units: Array = []          # Array[RTUnit]
 var _hovered_unit: RTUnit = null
 
 var _paused: bool = true
+var _settings_overlay: Control = null
 var _battle_started: bool = false
 var _player_has_issued_order: bool = false
 var _ended: bool = false
@@ -251,7 +252,16 @@ func _on_restart_button() -> void:
 	get_tree().reload_current_scene()
 
 func _on_menu_button() -> void:
+	Engine.time_scale = 1.0
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
+func _toggle_settings_menu() -> void:
+	if _settings_overlay != null:
+		_settings_overlay.queue_free()
+		_settings_overlay = null
+		return
+	_settings_overlay = UITheme.pause_menu(_toggle_settings_menu, _on_menu_button)
+	add_child(_settings_overlay)
 
 # ---------------------------------------------------------------------------
 # Army setup — symmetrical mirror skirmish so the mode is self-contained.
@@ -418,6 +428,11 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Pause menu open: Esc closes it, swallow everything else.
+	if _settings_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			_toggle_settings_menu()
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_SPACE:
@@ -426,7 +441,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if _ended:
 					get_tree().reload_current_scene()
 			KEY_ESCAPE:
-				get_tree().change_scene_to_file("res://src/title/title.tscn")
+				_toggle_settings_menu()
 		return
 
 # Left-click down: start a drag candidate. We don't know yet whether the
