@@ -13,11 +13,11 @@ const GOLD_PER_ROUND: int = 10
 const MAX_WINS: int = 5
 const START_HEARTS: int = 3
 const AI_RETARGET_PERIOD: float = 0.45
-const XP_TO_LEVEL: int = 3
 const MAX_LEVEL: int = 3
 const FIGHT_INTRO_SECONDS: float = 0.75
+const FEEDBACK_LIFETIME: float = 0.55
 
-enum Phase { SHOP, FIGHT, RESULT, GAME_OVER }
+enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }
 
 const UNIT_TYPES: Dictionary = {
 	"soldier": {
@@ -66,6 +66,13 @@ const UNIT_TYPES: Dictionary = {
 	},
 }
 
+const ITEM_TYPES: Dictionary = {
+	"banner": {"name": "Banner", "short": "BNR", "damage": 1, "hp": 14, "role": "team standard"},
+	"armor": {"name": "Armor", "short": "ARM", "damage": 0, "hp": 36, "role": "frontline bulk"},
+	"bow": {"name": "Bow", "short": "BOW", "damage": 4, "hp": 0, "role": "extra damage"},
+	"drum": {"name": "War Drum", "short": "DRM", "damage": 2, "hp": 12, "role": "tempo boost"},
+}
+
 var phase: int = Phase.SHOP
 var round_no: int = 1
 var wins: int = 0
@@ -87,16 +94,27 @@ var _result_text: String = ""
 var _shop_message: String = "Click a shop unit to buy it into your hotbar."
 var _fight_label: Label
 var _freeze_mode: bool = false
+var _enemy_preview: Array = []
+var _reward_choices: Array = []
+var _reroll_discount_next: bool = false
+var _speed_scale: float = 1.0
+var _start_abilities_applied: bool = false
+var _unit_state: Dictionary = {}
+var _feedback: Array = []
+var _last_recap: Dictionary = {}
 
 func _ready() -> void:
 	_rng.randomize()
 	for _i in range(TEAM_SIZE):
 		team.append({})
 	_roll_shop(true)
+	_refresh_enemy_preview()
 	_rebuild_ui()
 
 func _process(delta: float) -> void:
+	_age_feedback(delta)
 	if phase != Phase.FIGHT:
+		queue_redraw()
 		return
 	if _fight_intro_timer > 0.0:
 		_fight_intro_timer = max(0.0, _fight_intro_timer - delta)
@@ -106,16 +124,23 @@ func _process(delta: float) -> void:
 		return
 	if _fight_label != null and is_instance_valid(_fight_label):
 		_fight_label.text = "AUTO FIGHT"
+	if not _start_abilities_applied:
+		_apply_start_abilities()
+		_start_abilities_applied = true
 	var all_units: Array = []
 	all_units.append_array(player_units)
 	all_units.append_array(enemy_units)
-	_auto_target(delta)
-	for u: RTUnit in all_units:
-		if u.is_alive():
-			u.tick(delta, all_units)
-			u.position.x = clamp(u.position.x, FIELD_RECT.position.x + u.radius, FIELD_RECT.end.x - u.radius)
-			u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius, FIELD_RECT.end.y - u.radius)
-	_check_fight_end()
+	var steps: int = max(1, int(round(_speed_scale)))
+	var step_delta := delta
+	for _step in range(steps):
+		_auto_target(step_delta)
+		for u: RTUnit in all_units:
+			if u.is_alive():
+				_tick_unit(u, step_delta, all_units)
+				u.position.x = clamp(u.position.x, FIELD_RECT.position.x + u.radius, FIELD_RECT.end.x - u.radius)
+				u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius, FIELD_RECT.end.y - u.radius)
+		if _check_fight_end():
+			break
 	queue_redraw()
 
 func _draw() -> void:
@@ -137,6 +162,15 @@ func _draw() -> void:
 		if selected_shop == i:
 			shop_color = Color(0.26, 0.22, 0.34)
 		draw_rect(shop_rect, shop_color, false, 2.0)
+	for fx: Dictionary in _feedback:
+		var t: float = clamp(1.0 - float(fx.get("age", 0.0)) / float(fx.get("life", FEEDBACK_LIFETIME)), 0.0, 1.0)
+		var color: Color = fx.get("color", UITheme.GOLD)
+		color.a *= t
+		var from: Vector2 = fx.get("from", Vector2.ZERO)
+		var to: Vector2 = fx.get("to", from)
+		if from != to:
+			draw_line(from, to, color, 3.0, true)
+		draw_circle(to, 8.0 + (1.0 - t) * 8.0, Color(color.r, color.g, color.b, color.a * 0.25))
 
 func _rebuild_ui() -> void:
 	for n: Node in _ui_nodes:
@@ -152,6 +186,9 @@ func _rebuild_ui() -> void:
 		_add_label(_shop_message, 14, UITheme.TEXT_MUTED, Vector2(300.0, 46.0), Vector2(650.0, 22.0))
 		_add_label("HOTBAR", 15, UITheme.TEXT_MUTED, Vector2(170.0, 505.0), Vector2(260.0, 22.0))
 		_add_label("SHOP", 15, UITheme.TEXT_MUTED, Vector2(705.0, 505.0), Vector2(260.0, 22.0))
+		_add_label("NEXT ENEMY", 13, UITheme.TEXT_MUTED, Vector2(1040.0, 92.0), Vector2(160.0, 18.0))
+		_add_preview_cards()
+		_add_synergy_summary()
 		_add_label("Slot 1 deploys at the front. Select a hotbar unit, then move or swap it.",
 				13, UITheme.TEXT_MUTED, Vector2(170.0, 626.0), Vector2(450.0, 18.0))
 		for i in range(TEAM_SIZE):
@@ -162,20 +199,28 @@ func _rebuild_ui() -> void:
 		_add_button("Move >", Vector2(448.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.28, 0.40), _on_move_right)
 		_add_button("Sell +1", Vector2(554.0, 640.0), Vector2(92.0, 42.0), Color(0.34, 0.25, 0.22), _on_sell)
 		_add_button("Freeze", Vector2(660.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.32, 0.42), _on_freeze)
-		_add_button("Roll -1", Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
+		_add_button("Roll -%d" % _current_roll_cost(), Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
 		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
 		if _fight_intro_timer > 0.0:
 			fight_text = "AUTO FIGHT starts in %.1fs" % _fight_intro_timer
 		_fight_label = _add_label(fight_text, 26, UITheme.GOLD, Vector2(500.0, 505.0), Vector2(300.0, 36.0))
-		_add_label("Your team fights automatically. Order and levels decide the round.",
-				15, UITheme.TEXT_MUTED, Vector2(405.0, 545.0), Vector2(520.0, 24.0))
+		_add_label("Speed %.0fx" % _speed_scale, 15, UITheme.TEXT_MUTED, Vector2(514.0, 542.0), Vector2(120.0, 24.0))
+		_add_button("1x", Vector2(446.0, 590.0), Vector2(70.0, 38.0), Color(0.22, 0.28, 0.40), _on_speed_1)
+		_add_button("2x", Vector2(526.0, 590.0), Vector2(70.0, 38.0), Color(0.22, 0.28, 0.40), _on_speed_2)
+		_add_button("Skip", Vector2(606.0, 590.0), Vector2(92.0, 38.0), Color(0.34, 0.25, 0.22), _on_skip_fight)
 	elif phase == Phase.RESULT:
 		_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
-		_add_label("Your surviving roster returns to the shop. Spend the next round's gold.",
-				15, UITheme.TEXT_MUTED, Vector2(380.0, 585.0), Vector2(560.0, 24.0))
+		_add_recap_panel()
 		_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
+	elif phase == Phase.REWARD:
+		_add_label("PICK A REWARD", 34, UITheme.GOLD, Vector2(420.0, 505.0), Vector2(440.0, 46.0))
+		_add_recap_panel(Vector2(330.0, 552.0))
+		for i in range(_reward_choices.size()):
+			var reward: Dictionary = _reward_choices[i]
+			_add_button(_reward_text(reward), Vector2(356.0 + float(i) * 196.0, 620.0),
+					Vector2(178.0, 52.0), Color(0.25, 0.34, 0.30), Callable(self, "_on_reward").bind(i), 13)
 	elif phase == Phase.GAME_OVER:
 		_add_label(_result_text, 42, UITheme.GOLD, Vector2(300.0, 530.0), Vector2(680.0, 56.0))
 		_add_button("Restart", Vector2(500.0, 610.0), Vector2(130.0, 46.0), UITheme.GREEN, _on_restart)
@@ -192,6 +237,36 @@ func _add_button(text: String, pos: Vector2, size: Vector2, color: Color, cb: Ca
 	add_child(btn)
 	_ui_nodes.append(btn)
 	return btn
+
+func _add_preview_cards() -> void:
+	for i in range(min(3, _enemy_preview.size())):
+		var bg := ColorRect.new()
+		bg.position = Vector2(1038.0 + float(i) * 66.0, 116.0)
+		bg.size = Vector2(58.0, 64.0)
+		bg.color = Color(0.18, 0.10, 0.12, 0.92)
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(bg)
+		_ui_nodes.append(bg)
+		var card: Dictionary = _enemy_preview[i]
+		_add_unit_portrait(bg, card, Vector2(6.0, 6.0), Vector2(46.0, 38.0), 1)
+		var label := _add_card_label(bg, "L%d" % int(card.get("level", 1)), Vector2(0.0, 44.0), Vector2(58.0, 16.0),
+				10, UITheme.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
+		_ui_nodes.append(label)
+
+func _add_synergy_summary() -> void:
+	var parts := _active_synergy_names()
+	var text := "Synergies: none"
+	if not parts.is_empty():
+		text = "Synergies: " + "  ".join(parts)
+	_add_label(text, 12, UITheme.TEXT_MUTED, Vector2(705.0, 494.0), Vector2(500.0, 18.0))
+
+func _add_recap_panel(pos: Vector2 = Vector2(382.0, 582.0)) -> void:
+	var mvp := String(_last_recap.get("mvp", "MVP: none"))
+	var summary := String(_last_recap.get("summary", "No recap yet."))
+	var survivors := String(_last_recap.get("survivors", ""))
+	_add_label(summary, 15, UITheme.TEXT, pos, Vector2(520.0, 22.0))
+	_add_label(mvp, 14, UITheme.GOLD, pos + Vector2(0.0, 22.0), Vector2(520.0, 22.0))
+	_add_label(survivors, 13, UITheme.TEXT_MUTED, pos + Vector2(0.0, 43.0), Vector2(520.0, 22.0))
 
 func _slot_pos(index: int) -> Vector2:
 	return Vector2(160.0 + float(index) * 108.0, 528.0)
@@ -220,6 +295,10 @@ func _decorate_unit_card(card_button: Button, card: Dictionary, is_shop_card: bo
 			12, UITheme.TEXT, HORIZONTAL_ALIGNMENT_CENTER)
 	_add_badge(card_button, "L%d" % int(card.get("level", 1)), Vector2(6.0, 7.0),
 			Vector2(30.0, 18.0), UITheme.GOLD.darkened(0.25), UITheme.GOLD)
+	var item_id := String(card.get("item", ""))
+	if ITEM_TYPES.has(item_id):
+		_add_badge(card_button, String(ITEM_TYPES[item_id].get("short", "ITM")), Vector2(size.x - 38.0, 7.0),
+				Vector2(30.0, 18.0), Color(0.12, 0.20, 0.34), Color(0.64, 0.82, 1.0))
 	_add_badge(card_button, "ATK %d" % int(stats["damage"]), Vector2(8.0, size.y - 25.0),
 			Vector2(size.x * 0.45, 18.0), Color(0.36, 0.16, 0.16), Color(1.0, 0.66, 0.48))
 	_add_badge(card_button, "HP %d" % int(stats["hp"]), Vector2(size.x * 0.52, size.y - 25.0),
@@ -228,12 +307,15 @@ func _decorate_unit_card(card_button: Button, card: Dictionary, is_shop_card: bo
 	if is_shop_card:
 		_add_badge(card_button, "%dG" % BUY_COST, Vector2(size.x - 38.0, 7.0),
 				Vector2(30.0, 18.0), Color(0.30, 0.22, 0.08), UITheme.GOLD)
+		if _matching_slot_for_card(card) >= 0:
+			_add_badge(card_button, "MERGE", Vector2(8.0, 30.0),
+					Vector2(50.0, 18.0), Color(0.30, 0.20, 0.06), UITheme.GOLD)
 		if bool(card.get("frozen", false)):
-			_add_badge(card_button, "FROZEN", Vector2(8.0, 30.0),
+			_add_badge(card_button, "FROZEN", Vector2(8.0, 50.0),
 					Vector2(52.0, 18.0), Color(0.08, 0.22, 0.32), Color(0.62, 0.90, 1.0))
 
-func _add_unit_portrait(parent: Control, card: Dictionary, pos: Vector2, size: Vector2) -> void:
-	var tex := _unit_texture(card, 0)
+func _add_unit_portrait(parent: Control, card: Dictionary, pos: Vector2, size: Vector2, team_id: int = 0) -> void:
+	var tex := _unit_texture(card, team_id)
 	if tex == null:
 		return
 	var portrait_bg := ColorRect.new()
@@ -399,11 +481,13 @@ func _move_selected_slot(direction: int) -> void:
 	_rebuild_ui()
 
 func _on_roll() -> void:
-	if gold < ROLL_COST:
+	var cost := _current_roll_cost()
+	if gold < cost:
 		_shop_message = "Not enough gold to roll."
 		_rebuild_ui()
 		return
-	gold -= ROLL_COST
+	gold -= cost
+	_reroll_discount_next = false
 	_roll_shop(false)
 	selected_shop = -1
 	_freeze_mode = false
@@ -421,14 +505,68 @@ func _on_fight() -> void:
 	_spawn_fight()
 	_rebuild_ui()
 
+func _on_speed_1() -> void:
+	_speed_scale = 1.0
+	_rebuild_ui()
+
+func _on_speed_2() -> void:
+	_speed_scale = 2.0
+	_rebuild_ui()
+
+func _on_skip_fight() -> void:
+	if phase != Phase.FIGHT:
+		return
+	_fight_intro_timer = 0.0
+	for _i in range(600):
+		if phase != Phase.FIGHT:
+			return
+		_process(1.0 / 30.0)
+
 func _on_next_shop() -> void:
+	_open_next_shop("New shop. Build around your leveled units.")
+
+func _open_next_shop(message: String) -> void:
 	_clear_units()
 	round_no += 1
 	gold = GOLD_PER_ROUND
 	_roll_shop(false)
+	_refresh_enemy_preview()
 	phase = Phase.SHOP
-	_shop_message = "New shop. Build around your leveled units."
+	_shop_message = message
 	_rebuild_ui()
+
+func _on_reward(index: int) -> void:
+	if index < 0 or index >= _reward_choices.size():
+		return
+	var reward: Dictionary = _reward_choices[index]
+	match String(reward.get("type", "")):
+		"unit":
+			var slot := _first_empty_slot()
+			if slot >= 0:
+				team[slot] = _make_shop_card(String(reward.get("unit", "soldier")))
+				_shop_message = "Reward unit added to hotbar."
+			else:
+				gold += BUY_COST
+				_shop_message = "Hotbar full. Reward converted to gold."
+		"item":
+			var slot := _first_occupied_slot()
+			if selected_slot >= 0 and selected_slot < TEAM_SIZE and not _is_empty_card(team[selected_slot]):
+				slot = selected_slot
+			if slot >= 0:
+				team[slot]["item"] = String(reward.get("item", "banner"))
+				_shop_message = "%s equipped." % String(ITEM_TYPES[String(reward.get("item", "banner"))].get("name", "Item"))
+			else:
+				gold += 2
+				_shop_message = "No unit to equip. Item converted to gold."
+		"gold":
+			gold += int(reward.get("amount", 3))
+			_shop_message = "+%d gold." % int(reward.get("amount", 3))
+		"discount":
+			_reroll_discount_next = true
+			_shop_message = "Next roll is free."
+	var message := _shop_message
+	_reward_choices.clear()
+	_open_next_shop(message)
 
 func _on_restart() -> void:
 	get_tree().reload_current_scene()
@@ -444,6 +582,57 @@ func _roll_shop(_initial: bool) -> void:
 			shop.append(previous[i])
 		else:
 			shop.append(_make_shop_card(_random_unit_id()))
+
+func _current_roll_cost() -> int:
+	return 0 if _reroll_discount_next else ROLL_COST
+
+func _refresh_enemy_preview() -> void:
+	_enemy_preview = _enemy_roster(max(1, _filled_slots()))
+
+func _generate_reward_choices() -> void:
+	_reward_choices = [
+		{"type": "unit", "unit": _random_unit_id()},
+		{"type": "item", "item": _random_item_id()},
+		{"type": "gold", "amount": 3 + int(round_no / 2)},
+	]
+	if _rng.randi_range(0, 1) == 0:
+		_reward_choices[2] = {"type": "discount"}
+
+func _reward_text(reward: Dictionary) -> String:
+	match String(reward.get("type", "")):
+		"unit":
+			return "Free\n%s" % _unit_name(String(reward.get("unit", "soldier")))
+		"item":
+			var item_id := String(reward.get("item", "banner"))
+			return "Equip\n%s" % String(ITEM_TYPES[item_id].get("name", "Item"))
+		"gold":
+			return "+%d\nGold" % int(reward.get("amount", 3))
+		"discount":
+			return "Free\nNext Roll"
+	return "Reward"
+
+func _random_item_id() -> String:
+	var keys := ITEM_TYPES.keys()
+	return String(keys[_rng.randi_range(0, keys.size() - 1)])
+
+func _filled_slots() -> int:
+	var count := 0
+	for card: Dictionary in team:
+		if not _is_empty_card(card):
+			count += 1
+	return count
+
+func _first_empty_slot() -> int:
+	for i in range(TEAM_SIZE):
+		if _is_empty_card(team[i]):
+			return i
+	return -1
+
+func _first_occupied_slot() -> int:
+	for i in range(TEAM_SIZE):
+		if not _is_empty_card(team[i]):
+			return i
+	return -1
 
 func _try_buy_shop_to_slot(shop_index: int, slot_index: int) -> bool:
 	if shop_index < 0 or shop_index >= shop.size() or slot_index < 0 or slot_index >= TEAM_SIZE:
@@ -463,13 +652,13 @@ func _try_buy_shop_to_slot(shop_index: int, slot_index: int) -> bool:
 		return true
 	if _card_id(slot_card) == _card_id(shop_card) and int(slot_card.get("level", 1)) < MAX_LEVEL:
 		gold -= BUY_COST
-		var leveled := _add_xp_to_slot(slot_index, 1)
+		var new_level := _level_up_slot(slot_index)
 		_after_shop_card_bought(shop_index)
 		selected_shop = -1
 		selected_slot = slot_index
-		_shop_message = "%s merged%s." % [
+		_shop_message = "%s leveled up to L%d." % [
 			_unit_name(_card_id(slot_card)),
-			" and leveled up" if leveled else ""
+			new_level
 		]
 		return true
 	_shop_message = "That slot is occupied. Pick an empty slot, or merge into the same unit."
@@ -494,6 +683,36 @@ func _find_buy_slot(shop_index: int) -> int:
 			return i
 	return -1
 
+func _matching_slot_for_card(shop_card: Dictionary) -> int:
+	var shop_id := _card_id(shop_card)
+	for i in range(TEAM_SIZE):
+		var card: Dictionary = team[i]
+		if not _is_empty_card(card) and _card_id(card) == shop_id and int(card.get("level", 1)) < MAX_LEVEL:
+			return i
+	return -1
+
+func _unit_counts(cards: Array) -> Dictionary:
+	var counts := {}
+	for card: Dictionary in cards:
+		if _is_empty_card(card):
+			continue
+		var unit_id := _card_id(card)
+		counts[unit_id] = int(counts.get(unit_id, 0)) + 1
+	return counts
+
+func _active_synergy_names() -> Array:
+	var counts := _unit_counts(team)
+	var out: Array = []
+	if int(counts.get("soldier", 0)) >= 2:
+		out.append("2 Infantry: team armor")
+	if int(counts.get("archer", 0)) >= 2:
+		out.append("2 Archers: ranged damage")
+	if int(counts.get("scout", 0)) >= 2:
+		out.append("2 Cavalry: charge damage")
+	if int(counts.get("healer", 0)) >= 2:
+		out.append("2 Spearmen: team grit")
+	return out
+
 func _has_team() -> bool:
 	for card: Dictionary in team:
 		if not _is_empty_card(card):
@@ -511,11 +730,14 @@ func _make_shop_card(unit_id: String) -> Dictionary:
 	return {"id": unit_id, "level": 1, "xp": 0, "frozen": false}
 
 func _copy_card(card: Dictionary) -> Dictionary:
-	return {
+	var out := {
 		"id": _card_id(card),
 		"level": int(card.get("level", 1)),
 		"xp": int(card.get("xp", 0)),
 	}
+	if String(card.get("item", "")) != "":
+		out["item"] = String(card.get("item", ""))
+	return out
 
 func _is_empty_card(card: Dictionary) -> bool:
 	return card.is_empty() or not card.has("id") or String(card.get("id", "")) == ""
@@ -528,17 +750,15 @@ func _card_button_text(card: Dictionary, compact: bool) -> String:
 		return "Empty"
 	var unit_id := _card_id(card)
 	var stats := _card_stats(card)
-	var base := "%s\nLv %d  XP %d/%d" % [
+	var base := "%s\nLv %d" % [
 		_unit_name(unit_id),
-		int(card.get("level", 1)),
-		int(card.get("xp", 0)),
-		XP_TO_LEVEL
+		int(card.get("level", 1))
 	]
 	if compact:
 		return "%s\n%d dmg / %d hp" % [base, stats["damage"], stats["hp"]]
 	return "%s\n%d dmg\n%d hp" % [base, stats["damage"], stats["hp"]]
 
-func _card_stats(card: Dictionary) -> Dictionary:
+func _card_stats(card: Dictionary, synergy_counts: Dictionary = {}) -> Dictionary:
 	var unit_id := _card_id(card)
 	var stats: Dictionary = UNIT_TYPES[unit_id]
 	var level := int(card.get("level", 1))
@@ -546,63 +766,88 @@ func _card_stats(card: Dictionary) -> Dictionary:
 	var hp_per_soldier := int(stats.get("hp_per_soldier", 1))
 	var base_hp := soldier_count * hp_per_soldier
 	var base_damage := int(stats.get("damage_per_attack", 1))
+	var hp := base_hp + (level - 1) * 36
+	var damage := base_damage + (level - 1) * 4
+	var item_id := String(card.get("item", ""))
+	if ITEM_TYPES.has(item_id):
+		var item: Dictionary = ITEM_TYPES[item_id]
+		hp += int(item.get("hp", 0))
+		damage += int(item.get("damage", 0))
+	if synergy_counts.get("soldier", 0) >= 2:
+		hp += 18
+	if synergy_counts.get("archer", 0) >= 2 and unit_id == "archer":
+		damage += 3
+	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
+		damage += 2
+	if synergy_counts.get("healer", 0) >= 2:
+		hp += 10
 	return {
-		"hp": base_hp + (level - 1) * 36,
-		"damage": base_damage + (level - 1) * 4,
+		"hp": hp,
+		"damage": damage,
 	}
 
 func _after_shop_card_bought(index: int) -> void:
 	shop[index] = _make_shop_card(_random_unit_id())
 
-func _add_xp_to_slot(index: int, amount: int) -> bool:
+func _level_up_slot(index: int) -> int:
 	var card: Dictionary = team[index]
 	if _is_empty_card(card):
-		return false
+		return 1
 	var level := int(card.get("level", 1))
-	if level >= MAX_LEVEL:
-		return false
-	var xp := int(card.get("xp", 0)) + amount
-	var leveled := false
-	while xp >= XP_TO_LEVEL and level < MAX_LEVEL:
-		xp -= XP_TO_LEVEL
-		level += 1
-		leveled = true
-	if level >= MAX_LEVEL:
-		xp = 0
+	level = min(MAX_LEVEL, level + 1)
 	card["level"] = level
-	card["xp"] = xp
+	card["xp"] = 0
 	team[index] = card
-	return leveled
+	return level
 
 func _spawn_fight() -> void:
 	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
 	var player_roster: Array = []
 	for card: Dictionary in team:
 		if not _is_empty_card(card):
 			player_roster.append(_copy_card(card))
-	var enemy_roster := _enemy_roster(player_roster.size())
+	var player_counts := _unit_counts(player_roster)
+	var enemy_roster := _enemy_preview.duplicate(true)
+	if enemy_roster.is_empty():
+		enemy_roster = _enemy_roster(player_roster.size())
+	var enemy_counts := _unit_counts(enemy_roster)
 	var player_positions := _formation_positions(player_roster.size(), 0)
 	for i in range(player_roster.size()):
-		player_units.append(_spawn_unit(player_roster[i], 0, player_positions[i], 1.0))
+		player_units.append(_spawn_unit(player_roster[i], 0, player_positions[i], 1.0, player_counts))
 	var enemy_positions := _formation_positions(enemy_roster.size(), 1)
 	for i in range(enemy_roster.size()):
-		enemy_units.append(_spawn_unit(enemy_roster[i], 1, enemy_positions[i], 1.0 + float(round_no - 1) * 0.06))
+		enemy_units.append(_spawn_unit(enemy_roster[i], 1, enemy_positions[i], 1.0 + float(round_no - 1) * 0.06, enemy_counts))
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 1.0
 
-func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float) -> RTUnit:
+func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
 	var u: RTUnit = RTUnit.new()
 	add_child(u)
 	var unit_id := _card_id(card)
 	var stats: Dictionary = UNIT_TYPES[unit_id].duplicate(true)
-	var card_stats := _card_stats(card)
+	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
 	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / float(stats.get("soldier_count", 1)))))
+	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
+		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 18.0
+	if String(card.get("item", "")) == "drum":
+		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	u.setup(unit_id, team_id, pos, stats)
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
 	u.hp = u.max_hp
 	u.unit_name = "%s Lv %d" % [_unit_name(unit_id), int(card.get("level", 1))]
 	u.died.connect(_on_unit_died)
+	_unit_state[u.get_instance_id()] = {
+		"card": _copy_card(card),
+		"team": team_id,
+		"damage": 0,
+		"shield": unit_id == "soldier",
+	}
 	return u
 
 func _enemy_roster(size_hint: int) -> Array:
@@ -654,6 +899,8 @@ func _assign_targets(attackers: Array, defenders: Array) -> void:
 			u.order_attack(nearest)
 
 func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
+	if _unit_id_for(unit) == "archer":
+		return _backline_enemy(unit, defenders)
 	var best: RTUnit = null
 	var best_d: float = INF
 	for target: RTUnit in defenders:
@@ -665,11 +912,128 @@ func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 			best_d = d
 	return best
 
-func _check_fight_end() -> void:
+func _backline_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
+	var state: Dictionary = _unit_state.get(unit.get_instance_id(), {})
+	var team_id := int(state.get("team", unit.team))
+	var best: RTUnit = null
+	var best_x := -INF if team_id == 0 else INF
+	for target: RTUnit in defenders:
+		if not target.is_alive():
+			continue
+		if team_id == 0 and target.position.x > best_x:
+			best = target
+			best_x = target.position.x
+		elif team_id == 1 and target.position.x < best_x:
+			best = target
+			best_x = target.position.x
+	return best
+
+func _unit_id_for(unit: RTUnit) -> String:
+	var state: Dictionary = _unit_state.get(unit.get_instance_id(), {})
+	if state.has("card"):
+		return _card_id(state["card"])
+	return unit.unit_type
+
+func _tick_unit(unit: RTUnit, delta: float, all_units: Array) -> void:
+	var target_before: RTUnit = unit.attack_target
+	var hp_before: int = 0
+	if target_before != null and target_before.is_alive():
+		hp_before = target_before.hp
+	var fired: Dictionary = unit.tick(delta, all_units)
+	if not bool(fired.get("fired", false)):
+		return
+	var target: RTUnit = fired.get("target", target_before) as RTUnit
+	if target == null or not is_instance_valid(target):
+		return
+	var damage: int = max(0, hp_before - target.hp)
+	damage = _apply_infantry_shield(target, damage)
+	if _unit_id_for(unit) == "healer" and _unit_id_for(target) == "scout" and target.is_alive():
+		var bonus := 6 + int(_unit_level_for(unit)) * 3
+		var bonus_dealt := _deal_damage(unit, target, bonus, Color(0.72, 1.0, 0.56), "Spear")
+		damage += bonus_dealt
+	else:
+		_add_feedback(unit.position, target.position, Color(1.0, 0.72, 0.36), "Hit")
+	Sfx.play("hit", -14.0)
+	_record_damage(unit, damage)
+
+func _apply_infantry_shield(target: RTUnit, damage: int) -> int:
+	var state: Dictionary = _unit_state.get(target.get_instance_id(), {})
+	if damage <= 0 or not bool(state.get("shield", false)):
+		return damage
+	state["shield"] = false
+	_unit_state[target.get_instance_id()] = state
+	target.hp = min(target.max_hp, target.hp + damage)
+	if target.has_method("_refresh_hp_bar"):
+		target.call("_refresh_hp_bar")
+	_add_feedback(target.position, target.position, Color(0.68, 0.86, 1.0), "Shield")
+	return 0
+
+func _apply_start_abilities() -> void:
+	for u: RTUnit in player_units + enemy_units:
+		if not u.is_alive() or _unit_id_for(u) != "scout":
+			continue
+		var defenders := enemy_units if u.team == 0 else player_units
+		var target := _nearest_enemy(u, defenders)
+		if target == null:
+			continue
+		u.order_attack(target)
+		var charge_damage := 8 + _unit_level_for(u) * 5
+		var dealt := _deal_damage(u, target, charge_damage, Color(0.95, 0.95, 0.42), "Charge")
+		_record_damage(u, dealt)
+		Sfx.play("ability", -8.0)
+
+func _deal_damage(source: RTUnit, target: RTUnit, amount: int, color: Color, text: String) -> int:
+	if target == null or not is_instance_valid(target) or amount <= 0:
+		return 0
+	var before := target.hp
+	if _consume_infantry_shield(target):
+		_add_feedback(target.position, target.position, Color(0.68, 0.86, 1.0), "Shield")
+		return 0
+	target.take_damage(amount)
+	var dealt: int = max(0, before - target.hp)
+	if source != null and is_instance_valid(source):
+		_add_feedback(source.position, target.position, color, text)
+	return dealt
+
+func _consume_infantry_shield(target: RTUnit) -> bool:
+	var state: Dictionary = _unit_state.get(target.get_instance_id(), {})
+	if not bool(state.get("shield", false)):
+		return false
+	state["shield"] = false
+	_unit_state[target.get_instance_id()] = state
+	return true
+
+func _record_damage(unit: RTUnit, amount: int) -> void:
+	if amount <= 0:
+		return
+	var key := unit.get_instance_id()
+	var state: Dictionary = _unit_state.get(key, {})
+	state["damage"] = int(state.get("damage", 0)) + amount
+	_unit_state[key] = state
+
+func _unit_level_for(unit: RTUnit) -> int:
+	var state: Dictionary = _unit_state.get(unit.get_instance_id(), {})
+	if state.has("card"):
+		return int(state["card"].get("level", 1))
+	return 1
+
+func _add_feedback(from: Vector2, to: Vector2, color: Color, text: String = "") -> void:
+	_feedback.append({"from": from, "to": to, "color": color, "age": 0.0, "life": FEEDBACK_LIFETIME, "text": text})
+
+func _age_feedback(delta: float) -> void:
+	var next: Array = []
+	for fx: Dictionary in _feedback:
+		fx["age"] = float(fx.get("age", 0.0)) + delta
+		if float(fx["age"]) < float(fx.get("life", FEEDBACK_LIFETIME)):
+			next.append(fx)
+	_feedback = next
+
+func _check_fight_end() -> bool:
 	var p_alive := _any_alive(player_units)
 	var e_alive := _any_alive(enemy_units)
 	if p_alive and e_alive:
-		return
+		return false
+	_build_recap(p_alive, e_alive)
 	if p_alive and not e_alive:
 		wins += 1
 		_result_text = "WIN"
@@ -684,9 +1048,40 @@ func _check_fight_end() -> void:
 	elif hearts <= 0:
 		phase = Phase.GAME_OVER
 		_result_text = "RUN LOST"
+	elif p_alive and not e_alive:
+		_generate_reward_choices()
+		phase = Phase.REWARD
 	else:
 		phase = Phase.RESULT
+	Sfx.play("win" if p_alive and not e_alive else "lose", -7.0)
 	_rebuild_ui()
+	return true
+
+func _build_recap(p_alive: bool, e_alive: bool) -> void:
+	var best_name := "MVP: none"
+	var best_damage := -1
+	var total_player_damage := 0
+	for unit: RTUnit in player_units + enemy_units:
+		var state: Dictionary = _unit_state.get(unit.get_instance_id(), {})
+		var damage := int(state.get("damage", 0))
+		if int(state.get("team", 0)) == 0:
+			total_player_damage += damage
+		if damage > best_damage:
+			best_damage = damage
+			best_name = "MVP: %s (%d damage)" % [unit.unit_name, damage]
+	var survivors := "Survivors: %d friendly / %d enemy" % [_alive_count(player_units), _alive_count(enemy_units)]
+	_last_recap = {
+		"summary": "Team damage: %d" % total_player_damage,
+		"mvp": best_name,
+		"survivors": survivors,
+	}
+
+func _alive_count(units: Array) -> int:
+	var count := 0
+	for u: RTUnit in units:
+		if is_instance_valid(u) and u.is_alive():
+			count += 1
+	return count
 
 func _any_alive(units: Array) -> bool:
 	for u: RTUnit in units:
@@ -695,6 +1090,9 @@ func _any_alive(units: Array) -> bool:
 	return false
 
 func _on_unit_died(u: RTUnit) -> void:
+	if is_instance_valid(u):
+		_add_feedback(u.position, u.position, Color(0.95, 0.18, 0.14), "Down")
+		Sfx.play("death", -12.0)
 	player_units.erase(u)
 	enemy_units.erase(u)
 	var t := get_tree().create_timer(1.0)
