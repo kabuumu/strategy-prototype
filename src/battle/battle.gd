@@ -149,11 +149,12 @@ func _ready() -> void:
 # Big "FINAL BATTLE" banner that fades after ~1.8s. Pure visual; doesn't
 # block input — but the player can read it while planning their first move.
 func _show_boss_intro() -> void:
+	var boss_name: String = GameManager.UNIT_TYPES.get(GameManager.boss_id, {}).get("name", "Boss")
 	var banner := Label.new()
-	banner.text = "⚔  FINAL BATTLE  ⚔"
+	banner.text = "⚔  %s  ⚔" % boss_name.to_upper()
 	banner.add_theme_font_size_override("font_size", 48)
 	banner.modulate = Color(1.0, 0.30, 0.25, 0.0)
-	banner.position = Vector2(340.0, 280.0)
+	banner.position = Vector2(300.0, 280.0)
 	banner.z_index  = 200
 	add_child(banner)
 	var tw := create_tween()
@@ -1257,6 +1258,11 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 			and _chebyshev(attacker.grid_pos, defender.grid_pos) <= 1 and defender.is_alive():
 		defender.apply_poison(2)
 		defender.show_status_popup("POISONED", Color(0.45, 0.85, 0.30))
+	# Enemy units with an attack_burn trait (e.g. Pyromancer boss) set the target alight
+	var atk_data: Dictionary = GameManager.UNIT_TYPES.get(attacker.unit_type, {})
+	if int(atk_data.get("attack_burn", 0)) > 0 and defender.is_alive():
+		defender.apply_burn(int(atk_data["attack_burn"]))
+		defender.show_status_popup("BURNING", Color(1.0, 0.5, 0.15))
 	# Enemy roster/positions may have changed — refresh the threat overlay.
 	_recompute_threat()
 
@@ -1785,8 +1791,10 @@ func _score_cell(ai_unit: Unit, cell: Vector2i, is_ranged: bool) -> float:
 		score += 15.0
 
 	var personality: String = ai_unit.unit_type
-	# Boss never kites and never camps objectives — it hunts the party.
-	if personality == "warlord":
+	# Melee bosses (Warlord, Juggernaut) never kite or camp objectives — they
+	# hunt the party. Ranged bosses (Pyromancer) fall through to the kite logic.
+	var is_boss: bool = bool(GameManager.UNIT_TYPES.get(personality, {}).get("is_boss", false))
+	if is_boss and not is_ranged:
 		var closest_d: int = 99
 		for p: Unit in player_units:
 			if not p.is_alive():

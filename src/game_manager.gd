@@ -52,6 +52,37 @@ const UNIT_TYPES: Dictionary = {
 		"enrage_move_bonus": 1,
 		"enrage_range_bonus": 1,
 	},
+	# Ranged boss — sets your units on fire (burn DoT). Glass-cannon vs Warlord.
+	"pyromancer": {
+		"name": "Pyromancer",
+		"max_hp": 170,
+		"move_range": 3,
+		"attack_range": 3,
+		"damage": 24,
+		"color": Color(0.95, 0.45, 0.12),
+		"sprite_unit": "archer",
+		"is_boss": true,
+		"attack_burn": 2,           # applies 2 turns of burn on every hit
+		"enrage_threshold": 0.5,
+		"enrage_damage_bonus": 10,
+		"enrage_move_bonus": 0,
+		"enrage_range_bonus": 1,
+	},
+	# Tank boss — huge HP, slow, hits like a truck and enrages late + hard.
+	"juggernaut": {
+		"name": "Juggernaut",
+		"max_hp": 320,
+		"move_range": 2,
+		"attack_range": 1,
+		"damage": 40,
+		"color": Color(0.55, 0.30, 0.75),
+		"sprite_unit": "soldier",
+		"is_boss": true,
+		"enrage_threshold": 0.4,
+		"enrage_damage_bonus": 25,
+		"enrage_move_bonus": 1,
+		"enrage_range_bonus": 0,
+	},
 	"healer": {
 		"name": "Healer",
 		"max_hp": 65,
@@ -107,6 +138,9 @@ const BIOMES: Array[Dictionary] = [
 func biome_for_tier(tier: int) -> Dictionary:
 	return BIOMES[clampi(tier, 0, BIOMES.size() - 1)]
 
+# Bosses — one is chosen per run for the final-tier fight (see boss_id).
+const BOSS_IDS: Array[String] = ["warlord", "pyromancer", "juggernaut"]
+
 # ---------------------------------------------------------------------------
 # Map constants
 # ---------------------------------------------------------------------------
@@ -125,6 +159,7 @@ var relics: Array[String] = []   # owned relic ids (run-long passives)
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
+var boss_id: String = "warlord"   # the boss for this run's final battle
 
 # Run statistics — reset on every new run
 var battles_won: int = 0
@@ -182,6 +217,10 @@ func reset() -> void:
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	battles_won = 0
+	# Pick this run's final boss
+	var brng := RandomNumberGenerator.new()
+	brng.randomize()
+	boss_id = BOSS_IDS[brng.randi() % BOSS_IDS.size()]
 	_generate_map()
 
 # Called by battle on victory. Updates streak counters.
@@ -236,6 +275,7 @@ func save_run() -> void:
 	cfg.set_value("run", "last_chosen_index", last_chosen_index)
 	cfg.set_value("run", "map_data", map_data)
 	cfg.set_value("run", "battles_won", battles_won)
+	cfg.set_value("run", "boss_id", boss_id)
 	cfg.save(RUN_SAVE_PATH)
 
 # Load a saved run into the live state. Returns false if no valid save exists.
@@ -258,6 +298,7 @@ func load_run() -> bool:
 	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
 	map_data          = raw_map
 	battles_won       = int(cfg.get_value("run", "battles_won", 0))
+	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true
@@ -383,12 +424,15 @@ func visit_node(tier: int, index: int) -> void:
 # Battle configuration
 # ---------------------------------------------------------------------------
 func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
-	# Final-tier elite is the boss fight — Warlord plus a small honour guard
+	# Final-tier elite is the boss fight — this run's boss plus an honour guard
 	if is_final_battle(tier, elite):
-		return ["warlord", "archer", "soldier"] as Array[String]
+		return [boss_id, "archer", "soldier"] as Array[String]
 	var rng := RandomNumberGenerator.new()
 	rng.seed = tier * 31 + (13 if elite else 7)
+	# Enemy healers start appearing from the mid tiers for variety
 	var pool: Array[String] = ["soldier", "archer", "scout"]
+	if tier >= 2:
+		pool.append("healer")
 	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 5)
 	var result: Array[String] = []
 	for _i in range(count):
