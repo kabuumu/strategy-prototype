@@ -8,7 +8,7 @@ There are no build/test/lint commands — the game is run and tested through the
 
 ## Assets
 
-Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed and regenerated via `tools/gen_sprites.py` / `tools/gen_sfx.py`.
+Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed. SFX via `tools/gen_sfx.py`. Unit sprites (32×32 `<class>_<team>.png`) are sliced from the CC0 Kenney Tiny Dungeon tilemap by `tools/import_pixel_units.py` (tile map + enemy tint in its header); `tools/gen_sprites.py` is the older procedural fallback. Raw source packs live in the gitignored `assets/incoming/` staging area.
 
 **3D models are NOT committed** — `assets/models/*.glb` is gitignored (large binaries). The 3D skirmish mode (`src/skirmish3d/`) uses them when present and falls back to procedural low-poly figures otherwise, so it always runs. Check `assets/models/` and `assets/models/README.md` (expected filenames + CC0 sources) before assuming models are available; `SkirmishUnit3D.MODEL_FILES` maps unit type → filename.
 
