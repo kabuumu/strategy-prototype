@@ -41,6 +41,7 @@ var _relics_label: Label
 var _depth_label: Label
 var _node_detail_label: Label
 var _popup: Control = null
+var _settings_overlay: Control = null
 var _shop_relic_offer: String = ""
 
 # Hover preview — built once, shown when the cursor enters a battle node so
@@ -58,7 +59,46 @@ func _ready() -> void:
 		GameManager.save_run()
 	else:
 		GameManager.clear_run()
+	# Small hint that Esc opens the menu
+	add_child(UITheme.label("Esc — Menu", 13, UITheme.TEXT_MUTED, Vector2(1150.0, 26.0), Vector2(110.0, 20.0)))
 	_refresh()
+
+func _on_exit_to_menu() -> void:
+	if GameManager.current_tier < GameManager.MAP_TIERS:
+		GameManager.save_run()   # keep the run resumable
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		# Esc closes a shop/unit popup if open; otherwise toggles the settings menu
+		if _popup != null:
+			return
+		_toggle_settings_menu()
+
+# Pause/settings overlay opened with Esc.
+func _toggle_settings_menu() -> void:
+	if _settings_overlay != null:
+		_settings_overlay.queue_free()
+		_settings_overlay = null
+		return
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.z_index = 200
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP   # swallow clicks to the map
+	root.add_child(dim)
+	UITheme.panel(root, Vector2(490.0, 230.0), Vector2(300.0, 260.0))
+	root.add_child(UITheme.label("Menu", 26, UITheme.GOLD, Vector2(610.0, 250.0)))
+	root.add_child(UITheme.button("Resume", Vector2(520.0, 300.0), Vector2(240.0, 50.0),
+		Color(0.20, 0.45, 0.30), _toggle_settings_menu))
+	root.add_child(UITheme.button("Exit to Main Menu", Vector2(520.0, 360.0), Vector2(240.0, 50.0),
+		Color(0.45, 0.30, 0.34), _on_exit_to_menu))
+	root.add_child(UITheme.label("Your run is saved — Continue resumes it.", 12,
+		UITheme.TEXT_MUTED, Vector2(516.0, 428.0), Vector2(250.0, 36.0)))
+	add_child(root)
+	_settings_overlay = root
 
 func _draw() -> void:
 	# Background
