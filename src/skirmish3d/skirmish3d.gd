@@ -95,6 +95,20 @@ func _build_field() -> void:
 	world.name = "World"
 	add_child(world)
 
+	# Lighting + ambient so the low-poly unit figures read as 3D (the figures
+	# use shaded materials; the ground stays flat/unshaded).
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-55.0, -42.0, 0.0)
+	sun.light_energy = 1.15
+	world.add_child(sun)
+	var env := WorldEnvironment.new()
+	var e := Environment.new()
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color(0.46, 0.49, 0.58)
+	e.ambient_light_energy = 0.6
+	env.environment = e
+	world.add_child(env)
+
 	_camera = Camera3D.new()
 	_camera.position = Vector3(0.0, CAMERA_Y, 34.0)
 	_camera.look_at_from_position(_camera.position, Vector3.ZERO, Vector3.UP)
