@@ -83,6 +83,7 @@ const LOG_MAX_LINES: int = 5
 # Turn, the first press just arms the button. The next press within
 # END_TURN_ARM_WINDOW seconds actually ends the turn.
 var _end_turn_armed_at: float = -1.0
+var _last_cycled_unit: Unit = null
 const END_TURN_ARM_WINDOW: float = 3.0
 
 # Hover state used by the in-grid damage preview
@@ -802,10 +803,35 @@ func _exit_tree() -> void:
 	Engine.time_scale = 1.0
 
 func _cycle_to_next_unacted_unit() -> void:
+	# Build the list of cyclable units (alive + not yet acted) in roster order.
+	var pool: Array[Unit] = []
 	for u: Unit in player_units:
 		if u.is_alive() and not u.has_acted:
-			_try_select_unit(u.grid_pos)
+			pool.append(u)
+	if pool.is_empty():
+		return
+	# Anchor the rotation on the last unit we cycled to (if it's still in
+	# the pool) so repeated Tab presses step through every unit in turn.
+	var start: int = 0
+	var anchor: Unit = selected_unit if selected_unit != null else _last_cycled_unit
+	if anchor != null:
+		var idx: int = pool.find(anchor)
+		if idx != -1:
+			start = (idx + 1) % pool.size()
+	for offset in range(pool.size()):
+		var pick: Unit = pool[(start + offset) % pool.size()]
+		_try_select_unit(pick.grid_pos)
+		if selected_unit == pick:
+			_last_cycled_unit = pick
+			# Brief flash so the eye finds the new selection quickly.
+			_flash_unit(pick)
 			return
+
+func _flash_unit(u: Unit) -> void:
+	var t := create_tween()
+	var base: Color = u.modulate
+	t.tween_property(u, "modulate", Color(1.6, 1.6, 0.9, base.a), 0.08)
+	t.tween_property(u, "modulate", base, 0.18)
 
 
 func _world_to_grid(screen_pos: Vector2) -> Vector2i:
