@@ -53,6 +53,7 @@ var _lava_accum: float = 0.0
 # fight) until it recovers away from the enemy.
 var morale: float = 100.0
 var routing: bool = false
+var _charge_ready: bool = false   # cavalry impact bonus armed while closing
 
 var _body: MeshInstance3D
 var _select_ring: MeshInstance3D
@@ -536,6 +537,11 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		if order == Order.MOVE and step.length() > move_intent.length():
 			step = move_intent
 		global_position += step
+		# Cavalry build a charge while closing the distance at speed
+		if unit_type == "scout" and not is_ranged and order == Order.ATTACK:
+			_charge_ready = true
+	elif order != Order.ATTACK:
+		_charge_ready = false   # lost momentum
 
 	_apply_separation(delta, neighbours)
 
@@ -545,12 +551,21 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		if dist <= target_gap and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
 			# High ground (terrain_atk_mult) boosts the strike
+			var mult := terrain_atk_mult
+			var charged := false
+			if _charge_ready and not is_ranged:
+				mult *= 1.7   # cavalry charge impact
+				charged = true
+				_charge_ready = false
 			var scaled: int = max(1, int(round(
-				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)) * terrain_atk_mult
+				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)) * mult
 			)))
 			attack_target.take_damage(scaled)
 			_play_attack_animation()
-			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}
+			fired = {
+				"fired": true, "target": attack_target, "ranged": is_ranged,
+				"from": global_position, "charge": charged,
+			}
 	return fired
 
 # Soft unit separation (x/z only) so regiments don't stack.
