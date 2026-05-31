@@ -12,6 +12,7 @@ var has_acted: bool = false
 var stunned: bool = false       # skips its next activation
 var ability_used: bool = false  # special ability is once per battle
 var upgrades: Array = []        # roguelike upgrades (see GameManager.UPGRADE_TYPES)
+var enraged: bool = false       # boss state: gives stat bonuses
 
 var _body: Sprite2D
 var _hp_bar: ColorRect
@@ -33,34 +34,60 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 	_build_visuals(udata)
 	update_visual_position()
 
-func _build_visuals(_udata: Dictionary) -> void:
+func _build_visuals(udata: Dictionary) -> void:
+	var is_boss: bool = bool(udata.get("is_boss", false))
+
+	# Boss-only red aura ring behind everything else
+	if is_boss:
+		var aura := ColorRect.new()
+		aura.size     = Vector2(80.0, 80.0)
+		aura.position = Vector2(-40.0, -40.0)
+		aura.color    = Color(1.0, 0.18, 0.18, 0.18)
+		add_child(aura)
+
 	# Team stripe above the body
 	var stripe := ColorRect.new()
-	stripe.size     = Vector2(52.0, 5.0)
-	stripe.position = Vector2(-26.0, -35.0)
+	var stripe_w: float = 64.0 if is_boss else 52.0
+	stripe.size     = Vector2(stripe_w, 5.0)
+	stripe.position = Vector2(-stripe_w * 0.5, -44.0 if is_boss else -35.0)
 	stripe.color    = Color(0.2, 0.5, 1.0) if team == 0 else Color(1.0, 0.2, 0.2)
 	add_child(stripe)
 
-	# Main body — pixel-art sprite (class by silhouette, team by palette)
+	# Main body — pixel-art sprite (class by silhouette, team by palette).
+	# Boss reuses an existing sprite via the sprite_unit override.
+	var sprite_key: String = String(udata.get("sprite_unit", unit_type))
 	var team_name: String = "player" if team == 0 else "enemy"
-	var tex: Texture2D = load("res://assets/units/%s_%s.png" % [unit_type, team_name])
+	var tex: Texture2D = load("res://assets/units/%s_%s.png" % [sprite_key, team_name])
 	_body = Sprite2D.new()
 	_body.texture        = tex
 	_body.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # crisp pixels
-	_body.scale          = Vector2(1.7, 1.7)                  # 32px → ~54px
+	_body.scale          = Vector2(2.3, 2.3) if is_boss else Vector2(1.7, 1.7)
+	# Subtle red tint on bosses so they don't blend with normal enemy units
+	if is_boss:
+		_body.modulate   = Color(1.15, 0.85, 0.85)
 	add_child(_body)
+
+	# Boss nameplate
+	if is_boss:
+		var nameplate := Label.new()
+		nameplate.text = "BOSS — %s" % String(udata.get("name", "Boss"))
+		nameplate.add_theme_font_size_override("font_size", 11)
+		nameplate.modulate = Color(1.0, 0.55, 0.30)
+		nameplate.position = Vector2(-36.0, -60.0)
+		add_child(nameplate)
 
 	# HP bar background
 	var hp_bg := ColorRect.new()
-	hp_bg.size     = Vector2(52.0, 7.0)
-	hp_bg.position = Vector2(-26.0, 28.0)
+	var bar_w: float = 64.0 if is_boss else 52.0
+	hp_bg.size     = Vector2(bar_w, 7.0)
+	hp_bg.position = Vector2(-bar_w * 0.5, 32.0 if is_boss else 28.0)
 	hp_bg.color    = Color(0.15, 0.15, 0.15)
 	add_child(hp_bg)
 
 	# HP bar fill
 	_hp_bar = ColorRect.new()
-	_hp_bar.size     = Vector2(52.0, 7.0)
-	_hp_bar.position = Vector2(-26.0, 28.0)
+	_hp_bar.size     = Vector2(bar_w, 7.0)
+	_hp_bar.position = Vector2(-bar_w * 0.5, 32.0 if is_boss else 28.0)
 	_hp_bar.color    = Color(0.2, 0.9, 0.2)
 	add_child(_hp_bar)
 
@@ -139,9 +166,15 @@ func get_ability() -> Dictionary:
 
 func _refresh_hp_bar() -> void:
 	var ratio: float = float(hp) / float(max_hp)
-	_hp_bar.size.x = 52.0 * ratio
+	# Width = current bar background width (boss vs normal handled at build time)
+	var full_w: float = 64.0 if _is_boss() else 52.0
+	_hp_bar.size.x = full_w * ratio
 	# Green → yellow → red as HP drops
 	_hp_bar.color = Color(min(1.0, 2.0 * (1.0 - ratio)), min(1.0, 2.0 * ratio), 0.05)
+
+func _is_boss() -> bool:
+	var udata: Dictionary = GameManager.UNIT_TYPES.get(unit_type, {})
+	return bool(udata.get("is_boss", false))
 
 func is_alive() -> bool:
 	return hp > 0
@@ -162,24 +195,33 @@ func show_combat_label(text: String, color: Color) -> void:
 	tw.chain().tween_callback(lbl.queue_free)
 
 func get_move_range() -> int:
-	var v: int = GameManager.UNIT_TYPES[unit_type]["move_range"]
+	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
+	var v: int = udata["move_range"]
 	for u in upgrades:
 		if u == "swift":
 			v += 1
+	if enraged:
+		v += int(udata.get("enrage_move_bonus", 0))
 	return v
 
 func get_attack_range() -> int:
-	var v: int = GameManager.UNIT_TYPES[unit_type]["attack_range"]
+	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
+	var v: int = udata["attack_range"]
 	for u in upgrades:
 		if u == "eagle_eye":
 			v += 1
+	if enraged:
+		v += int(udata.get("enrage_range_bonus", 0))
 	return mini(v, 4)
 
 func get_damage() -> int:
-	var v: int = GameManager.UNIT_TYPES[unit_type]["damage"]
+	var udata: Dictionary = GameManager.UNIT_TYPES[unit_type]
+	var v: int = udata["damage"]
 	for u in upgrades:
 		if u == "sharpshooter":
 			v += 5
+	if enraged:
+		v += int(udata.get("enrage_damage_bonus", 0))
 	return v
 
 # Short labels for upgrades (e.g. ["VET", "SS"]) for compact UI display

@@ -92,6 +92,26 @@ func _ready() -> void:
 	_generate_terrain()
 	_spawn_units()
 	_update_ui()
+	# Boss-fight intro overlay
+	if GameManager.is_final_battle(GameManager.pending_battle_tier,
+			GameManager.pending_battle_elite):
+		_show_boss_intro()
+
+# Big "FINAL BATTLE" banner that fades after ~1.8s. Pure visual; doesn't
+# block input — but the player can read it while planning their first move.
+func _show_boss_intro() -> void:
+	var banner := Label.new()
+	banner.text = "⚔  FINAL BATTLE  ⚔"
+	banner.add_theme_font_size_override("font_size", 48)
+	banner.modulate = Color(1.0, 0.30, 0.25, 0.0)
+	banner.position = Vector2(340.0, 280.0)
+	banner.z_index  = 200
+	add_child(banner)
+	var tw := create_tween()
+	tw.tween_property(banner, "modulate:a", 1.0, 0.35)
+	tw.tween_interval(1.1)
+	tw.tween_property(banner, "modulate:a", 0.0, 0.55)
+	tw.tween_callback(banner.queue_free)
 
 # ---------------------------------------------------------------------------
 # Objective initialisation
@@ -751,9 +771,36 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		_shake_grid(5.0)   # bigger jolt on a kill
 		defender.modulate = Color(0.32, 0.32, 0.32, 0.50)
 		_log_event("%s is defeated" % _unit_label(defender))
+	else:
+		# Boss enrage check: cross the HP threshold once → permanent buff
+		_check_enrage(defender)
 	# Enemy roster/positions may have changed (death, position via lunge is
 	# temporary). Refresh the threat overlay.
 	_recompute_threat()
+
+# If the defender is a boss whose HP just crossed its enrage threshold,
+# flip the enraged flag and announce it loudly.
+func _check_enrage(u: Unit) -> void:
+	if u.enraged:
+		return
+	var udata: Dictionary = GameManager.UNIT_TYPES[u.unit_type]
+	if not bool(udata.get("is_boss", false)):
+		return
+	var thresh: float = float(udata.get("enrage_threshold", 0.5))
+	if float(u.hp) / float(u.max_hp) > thresh:
+		return
+	u.enraged = true
+	u.show_status_popup("ENRAGED!", Color(1.0, 0.30, 0.20))
+	u.show_combat_label("+%d DMG  +%d MOVE" % [
+			int(udata.get("enrage_damage_bonus", 0)),
+			int(udata.get("enrage_move_bonus", 0))
+		], Color(1.0, 0.55, 0.30))
+	_shake_grid(8.0)
+	_log_event("⚠ %s is ENRAGED!" % _unit_label(u))
+	_show_toast("The %s ENRAGES!" % udata.get("name", "Boss"), Color(1.0, 0.45, 0.25))
+	# Tint the body more aggressively
+	if u._body:
+		u._body.modulate = Color(1.45, 0.55, 0.55)
 
 # Attacker hops toward the target and back
 func _lunge(attacker: Unit, defender: Unit) -> void:

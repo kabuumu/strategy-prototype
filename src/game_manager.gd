@@ -33,6 +33,24 @@ const UNIT_TYPES: Dictionary = {
 		"color": Color(0.95, 0.8, 0.1),
 		# Dash: take a second move this activation
 		"ability": {"id": "dash", "name": "Dash", "desc": "Move a second time this turn"}
+	},
+	# Boss — only spawned for the final-tier elite battle. Visually larger
+	# with a red aura. Enrages at <=50% HP for +damage and +mobility. Reuses
+	# the soldier_enemy sprite for the body.
+	"warlord": {
+		"name": "Warlord",
+		"max_hp": 220,
+		"move_range": 3,
+		"attack_range": 1,
+		"damage": 35,
+		"color": Color(0.85, 0.20, 0.20),
+		"sprite_unit": "soldier",   # which sprite file to load
+		"is_boss": true,
+		# Enrage bonuses applied when hp/max_hp drops to (or below) threshold
+		"enrage_threshold": 0.5,
+		"enrage_damage_bonus": 15,
+		"enrage_move_bonus": 1,
+		"enrage_range_bonus": 1,
 	}
 }
 
@@ -224,6 +242,9 @@ func visit_node(tier: int, index: int) -> void:
 # Battle configuration
 # ---------------------------------------------------------------------------
 func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
+	# Final-tier elite is the boss fight — Warlord plus a small honour guard
+	if is_final_battle(tier, elite):
+		return ["warlord", "archer", "soldier"] as Array[String]
 	var rng := RandomNumberGenerator.new()
 	rng.seed = tier * 31 + (13 if elite else 7)
 	var pool: Array[String] = ["soldier", "archer", "scout"]
@@ -232,6 +253,9 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 	for _i in range(count):
 		result.append(pool[rng.randi() % pool.size()])
 	return result
+
+func is_final_battle(tier: int, elite: bool) -> bool:
+	return elite and tier == MAP_TIERS - 1
 
 func get_hp_multiplier(tier: int, elite: bool) -> float:
 	return 1.0 + tier * 0.2 + (0.25 if elite else 0.0)
