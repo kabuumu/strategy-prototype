@@ -54,6 +54,7 @@ var _lava_accum: float = 0.0
 var morale: float = 100.0
 var routing: bool = false
 var _charge_ready: bool = false   # cavalry impact bonus armed while closing
+var facing: Vector3 = Vector3.RIGHT   # xz heading the regiment is turned toward
 
 var _body: MeshInstance3D
 var _select_ring: MeshInstance3D
@@ -86,6 +87,7 @@ func setup(type: String, p_team: int, world_pos: Vector3, stats: Dictionary) -> 
 
 	radius = (18.0 + sqrt(float(soldier_count)) * 7.0) * WORLD_SCALE
 	engage_radius_world = (attack_range_px + 40.0) * WORLD_SCALE
+	facing = Vector3.RIGHT if team == 0 else Vector3.LEFT
 	_build_visuals()
 
 func _solid_mat(c: Color) -> StandardMaterial3D:
@@ -537,6 +539,7 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		if order == Order.MOVE and step.length() > move_intent.length():
 			step = move_intent
 		global_position += step
+		_face(move_intent)
 		# Cavalry build a charge while closing the distance at speed
 		if unit_type == "scout" and not is_ranged and order == Order.ATTACK:
 			_charge_ready = true
@@ -548,25 +551,53 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 	if attack_target != null and attack_target.is_alive():
 		var dist: float = global_position.distance_to(attack_target.global_position)
 		var target_gap: float = attack_range_world + attack_target.radius
+		_face(attack_target.global_position - global_position)
 		if dist <= target_gap and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
-			# High ground (terrain_atk_mult) boosts the strike
+			# High ground (terrain_atk_mult) + flank/rear arc bonus
 			var mult := terrain_atk_mult
 			var charged := false
 			if _charge_ready and not is_ranged:
 				mult *= 1.7   # cavalry charge impact
 				charged = true
 				_charge_ready = false
+			var arc := _arc_against(attack_target)   # 1.0 front / 1.3 flank / 1.6 rear
+			mult *= arc
 			var scaled: int = max(1, int(round(
 				damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)) * mult
 			)))
 			attack_target.take_damage(scaled)
+			if arc > 1.0:
+				attack_target.morale -= (16.0 if arc >= 1.55 else 8.0)   # being hit in the flank/rear shakes morale
 			_play_attack_animation()
 			fired = {
 				"fired": true, "target": attack_target, "ranged": is_ranged,
 				"from": global_position, "charge": charged,
 			}
 	return fired
+
+# Turn the figure to face an xz direction.
+func _face(dir: Vector3) -> void:
+	var d := Vector3(dir.x, 0.0, dir.z)
+	if d.length() < 0.001:
+		return
+	facing = d.normalized()
+	if _body != null:
+		_body.rotation.y = atan2(facing.x, facing.z)
+
+# Damage multiplier from where this attacker hits the defender relative to the
+# defender's facing: 1.0 from the front, 1.3 from a flank, 1.6 from the rear.
+func _arc_against(defender: SkirmishUnit3D) -> float:
+	var to_me := global_position - defender.global_position
+	to_me.y = 0.0
+	if to_me.length() < 0.001:
+		return 1.0
+	var dot := defender.facing.dot(to_me.normalized())
+	if dot > 0.5:
+		return 1.0       # defender faces the attacker
+	elif dot < -0.5:
+		return 1.6       # rear
+	return 1.3           # flank
 
 # Soft unit separation (x/z only) so regiments don't stack.
 func _apply_separation(delta: float, neighbours: Array) -> void:

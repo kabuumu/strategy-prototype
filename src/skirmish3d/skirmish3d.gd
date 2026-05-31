@@ -458,7 +458,7 @@ func _build_ui() -> void:
 	_ui.add_child(_status_label)
 
 	var hint := Label.new()
-	hint.text = "L-click select / drag-box  ·  Shift add  ·  R-click move/attack  ·  WASD/edge pan  ·  wheel zoom  ·  SPACE pause  ·  R restart  ·  ESC menu     (hills boost · forests shield · lava burns · routed units flee)"
+	hint.text = "L-click select / drag-box  ·  Shift add  ·  R-click move/attack  ·  WASD/edge pan  ·  wheel zoom  ·  SPACE pause  ·  R restart  ·  ESC menu     (flank/rear hits hurt more · hills boost · forests shield · lava burns · routed units flee)"
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.56, 0.56, 0.66)
 	hint.position = Vector2(420.0, 22.0)
