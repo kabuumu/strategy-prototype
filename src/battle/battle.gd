@@ -1174,7 +1174,10 @@ func _refresh_action_cells() -> void:
 	ability_cells.clear()
 	if selected_unit == null or selected_unit.ap <= 0:
 		return
-	move_cells   = _get_move_cells(selected_unit)
+	# Only one move per turn — once moved, no more move tiles (attacks/abilities
+	# still cost AP). Dash re-enables a move.
+	if not selected_unit.moved_this_turn:
+		move_cells = _get_move_cells(selected_unit)
 	attack_cells = _get_attack_cells(selected_unit, enemy_units)
 
 # Shared post-action bookkeeping: win check, AP-based greying, reselect/deselect.
@@ -1198,6 +1201,7 @@ func _try_move_unit(cell: Vector2i) -> void:
 		var origin := selected_unit.grid_pos
 		selected_unit.grid_pos = cell
 		_animate_unit_to(selected_unit, origin, cell)
+	selected_unit.moved_this_turn = true
 	selected_unit.spend_ap(1)
 	_check_capture(selected_unit)
 	_after_player_action()
@@ -1504,11 +1508,12 @@ func _on_ability_pressed() -> void:
 		return
 	var id: String = selected_unit.get_ability().get("id", "")
 	if id == "dash":
-		# Burst of mobility: grant an extra action point (does not consume one)
+		# Dash: move again this turn (clears the one-move limit). The follow-up
+		# move still costs AP.
 		selected_unit.ability_used = true
-		selected_unit.ap += 1
+		selected_unit.moved_this_turn = false
 		Sfx.play("ability")
-		selected_unit.show_status_popup("DASH! +1 AP", Color(0.95, 0.85, 0.2))
+		selected_unit.show_status_popup("DASH! move again", Color(0.95, 0.85, 0.2))
 		selected_unit.modulate = Color(1, 1, 1, 1)
 		_refresh_action_cells()
 		_update_ui()
@@ -1747,7 +1752,9 @@ func _execute_ai_turn() -> void:
 # One AI action for a unit (spends 1 AP). Returns false when it can't do
 # anything useful, so the turn loop stops early.
 func _ai_one_action(u: Unit) -> bool:
-	# Healer: heal a wounded ally in range, else step toward one
+	var can_move: bool = not u.moved_this_turn
+
+	# Healer: heal a wounded ally in range; else (if it may still move) close in
 	if u.get_ability().get("id", "") == "heal_ally" and not u.ability_used:
 		var w := _most_wounded_ally(u, enemy_units)
 		if w != null:
@@ -1759,12 +1766,17 @@ func _ai_one_action(u: Unit) -> bool:
 				u.ability_used = true
 				u.spend_ap(1)
 				return true
-			var hc := _best_move_to_cell(u, w.grid_pos)
-			if hc != u.grid_pos:
-				await _ai_step(u, hc)
-				return true
+			if can_move:
+				var hc := _best_move_to_cell(u, w.grid_pos)
+				if hc != u.grid_pos:
+					await _ai_step(u, hc)
+					return true
 
-	# Best move+attack pairing
+	# Already moved this turn → can only attack from the current cell
+	if not can_move:
+		return _ai_attack_from_here(u)
+
+	# Best move+attack pairing (move now, attack next action)
 	var plan := _best_attack_plan(u)
 	if plan["target"] != null:
 		if plan["cell"] == u.grid_pos:
@@ -1791,8 +1803,23 @@ func _ai_one_action(u: Unit) -> bool:
 			return true
 	return false
 
+# Attack the best in-range player target without moving. Returns false if none.
+func _ai_attack_from_here(u: Unit) -> bool:
+	var best: Unit = null
+	var range_val := u.get_attack_range()
+	for t: Unit in player_units:
+		if t.is_alive() and _chebyshev(u.grid_pos, t.grid_pos) <= range_val:
+			if best == null or t.hp < best.hp:
+				best = t
+	if best == null:
+		return false
+	_do_attack(u, best)
+	u.spend_ap(1)
+	return true
+
 # Move an AI unit one step of its plan (animated), spend 1 AP, check capture.
 func _ai_step(u: Unit, dest: Vector2i) -> void:
+	u.moved_this_turn = true
 	var origin := u.grid_pos
 	u.grid_pos = dest
 	await _animate_unit_to(u, origin, dest).finished

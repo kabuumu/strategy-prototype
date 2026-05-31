@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b7rt8skirmish3d001"]
+
+[ext_resource type="Script" path="res://src/skirmish3d/skirmish3d.gd" id="1_sk3d"]
+
+[node name="Skirmish3D" type="Node3D"]
+script = ExtResource("1_sk3d")

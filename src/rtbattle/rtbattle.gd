@@ -95,6 +95,9 @@ var _result_label: Label
 var _restart_hint_label: Label
 var _drag_box_rect: ColorRect
 
+func _set_passthrough(node: Control) -> void:
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 func _ready() -> void:
 	_build_field()
 	_build_ui()
@@ -111,12 +114,14 @@ func _build_field() -> void:
 	bg.color    = Color(0.10, 0.16, 0.13)
 	bg.position = Vector2.ZERO
 	bg.size     = Vector2(1280.0, 720.0)
+	_set_passthrough(bg)
 	add_child(bg)
 
 	var field := ColorRect.new()
 	field.color    = Color(0.16, 0.24, 0.18)
 	field.position = FIELD_RECT.position
 	field.size     = FIELD_RECT.size
+	_set_passthrough(field)
 	add_child(field)
 
 func _build_ui() -> void:
@@ -125,6 +130,7 @@ func _build_ui() -> void:
 	top.color    = Color(0.07, 0.09, 0.13, 0.92)
 	top.position = Vector2(0.0, 0.0)
 	top.size     = Vector2(1280.0, 60.0)
+	_set_passthrough(top)
 	add_child(top)
 
 	var title := Label.new()
@@ -132,11 +138,13 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 18)
 	title.modulate = Color(0.90, 0.85, 0.50)
 	title.position = Vector2(20.0, 8.0)
+	_set_passthrough(title)
 	add_child(title)
 
 	_status_label = Label.new()
 	_status_label.add_theme_font_size_override("font_size", 18)
 	_status_label.position = Vector2(20.0, 32.0)
+	_set_passthrough(_status_label)
 	add_child(_status_label)
 
 	var hint := Label.new()
@@ -144,6 +152,7 @@ func _build_ui() -> void:
 	hint.add_theme_font_size_override("font_size", 13)
 	hint.modulate = Color(0.55, 0.55, 0.65)
 	hint.position = Vector2(440.0, 22.0)
+	_set_passthrough(hint)
 	add_child(hint)
 
 	# Bottom strip — selection info
@@ -151,6 +160,7 @@ func _build_ui() -> void:
 	bot.color    = Color(0.07, 0.09, 0.13, 0.92)
 	bot.position = Vector2(0.0, 660.0)
 	bot.size     = Vector2(1280.0, 60.0)
+	_set_passthrough(bot)
 	add_child(bot)
 
 	_selection_label = Label.new()
@@ -158,6 +168,7 @@ func _build_ui() -> void:
 	_selection_label.modulate = Color(0.85, 0.90, 0.95)
 	_selection_label.position = Vector2(20.0, 676.0)
 	_selection_label.size     = Vector2(1240.0, 30.0)
+	_set_passthrough(_selection_label)
 	add_child(_selection_label)
 
 	# Centred result banner (hidden until win/lose)
@@ -167,6 +178,7 @@ func _build_ui() -> void:
 	_result_label.size     = Vector2(440.0, 80.0)
 	_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_result_label.visible  = false
+	_set_passthrough(_result_label)
 	add_child(_result_label)
 
 	# Restart hint shown beneath the result banner — keeps the post-battle
@@ -179,6 +191,7 @@ func _build_ui() -> void:
 	_restart_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_restart_hint_label.text     = "Press R to fight again  ·  Esc to return to menu"
 	_restart_hint_label.visible  = false
+	_set_passthrough(_restart_hint_label)
 	add_child(_restart_hint_label)
 
 	# Drag-rectangle visual — a thin translucent box rendered while the

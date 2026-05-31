@@ -11,11 +11,13 @@ var grid_pos: Vector2i = Vector2i.ZERO
 var has_acted: bool = false   # mirrors ap <= 0 (kept for round-completion checks)
 var ap: int = 0               # action points remaining this turn
 var max_ap: int = 2
+var moved_this_turn: bool = false   # a unit may take only one move per turn
 
 func refill_ap() -> void:
 	max_ap = GameManager.ap_for(unit_type)
 	ap = max_ap
 	has_acted = false
+	moved_this_turn = false
 
 func spend_ap(n: int = 1) -> void:
 	ap = maxi(0, ap - n)
