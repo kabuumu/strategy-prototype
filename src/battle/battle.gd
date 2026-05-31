@@ -1191,23 +1191,27 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 		# Enemy hit a player unit — extra "hit" cue + red flash, intensity ∝ damage.
 		Sfx.play("hit")
 		_flash_hurt(dmg, defender.max_hp)
+	# Build a single combat tag (crit/flank + optional cover) so one hit shows
+	# at most one emphasis label above the damage number, not three.
+	var tag := ""
+	var tag_col := Color(1.0, 0.85, 0.30)
 	if res["crit"]:
-		defender.show_combat_label("CRIT!", Color(1.0, 0.45, 0.20))
+		tag = "CRIT"; tag_col = Color(1.0, 0.45, 0.20)
 		_log_event("%s ⚡ CRIT %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
 		_shake_grid(4.5)
 	elif res["flank"]:
-		defender.show_combat_label("FLANKED!", Color(1.0, 0.85, 0.30))
+		tag = "FLANK"
 		_log_event("%s ⚔ flank %d → %s" % [_unit_label(attacker), dmg, _unit_label(defender)])
 		_shake_grid(3.5)
 	else:
 		_log_event("%s hits %s for %d" % [_unit_label(attacker), _unit_label(defender), dmg])
 		_shake_grid(2.5)
-	# Cover tag — shown alongside whatever main combat label fired
-	if res["cover"] and not (res["crit"]):
-		defender.show_combat_label("COVER −25%", Color(0.45, 0.85, 0.45))
+	if res["cover"]:
+		tag = (tag + "+" if tag != "" else "") + "COVER"
+	if tag != "":
+		defender.show_combat_label(tag, tag_col)
 	if not defender.is_alive():
 		_kill_punch()
-		Sfx.play("kill")
 		defender.play_death_animation()
 		defender.modulate = DEATH_TINT
 		Sfx.play("death")
@@ -1998,13 +2002,13 @@ func _tick_statuses(u: Unit) -> void:
 	# Standing in lava refreshes burn
 	if u.grid_pos in lava and u.is_alive():
 		u.apply_burn(2)
+	# DoT shows the floating damage number; the persistent ☠/🔥 badge gives
+	# the cause, so no extra word popup is needed.
 	if u.poison_turns > 0:
 		u.take_damage(POISON_DMG)
-		u.show_status_popup("-%d poison" % POISON_DMG, Color(0.45, 0.85, 0.30))
 		u.poison_turns -= 1
 	if u.is_alive() and u.burn_turns > 0:
 		u.take_damage(BURN_DMG)
-		u.show_status_popup("-%d burn" % BURN_DMG, Color(1.0, 0.5, 0.15))
 		u.burn_turns -= 1
 	if not u.is_alive():
 		u.modulate = DEATH_TINT
@@ -2027,16 +2031,26 @@ func _all_dead(units: Array[Unit]) -> bool:
 # Toast notifications
 # ---------------------------------------------------------------------------
 func _show_toast(text: String, color: Color) -> void:
+	# Banner in the clear band below the grid (grid bottom ≈ 615), so it never
+	# overlaps the initiative strip (top) or the units.
+	var holder := Control.new()
+	holder.position = Vector2(40.0, 624.0)
+	holder.z_index  = 50
+	add_child(holder)
+	var bg := ColorRect.new()
+	bg.color    = Color(0.0, 0.0, 0.0, 0.55)
+	bg.size     = Vector2(700.0, 30.0)
+	holder.add_child(bg)
 	var lbl := Label.new()
 	lbl.text     = text
-	lbl.add_theme_font_size_override("font_size", 19)
+	lbl.add_theme_font_size_override("font_size", 18)
 	lbl.modulate = color
-	# Position above the grid centre so it doesn't clash with units
-	lbl.position = Vector2(50.0, 18.0)
-	add_child(lbl)
+	lbl.position = Vector2(10.0, 4.0)
+	holder.add_child(lbl)
 	var tw := create_tween()
-	tw.tween_interval(2.5)
-	tw.tween_callback(lbl.queue_free)
+	tw.tween_interval(2.2)
+	tw.tween_property(holder, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(holder.queue_free)
 
 # ---------------------------------------------------------------------------
 # Win / Loss overlays
