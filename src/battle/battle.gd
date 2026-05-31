@@ -427,10 +427,6 @@ func _handle_right_click() -> void:
 # Player actions
 # ---------------------------------------------------------------------------
 func _try_select_unit(cell: Vector2i) -> void:
-	# Auto-reset player round when all alive units have acted
-	if not player_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted):
-		_reset_acted_flags(player_units)
-
 	for u: Unit in player_units:
 		if u.is_alive() and u.grid_pos == cell and not u.has_acted:
 			selected_unit = u
@@ -587,9 +583,9 @@ func _run_one_ai_unit() -> void:
 func _execute_one_ai_unit() -> void:
 	await get_tree().create_timer(0.55).timeout
 
-	# Auto-reset enemy round when all enemies have acted
-	if not enemy_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted):
-		_reset_acted_flags(enemy_units)
+	if _all_dead(enemy_units):
+		_trigger_win()
+		return
 
 	var ai_unit: Unit = null
 	for u: Unit in enemy_units:
@@ -598,7 +594,8 @@ func _execute_one_ai_unit() -> void:
 			break
 
 	if ai_unit == null:
-		_trigger_win()
+		# All alive enemies have acted for this round — check full-round completion
+		_check_round_complete()
 		return
 
 	_ai_act(ai_unit)
@@ -610,8 +607,7 @@ func _execute_one_ai_unit() -> void:
 		_trigger_loss()
 		return
 
-	phase = Phase.PLAYER_SELECT_UNIT
-	_update_ui()
+	_check_round_complete()
 
 # ---------------------------------------------------------------------------
 # AI — all remaining enemy units act (after "End Turn")
@@ -628,10 +624,7 @@ func _execute_remaining_ai_units() -> void:
 			unacted.append(u)
 
 	if unacted.is_empty():
-		_reset_acted_flags(player_units)
-		_reset_acted_flags(enemy_units)
-		phase = Phase.PLAYER_SELECT_UNIT
-		_update_ui()
+		_start_new_round()
 		return
 
 	await get_tree().create_timer(0.55).timeout
@@ -647,6 +640,39 @@ func _execute_remaining_ai_units() -> void:
 		return
 
 	_execute_remaining_ai_units()
+
+# ---------------------------------------------------------------------------
+# Round completion helpers
+# ---------------------------------------------------------------------------
+func _start_new_round() -> void:
+	_reset_acted_flags(player_units)
+	_reset_acted_flags(enemy_units)
+	phase = Phase.PLAYER_SELECT_UNIT
+	_update_ui()
+
+func _check_round_complete() -> void:
+	if _all_dead(enemy_units):
+		_trigger_win()
+		return
+	if _all_dead(player_units):
+		_trigger_loss()
+		return
+
+	var player_done := not player_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted)
+	var enemy_done  := not enemy_units.any(func(u: Unit) -> bool: return u.is_alive() and not u.has_acted)
+
+	if player_done and enemy_done:
+		_start_new_round()
+	elif player_done:
+		# Player exhausted; remaining enemies finish the round
+		_show_toast("All your units have acted — enemy continues…", Color(0.90, 0.82, 0.25))
+		phase = Phase.AI_ACTING
+		_update_ui()
+		_execute_remaining_ai_units()
+	else:
+		# Player still has units to act
+		phase = Phase.PLAYER_SELECT_UNIT
+		_update_ui()
 
 # ---------------------------------------------------------------------------
 # AI decision-making (objectives + combat)
