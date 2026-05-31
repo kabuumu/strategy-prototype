@@ -109,13 +109,18 @@ const AI_RETARGET_PERIOD: float = 0.6
 const DRAG_THRESHOLD: float = 7.0
 const PICK_SCREEN_RADIUS: float = 17.0
 const PICK_RAY_RADIUS_SCALE: float = 1.8
-const TERRAIN_COLS: int = 14
-const TERRAIN_ROWS: int = 11
-const TERRAIN_HEX_RADIUS: float = 2.3
-const TERRAIN_X_SPACING: float = 3.9
-const TERRAIN_Z_SPACING: float = 2.95
-const TERRAIN_ORIGIN_X: float = -27.0
-const TERRAIN_ORIGIN_Z: float = -14.5
+const TERRAIN_HEX_RADIUS: float = 2.3   # base size for the feature props (trees, rocks, hills)
+
+# Continuous ground colouring: each feature type paints the surface around it.
+# (Used by _ground_color_at — the ground is one blended mesh, never hex tiles.)
+const GROUND_TYPE_COLOR: Dictionary = {
+	"mountain": Color(0.20, 0.18, 0.16),
+	"forest":   Color(0.10, 0.24, 0.12),
+	"hill":     Color(0.32, 0.27, 0.16),
+	"lava":     Color(0.48, 0.13, 0.05),
+}
+const GROUND_GRID_COLS: int = 80
+const GROUND_GRID_ROWS: int = 50
 
 var player_units: Array[SkirmishUnit3D] = []
 var enemy_units: Array[SkirmishUnit3D] = []
@@ -149,10 +154,6 @@ var _ai_retarget_timer: float = 0.0
 
 var _waypoints: Array = []
 var _biome: Dictionary = {}
-var _mountains: Array[Vector2i] = []
-var _forests: Array[Vector2i] = []
-var _hills: Array[Vector2i] = []
-var _lava: Array[Vector2i] = []
 # Terrain features placed at world positions on the continuous ground.
 # Each: { "pos": Vector3, "type": String, "radius": float }
 var _features: Array = []
@@ -272,18 +273,6 @@ func _generate_terrain() -> void:
 				_features.append({"pos": pos, "type": type, "radius": radius})
 				placed += 1
 
-func _valid_terrain_cell(cell: Vector2i) -> bool:
-	return cell.x >= 0 and cell.x < TERRAIN_COLS and cell.y >= 0 and cell.y < TERRAIN_ROWS
-
-func _place_terrain_cells(rng: RandomNumberGenerator, target: Array[Vector2i], count: int, taken: Array[Vector2i]) -> void:
-	var tries: int = 0
-	while target.size() < count and tries < 80:
-		tries += 1
-		var cell := Vector2i(rng.randi_range(1, TERRAIN_COLS - 2), rng.randi_range(0, TERRAIN_ROWS - 1))
-		if cell not in taken:
-			target.append(cell)
-			taken.append(cell)
-
 func _build_field() -> void:
 	var world := Node3D.new()
 	world.name = "World"
@@ -309,18 +298,17 @@ func _build_field() -> void:
 	_camera.current = true
 	world.add_child(_camera)
 
+	# One continuous ground mesh whose vertex colours follow the procedurally
+	# generated terrain — forest/hill/lava/mountain zones bleed into the biome
+	# base colour as soft regions, never hex tiles. Extends past the unit clamp
+	# bounds so there's no visible edge.
 	_ground = MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	# Extend the ground well past the unit clamp bounds so there's no visible
-	# edge — units always stand on a continuous surface.
-	plane.size = Vector2(FIELD_HALF_WIDTH * 2.0 + 24.0, FIELD_HALF_DEPTH * 2.0 + 24.0)
-	_ground.mesh = plane
-	_ground.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	_ground.mesh = _build_ground_mesh()
 	_ground.position = Vector3(0.0, 0.0, 0.0)
 	var gm := StandardMaterial3D.new()
 	gm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var ground_color: Color = _biome.get("bg", Color(0.07, 0.10, 0.07))
-	gm.albedo_color = ground_color.lightened(0.05)
+	gm.vertex_color_use_as_albedo = true
+	gm.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_ground.material_override = gm
 	world.add_child(_ground)
 	_build_terrain_visuals(world)
@@ -421,21 +409,49 @@ func _build_terrain_visuals(world: Node3D) -> void:
 			"lava":
 				_add_lava_pool(pos)
 
-func _terrain_cell_world(cell: Vector2i) -> Vector3:
-	var x: float = TERRAIN_ORIGIN_X + float(cell.x) * TERRAIN_X_SPACING
-	if (cell.y & 1) == 1:
-		x += TERRAIN_X_SPACING * 0.5
-	var z: float = TERRAIN_ORIGIN_Z + float(cell.y) * TERRAIN_Z_SPACING
-	return Vector3(x, 0.03, z)
+# Colour of the ground at a world (x, z): the biome base, with each nearby
+# feature blended in by proximity (1 at its centre, fading to 0 at its radius).
+func _ground_color_at(x: float, z: float, base: Color) -> Color:
+	var col := base
+	for f: Dictionary in _features:
+		var fp: Vector3 = f["pos"]
+		var r: float = float(f["radius"])
+		var d := Vector2(x - fp.x, z - fp.z).length()
+		if d >= r * 1.1:
+			continue
+		var t := 1.0 - clampf(d / (r * 1.1), 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)   # smoothstep falloff
+		var tc: Color = GROUND_TYPE_COLOR.get(String(f["type"]), base)
+		var strength := 0.95 if String(f["type"]) == "lava" else 0.78
+		col = col.lerp(tc, t * strength)
+	return col
 
-# Inverse of _terrain_cell_world: nearest terrain cell to a world position.
-func _terrain_cell_at_world(pos: Vector3) -> Vector2i:
-	var row: int = int(round((pos.z - TERRAIN_ORIGIN_Z) / TERRAIN_Z_SPACING))
-	row = clampi(row, 0, TERRAIN_ROWS - 1)
-	var off: float = TERRAIN_X_SPACING * 0.5 if (row & 1) == 1 else 0.0
-	var col: int = int(round((pos.x - TERRAIN_ORIGIN_X - off) / TERRAIN_X_SPACING))
-	col = clampi(col, 0, TERRAIN_COLS - 1)
-	return Vector2i(col, row)
+# Subdivided flat plane (y = 0) carrying the blended terrain colours as vertex
+# colours. Collision stays the separate box in _build_field.
+func _build_ground_mesh() -> ArrayMesh:
+	var w := FIELD_HALF_WIDTH * 2.0 + 24.0
+	var d := FIELD_HALF_DEPTH * 2.0 + 24.0
+	var base: Color = _biome.get("bg", Color(0.07, 0.10, 0.07)).lightened(0.06)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in range(GROUND_GRID_ROWS):
+		var z0 := -d * 0.5 + d * float(j) / float(GROUND_GRID_ROWS)
+		var z1 := -d * 0.5 + d * float(j + 1) / float(GROUND_GRID_ROWS)
+		for i in range(GROUND_GRID_COLS):
+			var x0 := -w * 0.5 + w * float(i) / float(GROUND_GRID_COLS)
+			var x1 := -w * 0.5 + w * float(i + 1) / float(GROUND_GRID_COLS)
+			_st_ground_vertex(st, x0, z0, base)
+			_st_ground_vertex(st, x1, z0, base)
+			_st_ground_vertex(st, x1, z1, base)
+			_st_ground_vertex(st, x0, z0, base)
+			_st_ground_vertex(st, x1, z1, base)
+			_st_ground_vertex(st, x0, z1, base)
+	return st.commit()
+
+func _st_ground_vertex(st: SurfaceTool, x: float, z: float, base: Color) -> void:
+	st.set_color(_ground_color_at(x, z, base))
+	st.set_normal(Vector3.UP)
+	st.add_vertex(Vector3(x, 0.0, z))
 
 const LAVA_DPS: int = 6
 const FOREST_DEF_MULT: float = 0.7
@@ -480,20 +496,6 @@ func _all_living_units() -> Array[SkirmishUnit3D]:
 		if u.is_alive(): out.append(u)
 	return out
 
-func _terrain_cell_color(cell: Vector2i) -> Color:
-	if cell in _mountains:
-		return Color(0.19, 0.17, 0.15)
-	if cell in _forests:
-		return Color(0.10, 0.25, 0.12)
-	if cell in _hills:
-		return Color(0.30, 0.25, 0.15)
-	if cell in _lava:
-		return Color(0.46, 0.12, 0.04)
-	var bg: Color = _biome.get("bg", Color(0.07, 0.10, 0.07))
-	return bg.lightened(0.14 if (cell.x + cell.y) % 2 == 0 else 0.08)
-
-func _cell_seed(cell: Vector2i) -> int:
-	return cell.x * 73856093 ^ cell.y * 19349663
 
 func _make_mat(color: Color, unshaded: bool = false, emission: Color = Color(0.0, 0.0, 0.0, 0.0)) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
