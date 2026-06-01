@@ -6,75 +6,79 @@ func _ready() -> void:
 func _draw() -> void:
 	# Background gradient effect — two overlapping rects
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.05, 0.06, 0.09))
-	# Subtle decorative line across the middle
-	draw_line(Vector2(0.0, 370.0), Vector2(1280.0, 370.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
+	# Subtle decorative line under the title block
+	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
+
+const CAMPAIGN_MODES: Array = [
+	{"t": "2D Tactics",    "m": "2d",   "c": Color(0.18, 0.36, 0.65)},
+	{"t": "3D Real-Time",  "m": "3d",   "c": Color(0.36, 0.26, 0.60)},
+	{"t": "Auto-Battler",  "m": "auto", "c": Color(0.30, 0.50, 0.38)},
+	{"t": "Tower Defence", "m": "td",   "c": Color(0.45, 0.38, 0.20)},
+	{"t": "Base Building", "m": "base", "c": Color(0.50, 0.30, 0.26)},
+]
 
 func _build_ui() -> void:
-	# -----------------------------------------------------------------------
-	# Title
-	# -----------------------------------------------------------------------
-	var title := Label.new()
-	title.text = "STRATEGY PROTOTYPE"
-	title.add_theme_font_size_override("font_size", 64)
-	title.modulate = Color(0.95, 0.90, 0.60)
-	title.position = Vector2(180.0, 160.0)
-	add_child(title)
-
-	# Subtitle
-	var sub := Label.new()
-	sub.text = "A turn-based strategy game"
-	sub.add_theme_font_size_override("font_size", 20)
-	sub.modulate = Color(0.55, 0.55, 0.65)
-	sub.position = Vector2(470.0, 248.0)
-	add_child(sub)
-
-	# -----------------------------------------------------------------------
-	# Continue (only when a run is saved) + New Game buttons
-	# -----------------------------------------------------------------------
 	var has_save: bool = GameManager.has_saved_run()
-	var y: float = 300.0
+
+	_add_centered_label("STRATEGY PROTOTYPE", 56, Color(0.95, 0.90, 0.60), 30.0)
+	_add_centered_label("Medieval strategy roguelite — five ways to fight", 18,
+		Color(0.55, 0.55, 0.65), 96.0)
+
+	# Continue an in-progress run.
 	if has_save:
-		_add_menu_button("Continue Run", Vector2(490.0, y), Vector2(300.0, 60.0),
-			Color(0.20, 0.55, 0.32), _on_continue)
-		y += 70.0
+		_add_menu_button("Continue Run", Vector2(490.0, 132.0), Vector2(300.0, 50.0),
+			Color(0.20, 0.55, 0.32), _on_continue, 22)
 
-	# New run — pick how campaign battles are fought
-	_add_menu_button("New Game · 2D Turn-Based", Vector2(490.0, y), Vector2(300.0, 58.0),
-		Color(0.18, 0.36, 0.65), _on_new_game_2d)
-	y += 64.0
-	_add_menu_button("New Game · 3D Real-Time", Vector2(490.0, y), Vector2(300.0, 58.0),
-		Color(0.36, 0.26, 0.60), _on_new_game_3d)
-	y += 64.0
-	_add_menu_button("New Game · Auto-Battler", Vector2(490.0, y), Vector2(300.0, 58.0),
-		Color(0.30, 0.50, 0.38), _on_new_game_auto)
-	y += 78.0
+	# New campaign — pick the battle style the whole run is fought in.
+	_add_centered_label("NEW CAMPAIGN — choose your battle style", 15,
+		Color(0.72, 0.74, 0.52), 198.0)
+	_add_button_row(CAMPAIGN_MODES.map(func(md): return {
+			"t": md["t"], "c": md["c"], "cb": _start_new_game.bind(md["m"])
+		}), 226.0, 216.0, 64.0, 20)
 
-	# Skirmishes are self-contained battle modes, no campaign state touched.
-	_add_menu_button("Skirmish 3D", Vector2(430.0, y), Vector2(120.0, 54.0),
-		Color(0.45, 0.30, 0.62), _on_skirmish_3d)
-	_add_menu_button("Skirmish 2D", Vector2(580.0, y), Vector2(120.0, 54.0),
-		Color(0.32, 0.40, 0.55), _on_skirmish_2d)
-	_add_menu_button("Auto Battle", Vector2(730.0, y), Vector2(120.0, 54.0),
-		Color(0.30, 0.48, 0.36), _on_auto_battler)
-	_add_menu_button("Tower Defence", Vector2(580.0, y + 64.0), Vector2(270.0, 50.0),
-		Color(0.40, 0.34, 0.22), _on_tower_defense)
+	# Quick skirmishes — one-off battles, no campaign state touched.
+	_add_centered_label("QUICK SKIRMISH — one-off battles, no campaign", 15,
+		Color(0.62, 0.66, 0.74), 328.0)
+	_add_button_row([
+		{"t": "3D Skirmish",   "c": Color(0.45, 0.30, 0.62), "cb": _on_skirmish_3d},
+		{"t": "2D Real-Time",  "c": Color(0.32, 0.40, 0.55), "cb": _on_skirmish_2d},
+		{"t": "Auto Battle",   "c": Color(0.30, 0.48, 0.36), "cb": _on_auto_battler},
+		{"t": "Tower Defence", "c": Color(0.45, 0.38, 0.20), "cb": _on_tower_defense},
+	], 356.0, 220.0, 52.0, 18)
 
-	var hint := Label.new()
-	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
-	hint.add_theme_font_size_override("font_size", 13)
-	hint.modulate = Color(0.40, 0.40, 0.45)
-	hint.position = Vector2(60.0, 680.0)
-	add_child(hint)
+	_add_centered_label("Left-click act · Right-click / Esc cancel · Tab cycle · Enter end turn · Q ability · H help",
+		13, Color(0.40, 0.40, 0.45), 692.0)
 
 	if not has_save:
 		_build_meta_panel()
 
-func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable) -> void:
+# Centred full-width label helper.
+func _add_centered_label(text: String, font_size: int, color: Color, y: float) -> void:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", font_size)
+	l.modulate = color
+	l.position = Vector2(0.0, y)
+	l.size = Vector2(1280.0, float(font_size) + 8.0)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(l)
+
+# Lay a row of {t, c, cb} buttons centred horizontally at y.
+func _add_button_row(items: Array, y: float, bw: float, bh: float, fs: int) -> void:
+	var gap: float = 8.0
+	var total: float = items.size() * (bw + gap) - gap
+	var sx: float = (1280.0 - total) * 0.5
+	for i in range(items.size()):
+		var it: Dictionary = items[i]
+		_add_menu_button(String(it["t"]), Vector2(sx + i * (bw + gap), y),
+			Vector2(bw, bh), it["c"], it["cb"], fs)
+
+func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable, fs: int = -1) -> void:
 	var btn := Button.new()
 	btn.text     = text
 	btn.position = pos
 	btn.size     = sz
-	btn.add_theme_font_size_override("font_size", 19 if sz.x < 180.0 else 26)
+	btn.add_theme_font_size_override("font_size", fs if fs > 0 else (19 if sz.x < 180.0 else 26))
 	btn.add_theme_stylebox_override("normal",  _btn_style(color))
 	btn.add_theme_stylebox_override("hover",   _btn_style(color.lightened(0.18)))
 	btn.add_theme_stylebox_override("pressed", _btn_style(color.darkened(0.25)))
@@ -146,24 +150,24 @@ func _build_meta_panel() -> void:
 
 	var panel := ColorRect.new()
 	panel.color    = Color(0.10, 0.12, 0.18, 0.92)
-	panel.position = Vector2(440.0, 510.0)
-	panel.size     = Vector2(400.0, 150.0)
+	panel.position = Vector2(360.0, 452.0)
+	panel.size     = Vector2(560.0, 196.0)
 	add_child(panel)
 
 	var border := ColorRect.new()
 	border.color    = Color(0.30, 0.32, 0.40, 1.0)
-	border.position = Vector2(440.0, 510.0)
-	border.size     = Vector2(400.0, 2.0)
+	border.position = Vector2(360.0, 452.0)
+	border.size     = Vector2(560.0, 2.0)
 	add_child(border)
 
 	var header := Label.new()
 	header.text = "PROGRESS"
 	header.add_theme_font_size_override("font_size", 14)
 	header.modulate = Color(0.85, 0.85, 0.45)
-	header.position = Vector2(456.0, 520.0)
+	header.position = Vector2(380.0, 462.0)
 	add_child(header)
 
-	var y: float = 544.0
+	var y: float = 488.0
 	if has_last_run:
 		var prefix: String = ("Cleared the campaign!" if GameManager.last_run_won
 			else "Reached tier %d / %d" % [GameManager.last_run_tier_reached, GameManager.MAP_TIERS])
@@ -171,7 +175,7 @@ func _build_meta_panel() -> void:
 		last.text = "Last run: %s  ·  %d battles won" % [prefix, GameManager.last_run_battles_won]
 		last.add_theme_font_size_override("font_size", 14)
 		last.modulate = Color(0.80, 0.85, 0.90)
-		last.position = Vector2(456.0, y)
+		last.position = Vector2(380.0, y)
 		add_child(last)
 		y += 24.0
 
@@ -185,7 +189,7 @@ func _build_meta_panel() -> void:
 		bt.text = best_tier_str
 		bt.add_theme_font_size_override("font_size", 14)
 		bt.modulate = Color(0.70, 0.78, 0.90)
-		bt.position = Vector2(456.0, y)
+		bt.position = Vector2(380.0, y)
 		add_child(bt)
 		y += 22.0
 
@@ -193,7 +197,7 @@ func _build_meta_panel() -> void:
 		bs.text = "Best streak:  %d wins" % GameManager.best_streak_ever
 		bs.add_theme_font_size_override("font_size", 14)
 		bs.modulate = Color(0.70, 0.78, 0.90)
-		bs.position = Vector2(456.0, y)
+		bs.position = Vector2(380.0, y)
 		add_child(bs)
 		y += 22.0
 
@@ -201,5 +205,5 @@ func _build_meta_panel() -> void:
 		tr.text = "Total runs:  %d" % GameManager.total_runs
 		tr.add_theme_font_size_override("font_size", 14)
 		tr.modulate = Color(0.55, 0.60, 0.70)
-		tr.position = Vector2(456.0, y)
+		tr.position = Vector2(380.0, y)
 		add_child(tr)
