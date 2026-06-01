@@ -232,6 +232,9 @@ const RELICS: Dictionary = {
 	"medkit":    {"name": "Field Kit",     "desc": "Units start each battle +15 HP"},
 	"longbow":   {"name": "War Bow",       "desc": "+1 attack range to all your units"},
 	"coffer":    {"name": "Gilded Coffer", "desc": "+20 gold after every battle"},
+	"war_banner":{"name": "War Banner",    "desc": "+1 action point to all your units"},
+	"keen_edge": {"name": "Keen Edge",     "desc": "+12% crit chance to all your units"},
+	"aegis":     {"name": "Aegis",         "desc": "Your units take 15% less damage"},
 }
 
 # Set before switching to the battle scene
@@ -643,3 +646,13 @@ func relic_max_hp_bonus() -> int:
 
 func relic_range_bonus() -> int:
 	return 1 if has_relic("longbow") else 0
+
+func relic_ap_bonus() -> int:
+	return 1 if has_relic("war_banner") else 0
+
+func relic_crit_bonus() -> float:
+	return 0.12 if has_relic("keen_edge") else 0.0
+
+# Multiplier on damage the player's units take (Aegis relic). 1.0 = no relic.
+func relic_damage_taken_mult() -> float:
+	return 0.85 if has_relic("aegis") else 1.0

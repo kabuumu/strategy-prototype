@@ -14,6 +14,8 @@ var max_ap: int = 2
 
 func refill_ap() -> void:
 	max_ap = GameManager.ap_for(unit_type)
+	if team == 0:
+		max_ap += GameManager.relic_ap_bonus()
 	ap = max_ap
 	has_acted = false
 
@@ -329,7 +331,10 @@ func get_damage_taken_mult() -> float:
 	for u in upgrades:
 		if u == "ironhide":
 			stacks += 1
-	return maxf(0.40, 1.0 - 0.20 * float(stacks))
+	var mult: float = maxf(0.40, 1.0 - 0.20 * float(stacks))
+	if team == 0:
+		mult *= GameManager.relic_damage_taken_mult()   # Aegis relic
+	return mult
 
 # Bonus crit chance contributed by Lucky upgrades (+15% per stack).
 func get_crit_chance_bonus() -> float:
@@ -337,7 +342,10 @@ func get_crit_chance_bonus() -> float:
 	for u in upgrades:
 		if u == "lucky":
 			stacks += 1
-	return 0.15 * float(stacks)
+	var bonus: float = 0.15 * float(stacks)
+	if team == 0:
+		bonus += GameManager.relic_crit_bonus()   # Keen Edge relic
+	return bonus
 
 # Short labels for upgrades (e.g. ["VET", "SS"]) for compact UI display
 func upgrade_short_labels() -> Array[String]:
