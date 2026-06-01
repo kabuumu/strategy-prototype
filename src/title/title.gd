@@ -22,10 +22,10 @@ func _build_ui() -> void:
 		_add_menu_button("Continue Run", Vector2(490.0, 200.0), Vector2(300.0, 56.0),
 			Color(0.20, 0.55, 0.32), _on_continue, 24)
 
-	# New campaign — an auto-battler roguelite run.
+	# New campaign — pick a hero, then start an auto-battler roguelite run.
 	_add_menu_button("New Campaign", Vector2(490.0, 280.0), Vector2(300.0, 56.0),
-		Color(0.30, 0.50, 0.38), _start_new_game.bind("auto"), 24,
-		"Your roster auto-resolves each fight. Strength comes from the army you've built.")
+		Color(0.30, 0.50, 0.38), _on_new_campaign, 24,
+		"Choose a hero, then your roster auto-resolves each fight. Strength comes from the army you've built.")
 
 	# Quick skirmish — a one-off auto battle, no campaign state touched.
 	_add_menu_button("Quick Auto Battle", Vector2(490.0, 356.0), Vector2(300.0, 50.0),
@@ -131,11 +131,9 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 	s.border_color = color.lightened(0.3)
 	return s
 
-func _start_new_game(mode: String) -> void:
-	GameManager.clear_run()   # discard any in-progress run
-	GameManager.reset()
-	GameManager.battle_mode = mode   # always "auto" — campaign runs are auto-battler
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+func _on_new_campaign() -> void:
+	# Route to character select; the chosen hero kicks off the auto-battler run.
+	get_tree().change_scene_to_file("res://src/charselect/charselect.tscn")
 
 func _on_continue() -> void:
 	if GameManager.load_run():

@@ -15,10 +15,12 @@ Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed. SFX via `tools/
 ### Scene flow
 
 ```
-title.tscn  →  level_select.tscn  ⇄  autobattler.tscn
+title.tscn  →  charselect.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 ```
 
-The `title` screen resets state and starts a new run. `level_select` handles the overworld map. `autobattler` auto-resolves one fight; when it ends the player is returned to `level_select`. `level_select` sets `pending_autobattle = true` before switching scenes. The auto-battler is also a standalone Quick Auto Battle from the title (no campaign state).
+`title` New Campaign → `charselect` (pick a hero; does `reset()` + `select_hero`) → `level_select` (overworld map). A battle node opens a pre-battle popup (hero **Fight** or **Buff**), sets `pending_autobattle = true`, and switches to `autobattler`, which auto-resolves one fight and returns to `level_select`. The auto-battler is also a standalone Quick Auto Battle from the title (no campaign/hero state).
+
+**Hero:** one per run (`GameManager.HEROES`, chosen on `charselect`). Each battle the player toggles `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card, never persisted) or **buff** (hero sits out; spend **Valor**, a buff-only resource earned on wins, to apply a team buff via `_apply_hero_buff`). `sway_aptitudes` is stored for the planned Phase-2 recruitment rework.
 
 ### GameManager (autoload singleton)
 

@@ -898,6 +898,12 @@ func _start_campaign_fight() -> void:
 	for entry: Dictionary in GameManager.player_roster:
 		p_cards.append(_campaign_card(String(entry["type"])))
 		p_entries.append(entry)
+	# Hero fights as an extra card (Fight mode). The null roster entry keeps the
+	# zip aligned and signals the survivor write-back to skip it (never persisted).
+	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
+		var hd := GameManager.hero_data()
+		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]), "xp": 0, "hero": true})
+		p_entries.append(null)
 	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
@@ -914,6 +920,9 @@ func _start_campaign_fight() -> void:
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
 		player_units.append(u)
+	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
+	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
+		_apply_hero_buff(GameManager.pending_hero_buff)
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
@@ -923,6 +932,21 @@ func _start_campaign_fight() -> void:
 	_start_abilities_applied = false
 	_speed_scale = 1.0
 	_rebuild_ui()
+
+func _apply_hero_buff(buff_id: String) -> void:
+	for u: RTUnit in player_units:
+		match buff_id:
+			"aegis":
+				u.max_hp = maxi(1, int(round(float(u.max_hp) * 1.15)))
+				u.hp = u.max_hp
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
+			"march":
+				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * 1.15)))
+			"warchest":
+				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25)))
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
 
 func _conclude_campaign(win: bool) -> void:
 	var tier: int = GameManager.pending_battle_tier
@@ -943,6 +967,7 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
+		GameManager.add_valor(2 + (1 if elite else 0))
 		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()

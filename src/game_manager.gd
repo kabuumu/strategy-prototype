@@ -173,6 +173,84 @@ func recruitable_types() -> Array[String]:
 	return out
 
 # ---------------------------------------------------------------------------
+# Heroes — chosen at the start of a campaign on the character-select screen.
+# The hero walks the overworld and, each battle, either FIGHTS (joins the army
+# as a unit built from fight_archetype/fight_level) or BUFFS (sits out, spends
+# Valor to apply `buff` across the team). `sway_aptitudes` is stored now and
+# consumed by the Phase 2 recruitment rework. `sprite_key` reuses existing unit
+# art as placeholder; real hero art is a later task.
+#
+# buff ids applied by the auto-battler:
+#   "aegis"    — team +15% max HP (and heal to full)
+#   "march"    — team +15% attack damage
+#   "warchest" — heal team 25% of max HP
+# ---------------------------------------------------------------------------
+const HEROES: Dictionary = {
+	"knight_captain": {
+		"name": "Knight-Captain",
+		"blurb": "A frontline commander — joins the fight as a tough soldier.",
+		"sprite_key": "soldier",
+		"fight_archetype": "soldier",
+		"fight_level": 3,
+		"buff": {"id": "aegis", "name": "Aegis", "desc": "Team +15% max HP", "cost": 4},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 0, "duel": 2},
+		"start_bonus": {"gold": 0, "units": []},
+	},
+	"bard": {
+		"name": "Bard",
+		"blurb": "A silver tongue — weak in a brawl, but inspires the army.",
+		"sprite_key": "scout",
+		"fight_archetype": "scout",
+		"fight_level": 1,
+		"buff": {"id": "march", "name": "Marching Song", "desc": "Team +15% damage", "cost": 4},
+		"sway_aptitudes": {"dialogue": 2, "persuasion": 0, "duel": 0},
+		"start_bonus": {"gold": 0, "units": ["scout"]},
+	},
+	"merchant_prince": {
+		"name": "Merchant-Prince",
+		"blurb": "Coin opens doors — starts richer and buys loyalty cheaply.",
+		"sprite_key": "healer",
+		"fight_archetype": "healer",
+		"fight_level": 2,
+		"buff": {"id": "warchest", "name": "War Chest", "desc": "Heal team 25%", "cost": 3},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 2, "duel": 0},
+		"start_bonus": {"gold": 6, "units": []},
+	},
+}
+
+const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince"]
+
+# Hero data for the active run ({} when no hero / standalone mode).
+func hero_data() -> Dictionary:
+	return HEROES.get(selected_hero, {})
+
+func has_hero() -> bool:
+	return selected_hero != "" and HEROES.has(selected_hero)
+
+# Choose a hero for a fresh run. Call AFTER reset() so the starting roster and
+# gold exist for the hero's start_bonus to add to.
+func select_hero(id: String) -> void:
+	if not HEROES.has(id):
+		return
+	selected_hero = id
+	valor = 0
+	hero_battle_mode = "fight"
+	pending_hero_buff = ""
+	var bonus: Dictionary = HEROES[id].get("start_bonus", {})
+	gold += int(bonus.get("gold", 0))
+	for t in bonus.get("units", []):
+		add_unit(str(t))
+
+func add_valor(n: int) -> void:
+	valor = max(0, valor + n)
+
+func spend_valor(n: int) -> bool:
+	if valor < n:
+		return false
+	valor -= n
+	return true
+
+# ---------------------------------------------------------------------------
 # Persistent unit upgrades earned after battle wins
 # ---------------------------------------------------------------------------
 # Stacking is permitted (multiple SHARPSHOOTERs = +5 dmg each).
@@ -228,6 +306,11 @@ var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
 var curses: Array[String] = []   # afflictions (run-long negative passives)
 var battle_mode: String = "auto"   # campaign battles are auto-resolved by the auto-battler
+# --- Hero (chosen at the start of a campaign; see HEROES) -------------------
+var selected_hero: String = ""           # "" = no hero (standalone Quick Auto Battle)
+var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
+var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
+var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -357,6 +440,11 @@ func reset() -> void:
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	battles_won = 0
+	# Hero is chosen on the character-select screen AFTER reset() (select_hero).
+	selected_hero = ""
+	valor = 0
+	hero_battle_mode = "fight"
+	pending_hero_buff = ""
 	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()
@@ -410,7 +498,7 @@ func mark_tutorial_seen() -> void:
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
 # Bump when the run-save schema changes incompatibly; older saves are discarded
 # on load instead of loading partial/garbage state.
-const SAVE_VERSION: int = 2
+const SAVE_VERSION: int = 3
 
 func has_saved_run() -> bool:
 	if not FileAccess.file_exists(RUN_SAVE_PATH):
@@ -433,6 +521,8 @@ func save_run() -> void:
 	cfg.set_value("run", "battles_won", battles_won)
 	cfg.set_value("run", "boss_id", boss_id)
 	cfg.set_value("run", "battle_mode", battle_mode)
+	cfg.set_value("run", "selected_hero", selected_hero)
+	cfg.set_value("run", "valor", valor)
 	cfg.save(RUN_SAVE_PATH)
 
 # Load a saved run into the live state. Returns false if no valid save exists.
@@ -464,6 +554,10 @@ func load_run() -> bool:
 	battles_won       = int(cfg.get_value("run", "battles_won", 0))
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
 	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
+	selected_hero     = str(cfg.get_value("run", "selected_hero", ""))
+	valor             = int(cfg.get_value("run", "valor", 0))
+	hero_battle_mode  = "fight"
+	pending_hero_buff = ""
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true
