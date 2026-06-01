@@ -1027,15 +1027,18 @@ func _assign_targets(attackers: Array, defenders: Array) -> void:
 func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	if _unit_id_for(unit) == "archer":
 		return _backline_enemy(unit, defenders)
+	# Favour wounded enemies (concentrate fire) while still preferring the near.
 	var best: RTUnit = null
-	var best_d: float = INF
+	var best_score: float = INF
 	for target: RTUnit in defenders:
 		if not target.is_alive():
 			continue
 		var d := unit.position.distance_to(target.position)
-		if d < best_d:
+		var wounded: float = 1.0 - float(target.hp) / float(maxi(1, target.max_hp))
+		var score: float = d - wounded * 140.0
+		if score < best_score:
 			best = target
-			best_d = d
+			best_score = score
 	return best
 
 func _backline_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
