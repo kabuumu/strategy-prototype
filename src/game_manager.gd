@@ -200,7 +200,7 @@ const MAP_TIERS: int = 5
 var player_roster: Array[Dictionary] = []
 var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
-var battle_mode: String = "2d"   # how campaign battles play: "2d" hex turn-based / "3d" real-time
+var battle_mode: String = "2d"   # how campaign battles play: "2d" hex turn-based / "3d" real-time / "auto" auto-battler
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -239,6 +239,8 @@ var pending_battle_tier: int = 0
 var pending_battle_elite: bool = false
 # When true, the campaign battle is fought as a 3D skirmish (set by level_select).
 var pending_skirmish: bool = false
+# When true, the campaign battle is auto-resolved by the auto-battler (set by level_select).
+var pending_autobattle: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
@@ -403,7 +405,8 @@ func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
 	var out: Array = ["elite_battle"]
 	if count >= 3:
 		out.append("battle")
-	var utility: Array = ["gain_unit", "shop", "heal"]
+	# No "heal" here — units start a run at full HP, so a heal opener is wasted.
+	var utility: Array = ["gain_unit", "shop"]
 	utility.shuffle()
 	var ui: int = 0
 	while out.size() < count:
