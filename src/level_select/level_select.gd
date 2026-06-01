@@ -28,6 +28,7 @@ var _cur_index: int = 0                # index within that tier
 var _targets: Array = []               # reachable next nodes [{tier,index}]
 var _sel: int = 0                      # selected target in _targets
 var _travel_t: float = 0.0             # 0..1 progress along the current edge
+var _step_t: float = 0.0               # footstep SFX accumulator while walking
 var _travel_from: Vector2 = Vector2.ZERO
 var _travel_to: Vector2 = Vector2.ZERO
 var _travel_target: Dictionary = {}    # {tier,index} being walked to
@@ -581,7 +582,10 @@ func _anchor_to_current() -> void:
 func _select_target(dir: int) -> void:
 	if _nav != Nav.AT_NODE or _targets.size() <= 1:
 		return
+	var prev := _sel
 	_sel = wrapi(_sel + dir, 0, _targets.size())
+	if _sel != prev:
+		Sfx.play("select", -12.0)
 	_update_node_detail()
 	queue_redraw()
 
@@ -598,6 +602,7 @@ func _begin_travel() -> void:
 	_travel_from = _standing_pos()
 	_travel_to = _node_world_pos(int(_travel_target["tier"]), int(_travel_target["index"]))
 	_travel_t = 0.0
+	_step_t = 0.0
 	_nav = Nav.TRAVELING
 	_gen_edge_content()
 
@@ -630,6 +635,11 @@ func _update_travel(delta: float) -> void:
 	var dist: float = maxf(1.0, _travel_from.distance_to(_travel_to))
 	_travel_t = minf(1.0, _travel_t + delta * WALK_SPEED / dist)
 	_avatar = _travel_from.lerp(_travel_to, _travel_t)
+	# Quiet footsteps while actually advancing (plays often, so keep it low).
+	_step_t += delta
+	if _step_t >= 0.32:
+		_step_t -= 0.32
+		Sfx.play("step", -18.0)
 	for p: Dictionary in _edge_pickups:
 		if not bool(p.get("taken", false)) and _travel_t >= float(p["t"]):
 			_collect_pickup(p)
@@ -651,6 +661,8 @@ func _arrive() -> void:
 	var tgt := _travel_target
 	_avatar = _travel_to
 	_nav = Nav.AT_NODE
+	_step_t = 0.0
+	Sfx.play("capture", -10.0)   # soft "you reached a node" cue
 	_trigger_node(int(tgt["tier"]), int(tgt["index"]))
 
 # A roadside encounter: a random event, or a lone recruit (dialogue/persuasion
@@ -677,6 +689,10 @@ func _node_detail_text(tier: int, index: int) -> String:
 	var lines: Array[String] = [title, TYPE_DESC.get(type_key, "")]
 	if type_key in ["battle", "elite_battle"]:
 		var elite := type_key == "elite_battle"
+		if elite:
+			var m := GameManager.elite_modifier_data(tier)
+			if not m.is_empty():
+				lines.append("Elite: %s — %s" % [String(m["name"]), String(m["desc"])])
 		var roster: Array[String] = GameManager.get_battle_enemy_roster(tier, elite)
 		var counts: Dictionary = {}
 		for k: String in roster:
@@ -890,6 +906,13 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 		String(hero.get("name", "Hero")), String(hero.get("name", "your hero"))],
 		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(504.0, 24.0)))
 
+	# Elite modifier note (only meaningful for elite battles), under the subtitle.
+	if elite:
+		var m := GameManager.elite_modifier_data(tier)
+		if not m.is_empty():
+			_popup.add_child(UITheme.label("Elite — %s: %s" % [String(m["name"]), String(m["desc"])],
+				13, Color(0.92, 0.72, 0.98), Vector2(28.0, 76.0), Vector2(504.0, 18.0)))
+
 	# Active army synergies (composition bonuses) under the subtitle.
 	var syn_ids := GameManager.army_synergies()
 	var syn_text: String
@@ -901,13 +924,13 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 			syn_names.append(String(GameManager.SYNERGIES[sid]["name"]))
 		syn_text = "Synergies: " + "  ·  ".join(syn_names)
 	_popup.add_child(UITheme.label(syn_text, 13, Color(0.70, 0.92, 0.88),
-		Vector2(28.0, 78.0), Vector2(504.0, 20.0)))
+		Vector2(28.0, 94.0), Vector2(504.0, 20.0)))
 
 	# Fight — hero joins the army as a unit.
-	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 102.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 116.0), Vector2(504.0, 24.0)))
 	_popup.add_child(UITheme.label("Fights alongside your army.  Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 126.0), Vector2(504.0, 20.0)))
-	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 148.0), Vector2(504.0, 42.0),
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 140.0), Vector2(504.0, 20.0)))
+	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 162.0), Vector2(504.0, 42.0),
 		UITheme.GREEN.darkened(0.1), _on_prebattle_fight.bind(tier, elite)))
 
 	# Buff — spend Valor for a team-wide boon instead of fighting.

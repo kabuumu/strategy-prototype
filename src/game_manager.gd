@@ -216,9 +216,65 @@ const HEROES: Dictionary = {
 		"sway_aptitudes": {"dialogue": 0, "persuasion": 2, "duel": 0},
 		"start_bonus": {"gold": 6, "units": []},
 	},
+	# Unlockable heroes (see HERO_UNLOCK) — earned via meta-progression.
+	"warden": {
+		"name": "Warden",
+		"blurb": "An unbreakable shield — soaks hits so the army survives.",
+		"sprite_key": "healer",
+		"fight_archetype": "healer",
+		"fight_level": 3,
+		"buff": {"id": "aegis", "name": "Bulwark", "desc": "Team +15% max HP", "cost": 3},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 1, "duel": 1},
+		"start_bonus": {"gold": 0, "units": ["soldier"]},
+	},
+	"trickster": {
+		"name": "Trickster",
+		"blurb": "Fast and cunning — talks circles around recruits.",
+		"sprite_key": "scout",
+		"fight_archetype": "scout",
+		"fight_level": 2,
+		"buff": {"id": "march", "name": "Feint", "desc": "Team +15% damage", "cost": 4},
+		"sway_aptitudes": {"dialogue": 2, "persuasion": 1, "duel": 0},
+		"start_bonus": {"gold": 4, "units": []},
+	},
+	"templar": {
+		"name": "Templar",
+		"blurb": "A holy duelist — strong alone, steadies the line.",
+		"sprite_key": "archer",
+		"fight_archetype": "archer",
+		"fight_level": 3,
+		"buff": {"id": "warchest", "name": "Benediction", "desc": "Heal team 25%", "cost": 4},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 0, "duel": 2},
+		"start_bonus": {"gold": 0, "units": []},
+	},
 }
 
-const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince"]
+const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince", "warden", "trickster", "templar"]
+
+# Heroes not listed here are always unlocked (the three starters). Each entry:
+# the meta stat to check, the minimum value, and a hint shown on the locked card.
+const HERO_UNLOCK: Dictionary = {
+	"warden":    {"stat": "runs_won",          "min": 1, "hint": "Win a run"},
+	"trickster": {"stat": "best_tier_reached", "min": 6, "hint": "Reach tier 6 in a run"},
+	"templar":   {"stat": "best_streak_ever",  "min": 6, "hint": "Win 6 battles in a row"},
+}
+
+func _meta_stat(key: String) -> int:
+	match key:
+		"runs_won":          return runs_won
+		"best_tier_reached": return best_tier_reached
+		"best_streak_ever":  return best_streak_ever
+		"total_runs":        return total_runs
+	return 0
+
+func is_hero_unlocked(id: String) -> bool:
+	if not HERO_UNLOCK.has(id):
+		return true
+	var req: Dictionary = HERO_UNLOCK[id]
+	return _meta_stat(String(req["stat"])) >= int(req["min"])
+
+func hero_unlock_hint(id: String) -> String:
+	return String(HERO_UNLOCK.get(id, {}).get("hint", ""))
 
 # Hero data for the active run ({} when no hero / standalone mode).
 func hero_data() -> Dictionary:
@@ -428,12 +484,37 @@ func buff_power_factor(buff_id: String) -> float:
 		bonus = 0.12
 	return 1.0 + bonus * hero_buff_mult()
 
+# ---------------------------------------------------------------------------
+# Elite modifiers — every elite_battle (and the boss) rolls a deterministic
+# modifier that buffs the enemy host. Applied to enemy units in the autobattler;
+# factored into enemy_power so the odds reflect it.
+# ---------------------------------------------------------------------------
+const ELITE_MODIFIERS: Dictionary = {
+	"frenzied": {"name": "Frenzied", "desc": "Enemies deal +25% damage",        "hp": 1.0,  "dmg": 1.25, "speed": 1.0},
+	"armored":  {"name": "Armored",  "desc": "Enemies have +30% HP",            "hp": 1.30, "dmg": 1.0,  "speed": 1.0},
+	"swift":    {"name": "Swift",    "desc": "Enemies move +30% faster",        "hp": 1.0,  "dmg": 1.0,  "speed": 1.30},
+	"vengeful": {"name": "Vengeful", "desc": "Enemies have +15% HP and damage", "hp": 1.15, "dmg": 1.15, "speed": 1.0},
+}
+const ELITE_MODIFIER_IDS: Array[String] = ["frenzied", "armored", "swift", "vengeful"]
+
+func elite_modifier(tier: int) -> String:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = tier * 911 + 17
+	return ELITE_MODIFIER_IDS[rng.randi_range(0, ELITE_MODIFIER_IDS.size() - 1)]
+
+func elite_modifier_data(tier: int) -> Dictionary:
+	return ELITE_MODIFIERS.get(elite_modifier(tier), {})
+
 func enemy_power(tier: int, elite: bool) -> float:
 	var total: float = 0.0
 	for t in get_battle_enemy_roster(tier, elite):
 		var u: Dictionary = UNIT_TYPES[t]
 		total += _unit_power(int(u["max_hp"]), int(u["damage"]))
-	return total * get_hp_multiplier(tier, elite)
+	total *= get_hp_multiplier(tier, elite)
+	if elite:
+		var m: Dictionary = elite_modifier_data(tier)
+		total *= (float(m.get("hp", 1.0)) + float(m.get("dmg", 1.0))) * 0.5
+	return total
 
 # Army power under a given hero mode ("fight" adds the hero unit, "buff" scales).
 func army_power_for(mode: String) -> float:
@@ -536,6 +617,7 @@ var battles_won: int = 0
 var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
+var runs_won: int = 0           # persists across runs (boss cleared) — gates hero unlocks
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -641,6 +723,8 @@ func reset() -> void:
 		last_run_tier_reached = current_tier + 1  # 1-based
 		last_run_won = battles_won >= MAP_TIERS
 		total_runs += 1
+		if last_run_won:
+			runs_won += 1
 		if last_run_tier_reached > best_tier_reached:
 			best_tier_reached = last_run_tier_reached
 		_save_meta()
@@ -695,6 +779,7 @@ func _load_meta() -> void:
 	best_streak_ever  = int(cfg.get_value("meta", "best_streak_ever",  0))
 	best_tier_reached = int(cfg.get_value("meta", "best_tier_reached", 0))
 	total_runs        = int(cfg.get_value("meta", "total_runs",        0))
+	runs_won          = int(cfg.get_value("meta", "runs_won",          0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
 
@@ -703,6 +788,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "best_streak_ever",  best_streak_ever)
 	cfg.set_value("meta", "best_tier_reached", best_tier_reached)
 	cfg.set_value("meta", "total_runs",        total_runs)
+	cfg.set_value("meta", "runs_won",          runs_won)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
 	cfg.save(META_PATH)

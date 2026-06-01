@@ -123,6 +123,11 @@ def main():
     _write("lose", seq(tone(440, 0.16, 0.4, kind="square"),
                        tone(349, 0.16, 0.4, kind="square"),
                        tone(262, 0.34, 0.4, kind="square", release=0.26)))
+    # Footstep — soft low thump for overworld walking (quiet; plays often)
+    _write("step", mix(tone(150, 0.05, 0.22, kind="sine", release=0.04),
+                       noise(0.03, 0.07)))
+    # Select — short high tick for choosing a fork on the overworld
+    _write("select", tone(720, 0.04, 0.30, kind="square", release=0.03))
 
 
 if __name__ == "__main__":

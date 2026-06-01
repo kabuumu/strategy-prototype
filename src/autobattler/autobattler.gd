@@ -217,9 +217,12 @@ func _rebuild_ui() -> void:
 		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
 		var odds: String = GameManager.battle_odds(
 			GameManager.pending_battle_tier, GameManager.pending_battle_elite, GameManager.hero_battle_mode)
-		_add_label("Campaign Battle — Tier %d%s   ·   Odds: %s" % [
-				GameManager.pending_battle_tier + 1, et, odds],
-				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(620.0, 26.0))
+		var mod_text: String = ""
+		if GameManager.pending_battle_elite:
+			mod_text = "   ·   %s" % String(GameManager.elite_modifier_data(GameManager.pending_battle_tier).get("name", ""))
+		_add_label("Campaign Battle — Tier %d%s   ·   Odds: %s%s" % [
+				GameManager.pending_battle_tier + 1, et, odds, mod_text],
+				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(760.0, 26.0))
 	else:
 		_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
 				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(470.0, 26.0))
@@ -945,6 +948,16 @@ func _start_campaign_fight() -> void:
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
+	# Elite battles roll a deterministic modifier that buffs the whole enemy host.
+	if elite:
+		var m := GameManager.elite_modifier_data(tier)
+		for u: RTUnit in enemy_units:
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * float(m.get("hp", 1.0)))))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * float(m.get("dmg", 1.0)))))
+			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
+			if u.has_method("_refresh_hp_bar"):
+				u.call("_refresh_hp_bar")
 	phase = Phase.FIGHT
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
