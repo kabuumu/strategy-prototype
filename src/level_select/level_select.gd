@@ -45,6 +45,7 @@ var _depth_label: Label
 var _node_detail_label: Label
 var _popup: Control = null
 var _settings_overlay: Control = null
+var _inventory_popup: Control = null
 var _shop_relic_offer: String = ""
 
 # Hover preview — built once, shown when the cursor enters a battle node so
@@ -72,11 +73,66 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-		# Esc closes a shop/unit popup if open; otherwise toggles the settings menu
-		if _popup != null:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.keycode == KEY_I:
+		if _popup == null:
+			_toggle_inventory()
+		return
+	if event.keycode == KEY_ESCAPE:
+		# Esc closes the inventory or a shop/unit popup first; else the settings menu.
+		if _inventory_popup != null:
+			_toggle_inventory()
+		elif _popup != null:
 			return
-		_toggle_settings_menu()
+		else:
+			_toggle_settings_menu()
+
+# Inventory & status overlay — explains every owned relic and affliction.
+func _toggle_inventory() -> void:
+	if _inventory_popup != null:
+		_inventory_popup.queue_free()
+		_inventory_popup = null
+		return
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.z_index = 220
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.add_child(dim)
+	UITheme.panel(root, Vector2(330.0, 110.0), Vector2(620.0, 500.0), Color(0.08, 0.09, 0.14, 0.99), Color(0.45, 0.46, 0.62))
+	root.add_child(UITheme.label("Inventory & Status", 26, UITheme.GOLD, Vector2(360.0, 128.0), Vector2(560.0, 32.0)))
+	root.add_child(UITheme.label("Gold: %d" % GameManager.gold, 15, UITheme.GOLD, Vector2(770.0, 134.0), Vector2(160.0, 24.0)))
+	var y: float = 174.0
+	root.add_child(UITheme.label("RELICS (passive boons)", 14, Color(0.82, 0.86, 0.55), Vector2(360.0, y), Vector2(560.0, 22.0)))
+	y += 26.0
+	if GameManager.relics.is_empty():
+		root.add_child(UITheme.label("  — none yet —", 13, UITheme.TEXT_MUTED, Vector2(372.0, y), Vector2(548.0, 20.0)))
+		y += 26.0
+	else:
+		for id: String in GameManager.relics:
+			var r: Dictionary = GameManager.RELICS[id]
+			root.add_child(UITheme.label("%s — %s" % [String(r["name"]), String(r["desc"])],
+				13, Color(0.85, 0.92, 0.98), Vector2(372.0, y), Vector2(548.0, 34.0)))
+			y += 32.0
+	y += 14.0
+	root.add_child(UITheme.label("AFFLICTIONS (curses)", 14, Color(0.92, 0.52, 0.52), Vector2(360.0, y), Vector2(560.0, 22.0)))
+	y += 26.0
+	if GameManager.curses.is_empty():
+		root.add_child(UITheme.label("  — none —", 13, UITheme.TEXT_MUTED, Vector2(372.0, y), Vector2(548.0, 20.0)))
+		y += 26.0
+	else:
+		for id2: String in GameManager.curses:
+			var c: Dictionary = GameManager.CURSES[id2]
+			root.add_child(UITheme.label("%s — %s" % [String(c["name"]), String(c["desc"])],
+				13, Color(0.98, 0.78, 0.78), Vector2(372.0, y), Vector2(548.0, 34.0)))
+			y += 32.0
+	root.add_child(UITheme.button("Close  [I / Esc]", Vector2(530.0, 552.0), Vector2(220.0, 42.0),
+		Color(0.30, 0.32, 0.44), _toggle_inventory))
+	add_child(root)
+	_inventory_popup = root
 
 # Pause/settings overlay opened with Esc.
 func _toggle_settings_menu() -> void:
@@ -281,6 +337,8 @@ func _build_hud() -> void:
 	side.add_child(_roster_label)
 
 	side.add_child(UITheme.label("Relics", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 272.0)))
+	side.add_child(UITheme.button("Inventory  [I]", Vector2(176.0, 266.0), Vector2(140.0, 26.0),
+		Color(0.28, 0.30, 0.42), _toggle_inventory, 12))
 	_relics_label = UITheme.label("", 12, Color(0.75, 0.85, 0.95), Vector2(18.0, 292.0), Vector2(292.0, 82.0))
 	side.add_child(_relics_label)
 
