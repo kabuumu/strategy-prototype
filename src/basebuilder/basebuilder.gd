@@ -1,72 +1,69 @@
 extends Node2D
 
 # Base-building RTS skirmish — inspired by AoE2 / Red Alert 2, boiled down to the
-# core loop: your Keep earns gold, you spend it on economy + production
-# buildings, produced regiments auto-march across the field and smash the enemy
-# Keep while defending your own. Destroy the enemy Keep to win; lose yours and
-# it's over. The enemy mirrors you with a scaling production AI.
+# core loop: your Town Centre earns gold, you spend it on economy + production
+# buildings, produced regiments auto-march across the field and tear down the
+# enemy's base while you defend your own.
+#
+# WIN by razing the ENTIRE enemy base — every production building AND the Town
+# Centre. LOSE if your Town Centre falls. The enemy starts with its own buildings
+# (which you must destroy) and produces a scaling stream of attackers.
 #
 # Two entry points: standalone from the title, or a campaign battle
 # (battle_mode "base", GameManager.pending_base) that reports win/loss back.
 #
-# Combat reuses RTUnit (regiments). Keeps are RTUnits too, so units can attack
-# them and the win/lose check is just "is that Keep still alive".
+# Every structure is an RTUnit "garrison" (stationary, has HP) so regiments can
+# attack it and the win/lose check is just "are any of that side's structures
+# still standing". Combat reuses the RTUnit regiment engine.
 
 const UITheme := preload("res://src/ui/ui_theme.gd")
 const RTUnit := preload("res://src/rtbattle/rt_unit.gd")
 
 const FIELD_RECT: Rect2 = Rect2(40.0, 96.0, 1200.0, 560.0)
-const PLAYER_BUILD_MAX_X: float = 600.0     # you build left of this
-const PLAYER_KEEP_POS: Vector2 = Vector2(120.0, 376.0)
-const ENEMY_KEEP_POS: Vector2 = Vector2(1160.0, 376.0)
-const MAX_UNITS_PER_SIDE: int = 40          # perf cap
+const PLAYER_BUILD_MAX_X: float = 560.0     # you build left of this
+const ENEMY_BUILD_MIN_X: float = 720.0
+const PLAYER_TC_POS: Vector2 = Vector2(110.0, 376.0)
+const ENEMY_TC_POS: Vector2 = Vector2(1170.0, 376.0)
+const MAX_UNITS_PER_SIDE: int = 36          # perf cap
 
-# Keep stats (an RTUnit that mostly stands and defends).
-const KEEP_STATS: Dictionary = {
-	"name": "Keep", "sprite_key": "soldier",
-	"soldier_count": 16, "hp_per_soldier": 60, "damage_per_attack": 10,
-	"attack_cooldown": 1.0, "attack_range_px": 150.0, "move_speed_px": 0.0,
+# Structures. tc = Town Centre (the HQ). The rest are buildable. "produces"
+# spawns a regiment every "interval"s; "income" adds passive gold/sec (player);
+# "dmg" > 0 makes it defend (Town Centre + tower). hp via count * per.
+const STRUCTURES: Dictionary = {
+	"tc":       {"name": "Town Centre",  "count": 6, "per": 150, "dmg": 12, "range": 150.0, "cd": 1.0, "color": Color(0.30, 0.40, 0.62)},
+	"farm":     {"name": "Farm",          "cost": 40,  "count": 3, "per": 60,  "dmg": 0, "range": 24.0, "cd": 1.0, "income": 3,    "color": Color(0.55, 0.50, 0.20)},
+	"barracks": {"name": "Barracks",      "cost": 70,  "count": 4, "per": 60,  "dmg": 0, "range": 24.0, "cd": 1.0, "produces": "infantry", "interval": 5.0, "color": Color(0.42, 0.30, 0.25)},
+	"range":    {"name": "Archery Range", "cost": 90,  "count": 4, "per": 55,  "dmg": 0, "range": 24.0, "cd": 1.0, "produces": "archers",  "interval": 6.0, "color": Color(0.25, 0.42, 0.28)},
+	"stable":   {"name": "Stable",        "cost": 120, "count": 4, "per": 65,  "dmg": 0, "range": 24.0, "cd": 1.0, "produces": "cavalry",  "interval": 7.5, "color": Color(0.30, 0.30, 0.48)},
+	"tower":    {"name": "Watchtower",    "cost": 80,  "count": 4, "per": 50,  "dmg": 10, "range": 200.0, "cd": 1.1, "color": Color(0.34, 0.36, 0.46)},
 }
+const BUILDABLE: Array = ["farm", "barracks", "range", "stable", "tower"]
 
-# Buildings you can place. "produces" spawns a unit every "interval" seconds;
-# "income" adds passive gold/sec. Towers are stationary defensive RTUnits.
-const BUILDING_TYPES: Dictionary = {
-	"farm":     {"name": "Farm",         "cost": 40,  "income": 3,  "color": Color(0.55, 0.50, 0.20)},
-	"barracks": {"name": "Barracks",     "cost": 70,  "produces": "infantry", "interval": 5.0, "color": Color(0.40, 0.30, 0.25)},
-	"range":    {"name": "Archery Range","cost": 90,  "produces": "archers",  "interval": 6.0, "color": Color(0.25, 0.42, 0.28)},
-	"stable":   {"name": "Stable",       "cost": 120, "produces": "cavalry",  "interval": 7.5, "color": Color(0.30, 0.30, 0.48)},
-	"tower":    {"name": "Watchtower",   "cost": 80,  "tower": "archers",     "color": Color(0.34, 0.36, 0.46)},
-}
-
-# Regiment stats for produced units (RTUnit stat dicts).
 const UNIT_STATS: Dictionary = {
 	"infantry": {"name": "Infantry", "sprite_key": "soldier",
-		"soldier_count": 8, "hp_per_soldier": 16, "damage_per_attack": 8,
+		"soldier_count": 8, "hp_per_soldier": 16, "damage_per_attack": 9,
 		"attack_cooldown": 1.0, "attack_range_px": 56.0, "move_speed_px": 70.0},
 	"archers":  {"name": "Archers", "sprite_key": "archer",
-		"soldier_count": 6, "hp_per_soldier": 11, "damage_per_attack": 9,
+		"soldier_count": 6, "hp_per_soldier": 11, "damage_per_attack": 10,
 		"attack_cooldown": 1.3, "attack_range_px": 200.0, "move_speed_px": 64.0},
 	"cavalry":  {"name": "Cavalry", "sprite_key": "scout",
-		"soldier_count": 6, "hp_per_soldier": 16, "damage_per_attack": 11,
+		"soldier_count": 6, "hp_per_soldier": 16, "damage_per_attack": 12,
 		"attack_cooldown": 0.9, "attack_range_px": 56.0, "move_speed_px": 120.0},
 }
 
 var _gold: float = 150.0
-var _income: float = 4.0           # passive gold/sec (Keep + farms)
+var _income: float = 4.0
 var _selected: String = "barracks"
 var _paused: bool = false
 var _ended: bool = false
 var _won: bool = false
 
-var _player_base: RTUnit
-var _enemy_base: RTUnit
+var _structures: Array = []        # [{rt:RTUnit, vis:Node2D, type, team, home:Vector2, timer:float}]
 var _player_units: Array = []
 var _enemy_units: Array = []
-var _buildings: Array = []         # [{node, type, timer, interval, produces}]
 
 var _retarget_timer: float = 0.0
-var _enemy_spawn_timer: float = 6.0
-var _enemy_income_accum: float = 0.0
+var _enemy_build_timer: float = 14.0   # enemy occasionally adds a building
 var _elapsed: float = 0.0
 
 var _ui: CanvasLayer
@@ -81,7 +78,7 @@ var _campaign: bool = false
 var _campaign_lost: bool = false
 var _campaign_relic: String = ""
 var _campaign_reward_gold: int = 0
-var _enemy_strength: float = 1.0   # scales enemy HP / spawn cadence (tier)
+var _enemy_strength: float = 1.0
 
 func _ready() -> void:
 	_rng.randomize()
@@ -90,27 +87,82 @@ func _ready() -> void:
 		GameManager.pending_base = false
 		_campaign = true
 		var tier: int = GameManager.pending_battle_tier
-		_enemy_strength = 1.0 + tier * 0.25 + (0.3 if GameManager.pending_battle_elite else 0.0)
+		_enemy_strength = 1.0 + tier * 0.22 + (0.3 if GameManager.pending_battle_elite else 0.0)
 		_gold = 150.0 + float(maxi(0, GameManager.player_roster.size() - 3)) * 25.0
-	_spawn_bases()
+	_spawn_initial_bases()
 	_build_ui()
 	_refresh_ui()
 	queue_redraw()
 
-func _spawn_bases() -> void:
-	_player_base = RTUnit.new()
-	add_child(_player_base)
-	_player_base.setup("keep", 0, PLAYER_KEEP_POS, KEEP_STATS)
-	_player_base.clear_order()
-	_player_base.died.connect(func(_u): _conclude(false))
+func _spawn_initial_bases() -> void:
+	_make_structure("tc", 0, PLAYER_TC_POS)
+	_make_structure("tc", 1, ENEMY_TC_POS)
+	# Enemy starts with a small base you must dismantle: barracks + range, plus a
+	# stable / tower on tougher (campaign) fights.
+	_make_structure("barracks", 1, ENEMY_TC_POS + Vector2(-90.0, -110.0))
+	_make_structure("range", 1, ENEMY_TC_POS + Vector2(-90.0, 110.0))
+	if _enemy_strength >= 1.4:
+		_make_structure("stable", 1, ENEMY_TC_POS + Vector2(-150.0, 0.0))
+	if _enemy_strength >= 1.7:
+		_make_structure("tower", 1, ENEMY_TC_POS + Vector2(-40.0, -150.0))
 
-	_enemy_base = RTUnit.new()
-	add_child(_enemy_base)
-	var estats := KEEP_STATS.duplicate(true)
-	estats["hp_per_soldier"] = int(round(float(KEEP_STATS["hp_per_soldier"]) * _enemy_strength))
-	_enemy_base.setup("keep", 1, ENEMY_KEEP_POS, estats)
-	_enemy_base.clear_order()
-	_enemy_base.died.connect(func(_u): _conclude(true))
+func _make_structure(type: String, team: int, pos: Vector2) -> Dictionary:
+	var def: Dictionary = STRUCTURES[type]
+	var per: int = int(def["per"])
+	if team == 1 and type == "tc":
+		per = int(round(float(per) * _enemy_strength))   # enemy HQ scales with tier
+	var stats: Dictionary = {
+		"name": String(def["name"]),
+		"sprite_key": "soldier",
+		"soldier_count": int(def["count"]),
+		"hp_per_soldier": per,
+		"damage_per_attack": int(def.get("dmg", 0)),
+		"attack_cooldown": float(def.get("cd", 1.0)),
+		"attack_range_px": float(def.get("range", 24.0)),
+		"move_speed_px": 0.0,
+	}
+	var rt := RTUnit.new()
+	add_child(rt)
+	rt.setup(type, team, pos, stats)
+	rt.clear_order()
+	var s := {
+		"rt": rt, "vis": _make_structure_visual(type, team, pos), "type": type,
+		"team": team, "home": pos, "timer": float(def.get("interval", 0.0)),
+	}
+	add_child(s["vis"])
+	rt.died.connect(_on_structure_died.bind(s))
+	_structures.append(s)
+	return s
+
+func _make_structure_visual(type: String, team: int, pos: Vector2) -> Node2D:
+	var def: Dictionary = STRUCTURES[type]
+	var n := Node2D.new()
+	n.position = pos
+	n.z_index = 5
+	var big: bool = type == "tc"
+	var sz := Vector2(70.0, 70.0) if big else Vector2(46.0, 46.0)
+	var rect := ColorRect.new()
+	rect.size = sz
+	rect.position = -sz * 0.5
+	rect.color = Color(def["color"]).lerp(Color(0.2, 0.4, 0.85) if team == 0 else Color(0.85, 0.25, 0.25), 0.18)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	n.add_child(rect)
+	var border := ColorRect.new()   # thin top band as a faux roof/border
+	border.size = Vector2(sz.x, 4.0)
+	border.position = Vector2(-sz.x * 0.5, -sz.y * 0.5 - 4.0)
+	border.color = (Color(0.45, 0.62, 0.95) if team == 0 else Color(0.95, 0.45, 0.45))
+	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	n.add_child(border)
+	var lbl := UITheme.label(String(def["name"]).substr(0, 3).to_upper() if not big else "HQ",
+		12 if not big else 15, Color(0.95, 0.96, 0.98), Vector2(-sz.x * 0.5, -8.0), Vector2(sz.x, 18.0))
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	n.add_child(lbl)
+	return n
+
+func _on_structure_died(s: Dictionary) -> void:
+	if is_instance_valid(s["vis"]):
+		s["vis"].queue_free()
+	Sfx.play("death", -8.0)
 
 # ---------------------------------------------------------------------------
 # UI
@@ -124,36 +176,36 @@ func _build_ui() -> void:
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(top)
 
-	_ui.add_child(UITheme.label("BASE BUILDING — raze the enemy keep", 22, UITheme.GOLD, Vector2(20.0, 8.0), Vector2(520.0, 30.0)))
+	_ui.add_child(UITheme.label("BASE BUILDING — raze the enemy base", 22, UITheme.GOLD, Vector2(20.0, 8.0), Vector2(540.0, 30.0)))
 	_gold_label = UITheme.label("", 17, UITheme.GOLD, Vector2(20.0, 42.0), Vector2(260.0, 24.0))
 	_ui.add_child(_gold_label)
-	_stat_label = UITheme.label("", 14, UITheme.TEXT_MUTED, Vector2(280.0, 44.0), Vector2(360.0, 24.0))
+	_stat_label = UITheme.label("", 14, UITheme.TEXT_MUTED, Vector2(280.0, 44.0), Vector2(380.0, 24.0))
 	_ui.add_child(_stat_label)
 
 	var x := 470.0
-	for id: String in BUILDING_TYPES:
-		var b: Dictionary = BUILDING_TYPES[id]
+	for id: String in BUILDABLE:
+		var b: Dictionary = STRUCTURES[id]
 		_ui.add_child(UITheme.button("%s\n%dg" % [String(b["name"]), int(b["cost"])],
 			Vector2(x, 6.0), Vector2(118.0, 48.0), Color(b["color"]).darkened(0.05),
 			_on_pick.bind(id), 12))
 		x += 124.0
 
 	_ui.add_child(UITheme.button("Menu", Vector2(1158.0, 8.0), Vector2(100.0, 40.0), UITheme.RED, _toggle_settings_menu))
-	_status_label = UITheme.label("Select a building, click your half of the field to place it.",
-		14, UITheme.TEXT_MUTED, Vector2(20.0, 66.0), Vector2(900.0, 20.0))
+	_status_label = UITheme.label("Select a building, click your half of the field to place it. Destroy every enemy building AND their HQ to win.",
+		14, UITheme.TEXT_MUTED, Vector2(20.0, 66.0), Vector2(1000.0, 20.0))
 	_ui.add_child(_status_label)
 
 func _refresh_ui() -> void:
 	if _gold_label != null:
 		_gold_label.text = "Gold: %d   (+%d/s)" % [int(_gold), int(_income)]
-	if _stat_label != null and is_instance_valid(_player_base) and is_instance_valid(_enemy_base):
-		_stat_label.text = "Your Keep %d   ·   Enemy Keep %d   ·   Army %d v %d" % [
-			_player_base.hp, _enemy_base.hp, _player_units.size(), _enemy_units.size()]
+	if _stat_label != null:
+		_stat_label.text = "Enemy buildings left: %d   ·   Army %d v %d" % [
+			_alive_structures(1).size(), _player_units.size(), _enemy_units.size()]
 
 func _on_pick(id: String) -> void:
 	_selected = id
 	_status_label.text = "%s selected (%dg). Click your half of the field." % [
-		String(BUILDING_TYPES[id]["name"]), int(BUILDING_TYPES[id]["cost"])]
+		String(STRUCTURES[id]["name"]), int(STRUCTURES[id]["cost"])]
 
 # ---------------------------------------------------------------------------
 # Building placement
@@ -161,55 +213,25 @@ func _on_pick(id: String) -> void:
 func _try_build(pos: Vector2) -> void:
 	if _ended:
 		return
-	var b: Dictionary = BUILDING_TYPES[_selected]
+	var b: Dictionary = STRUCTURES[_selected]
 	var cost: int = int(b["cost"])
 	if not FIELD_RECT.has_point(pos) or pos.x > PLAYER_BUILD_MAX_X:
 		_status_label.text = "Build on your half of the field (left side)."
 		return
-	if pos.distance_to(PLAYER_KEEP_POS) < 70.0:
-		_status_label.text = "Too close to your Keep."
+	if pos.distance_to(PLAYER_TC_POS) < 78.0:
+		_status_label.text = "Too close to your Town Centre."
 		return
-	for e in _buildings:
-		var n: Node2D = e["node"]
-		if is_instance_valid(n) and n.position.distance_to(pos) < 64.0:
+	for s in _structures:
+		if s["team"] == 0 and is_instance_valid(s["rt"]) and Vector2(s["home"]).distance_to(pos) < 60.0:
 			_status_label.text = "Too close to another building."
 			return
 	if _gold < float(cost):
 		_status_label.text = "Not enough gold for %s." % String(b["name"])
 		return
 	_gold -= float(cost)
-	if b.has("income"):
-		_income += float(b["income"])
-	if b.has("tower"):
-		var t := RTUnit.new()
-		add_child(t)
-		t.setup("tower", 0, pos, UNIT_STATS[String(b["tower"])])
-		t.clear_order()
-		_player_units.append(t)   # a stationary defender (move_speed kept; we never order it to move)
-	var node := _make_building_node(pos, b)
-	add_child(node)
-	_buildings.append({
-		"node": node, "type": _selected,
-		"timer": float(b.get("interval", 0.0)),
-		"interval": float(b.get("interval", 0.0)),
-		"produces": String(b.get("produces", "")),
-	})
+	_make_structure(_selected, 0, pos)
 	Sfx.play("gold")
 	_refresh_ui()
-
-func _make_building_node(pos: Vector2, b: Dictionary) -> Node2D:
-	var n := Node2D.new()
-	n.position = pos
-	var rect := ColorRect.new()
-	rect.size = Vector2(48.0, 48.0)
-	rect.position = Vector2(-24.0, -24.0)
-	rect.color = Color(b["color"])
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	n.add_child(rect)
-	var lbl := UITheme.label(String(b["name"]).substr(0, 3), 12, Color(0.9, 0.92, 0.95), Vector2(-22.0, -8.0), Vector2(44.0, 16.0))
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	n.add_child(lbl)
-	return n
 
 # ---------------------------------------------------------------------------
 # Simulation
@@ -220,7 +242,7 @@ func _spawn_unit(unit_id: String, team: int, pos: Vector2) -> void:
 		return
 	var u := RTUnit.new()
 	add_child(u)
-	u.setup(unit_id, team, pos + Vector2(_rng.randf_range(-12.0, 12.0), _rng.randf_range(-40.0, 40.0)), UNIT_STATS[unit_id])
+	u.setup(unit_id, team, pos + Vector2(_rng.randf_range(-14.0, 14.0), _rng.randf_range(-44.0, 44.0)), UNIT_STATS[unit_id])
 	u.died.connect(_on_unit_died)
 	pool.append(u)
 
@@ -228,59 +250,84 @@ func _on_unit_died(u: RTUnit) -> void:
 	_player_units.erase(u)
 	_enemy_units.erase(u)
 
+func _alive_structures(team: int) -> Array:
+	return _structures.filter(func(s): return s["team"] == team and is_instance_valid(s["rt"]) and s["rt"].is_alive())
+
+func _player_tc_alive() -> bool:
+	for s in _structures:
+		if s["team"] == 0 and s["type"] == "tc" and is_instance_valid(s["rt"]) and s["rt"].is_alive():
+			return true
+	return false
+
 func _process(delta: float) -> void:
 	if _paused or _ended:
 		return
 	_elapsed += delta
+
+	# Passive income = base + alive player farms.
+	var inc := 4.0
+	for s in _alive_structures(0):
+		inc += float(STRUCTURES[s["type"]].get("income", 0))
+	_income = inc
 	_gold += _income * delta
 
-	# Player production buildings
-	for e in _buildings:
-		if String(e["produces"]) == "":
+	# Production from every alive structure that produces (both sides). The enemy
+	# Town Centre also trickles infantry so it keeps pressuring after buildings fall.
+	for s in _structures:
+		if not is_instance_valid(s["rt"]) or not s["rt"].is_alive():
 			continue
-		e["timer"] = float(e["timer"]) - delta
-		if e["timer"] <= 0.0:
-			e["timer"] = float(e["interval"])
-			var n: Node2D = e["node"]
-			if is_instance_valid(n):
-				_spawn_unit(String(e["produces"]), 0, n.position)
-
-	# Enemy production AI — cadence quickens and composition hardens over time.
-	_enemy_spawn_timer -= delta
-	if _enemy_spawn_timer <= 0.0:
-		_enemy_spawn_timer = maxf(2.0, 6.0 - _elapsed * 0.03) / _enemy_strength
-		_spawn_unit(_enemy_pick(), 1, ENEMY_KEEP_POS)
+		var def: Dictionary = STRUCTURES[s["type"]]
+		var produces := String(def.get("produces", ""))
+		var interval := float(def.get("interval", 0.0))
+		if s["team"] == 1 and s["type"] == "tc":
+			produces = "infantry"
+			interval = maxf(3.0, 7.0 - _elapsed * 0.02) / _enemy_strength
+		if produces == "":
+			continue
+		if s["team"] == 1:
+			interval = interval / _enemy_strength
+		s["timer"] = float(s["timer"]) - delta
+		if s["timer"] <= 0.0:
+			s["timer"] = interval
+			_spawn_unit(produces, int(s["team"]), Vector2(s["home"]))
 
 	var all_units: Array = []
 	all_units.append_array(_player_units)
 	all_units.append_array(_enemy_units)
-	if is_instance_valid(_player_base):
-		all_units.append(_player_base)
-	if is_instance_valid(_enemy_base):
-		all_units.append(_enemy_base)
+	for s in _structures:
+		if is_instance_valid(s["rt"]) and s["rt"].is_alive():
+			all_units.append(s["rt"])
 
-	# Retarget: fight a nearby enemy, otherwise advance on the enemy Keep.
 	_retarget_timer -= delta
 	if _retarget_timer <= 0.0:
 		_retarget_timer = 0.4
-		_assign_orders(_player_units, _enemy_units, _enemy_base)
-		_assign_orders(_enemy_units, _player_units, _player_base)
+		_assign_orders(_player_units, _enemy_units, 1)
+		_assign_orders(_enemy_units, _player_units, 0)
 
 	for u: RTUnit in all_units:
 		if is_instance_valid(u) and u.is_alive():
 			u.tick(delta, all_units)
+	# Keep structures pinned to their footprint (separation must not shove them).
+	for s in _structures:
+		if is_instance_valid(s["rt"]):
+			s["rt"].position = Vector2(s["home"])
 
 	_clean_dead()
 	_refresh_ui()
 	queue_redraw()
+	_check_end()
 
-func _assign_orders(side: Array, foes: Array, foe_base: RTUnit) -> void:
+# Units fight the nearest enemy regiment in range; otherwise they march on the
+# nearest enemy structure (buildings on the way, then the HQ) — so winning means
+# grinding through the whole base.
+func _assign_orders(side: Array, foe_units: Array, foe_team: int) -> void:
+	var structs := _alive_structures(foe_team)
 	for u: RTUnit in side:
 		if not is_instance_valid(u) or not u.is_alive():
 			continue
 		var nearest: RTUnit = null
-		var best: float = 260.0
-		for f: RTUnit in foes:
+		var best: float = 240.0
+		for f: RTUnit in foe_units:
 			if is_instance_valid(f) and f.is_alive():
 				var d: float = u.position.distance_to(f.position)
 				if d < best:
@@ -288,20 +335,34 @@ func _assign_orders(side: Array, foes: Array, foe_base: RTUnit) -> void:
 					nearest = f
 		if nearest != null:
 			u.order_attack(nearest)
-		elif is_instance_valid(foe_base) and foe_base.is_alive():
-			u.order_attack(foe_base)
+			continue
+		var ts: RTUnit = null
+		var tbest: float = INF
+		for s in structs:
+			var d2: float = u.position.distance_to(Vector2(s["home"]))
+			if d2 < tbest:
+				tbest = d2
+				ts = s["rt"]
+		if ts != null:
+			u.order_attack(ts)
 
-func _enemy_pick() -> String:
-	var roll := _rng.randf()
-	if _elapsed > 40.0 and roll < 0.3:
-		return "cavalry"
-	if roll < 0.4:
-		return "archers"
-	return "infantry"
+func _enemy_hq_alive() -> bool:
+	for s in _structures:
+		if s["team"] == 1 and s["type"] == "tc" and is_instance_valid(s["rt"]) and s["rt"].is_alive():
+			return true
+	return false
 
 func _clean_dead() -> void:
 	_player_units = _player_units.filter(func(u): return is_instance_valid(u) and u.is_alive())
 	_enemy_units = _enemy_units.filter(func(u): return is_instance_valid(u) and u.is_alive())
+
+func _check_end() -> void:
+	if _ended:
+		return
+	if _alive_structures(1).is_empty():
+		_conclude(true)
+	elif not _player_tc_alive():
+		_conclude(false)
 
 # ---------------------------------------------------------------------------
 # Win / loss
@@ -328,9 +389,9 @@ func _conclude(win: bool) -> void:
 	if _campaign:
 		sub = ("+%d gold%s" % [_campaign_reward_gold,
 			"   ·   Relic: %s" % String(GameManager.RELICS[_campaign_relic]["name"]) if _campaign_relic != "" else ""]) if win \
-			else "Your keep has fallen — the run ends here."
+			else "Your Town Centre has fallen — the run ends here."
 	else:
-		sub = "The enemy keep is rubble." if win else "Your keep has fallen."
+		sub = "The enemy base is rubble." if win else "Your Town Centre has fallen."
 	root.add_child(UITheme.label(sub, 15, UITheme.TEXT_MUTED, Vector2(500.0, 322.0), Vector2(280.0, 40.0)))
 	if _campaign and win:
 		root.add_child(UITheme.button("Continue", Vector2(512.0, 372.0), Vector2(256.0, 46.0),
@@ -395,19 +456,20 @@ func _toggle_settings_menu() -> void:
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.07, 0.10, 0.07))
 	draw_rect(FIELD_RECT, Color(0.13, 0.18, 0.13))
-	# Your buildable half tint
 	draw_rect(Rect2(FIELD_RECT.position, Vector2(PLAYER_BUILD_MAX_X - FIELD_RECT.position.x, FIELD_RECT.size.y)),
-		Color(0.18, 0.24, 0.30, 0.25))
-	draw_line(Vector2(PLAYER_BUILD_MAX_X, FIELD_RECT.position.y), Vector2(PLAYER_BUILD_MAX_X, FIELD_RECT.end.y),
-		Color(0.40, 0.45, 0.55, 0.5), 1.0)
-	_draw_keep(PLAYER_KEEP_POS, _player_base, Color(0.30, 0.45, 0.75))
-	_draw_keep(ENEMY_KEEP_POS, _enemy_base, Color(0.75, 0.30, 0.30))
-
-func _draw_keep(pos: Vector2, base: RTUnit, color: Color) -> void:
-	var r := Rect2(pos - Vector2(34.0, 44.0), Vector2(68.0, 88.0))
-	draw_rect(r, color.darkened(0.2))
-	draw_rect(r, color.lightened(0.2), false, 3.0)
-	if is_instance_valid(base):
-		var frac: float = clampf(float(base.hp) / float(base.max_hp), 0.0, 1.0)
-		draw_rect(Rect2(r.position + Vector2(6.0, -14.0), Vector2((r.size.x - 12.0) * frac, 7.0)),
+		Color(0.18, 0.24, 0.30, 0.22))
+	draw_rect(Rect2(Vector2(ENEMY_BUILD_MIN_X, FIELD_RECT.position.y), Vector2(FIELD_RECT.end.x - ENEMY_BUILD_MIN_X, FIELD_RECT.size.y)),
+		Color(0.30, 0.18, 0.18, 0.20))
+	# Health pip under each living structure.
+	for s in _structures:
+		if not is_instance_valid(s["rt"]) or not s["rt"].is_alive():
+			continue
+		var rt: RTUnit = s["rt"]
+		var big: bool = s["type"] == "tc"
+		var w: float = 64.0 if big else 42.0
+		var home: Vector2 = Vector2(s["home"])
+		var frac: float = clampf(float(rt.hp) / float(rt.max_hp), 0.0, 1.0)
+		var top := home + Vector2(-w * 0.5, (44.0 if big else 30.0))
+		draw_rect(Rect2(top, Vector2(w, 5.0)), Color(0.12, 0.12, 0.14))
+		draw_rect(Rect2(top, Vector2(w * frac, 5.0)),
 			Color(0.30, 0.85, 0.30) if frac > 0.3 else Color(0.9, 0.3, 0.3))
