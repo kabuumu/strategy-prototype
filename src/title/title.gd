@@ -10,46 +10,29 @@ func _draw() -> void:
 	# Subtle decorative line under the title block
 	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
 
-const CAMPAIGN_MODES: Array = [
-	{"t": "2D Tactics",    "m": "2d",   "c": Color(0.18, 0.36, 0.65), "tip": "Turn-based hex tactics. Move + act with action points; flanking, terrain and abilities matter."},
-	{"t": "2D Total War",  "m": "rt",   "c": Color(0.22, 0.44, 0.50), "tip": "Real-time-with-pause: command regiments, drag-select and order them across the field."},
-	{"t": "3D Real-Time",  "m": "3d",   "c": Color(0.36, 0.26, 0.60), "tip": "Total-War-style 3D battles with morale, facing, formations and a deployment phase."},
-	{"t": "Auto-Battler",  "m": "auto", "c": Color(0.30, 0.50, 0.38), "tip": "Your roster auto-resolves each fight. Hands-off — strength comes from the army you've built."},
-	{"t": "Tower Defence", "m": "td",   "c": Color(0.45, 0.38, 0.20), "tip": "Your roster deploys as defenders; hold the keep against scaling waves, build reinforcements."},
-	{"t": "Base Building", "m": "base", "c": Color(0.50, 0.30, 0.26), "tip": "AoE-style RTS: build economy + production, raze the entire enemy base to win."},
-]
-
 func _build_ui() -> void:
 	var has_save: bool = GameManager.has_saved_run()
 
 	_add_centered_label("STRATEGY PROTOTYPE", 56, Color(0.95, 0.90, 0.60), 30.0)
-	_add_centered_label("Medieval strategy roguelite — five ways to fight", 18,
+	_add_centered_label("Medieval strategy roguelite — build an army, auto-resolve the fights", 18,
 		Color(0.55, 0.55, 0.65), 96.0)
 
 	# Continue an in-progress run.
 	if has_save:
-		_add_menu_button("Continue Run", Vector2(490.0, 132.0), Vector2(300.0, 50.0),
-			Color(0.20, 0.55, 0.32), _on_continue, 22)
+		_add_menu_button("Continue Run", Vector2(490.0, 200.0), Vector2(300.0, 56.0),
+			Color(0.20, 0.55, 0.32), _on_continue, 24)
 
-	# New campaign — pick the battle style the whole run is fought in.
-	_add_centered_label("NEW CAMPAIGN — choose your battle style", 15,
-		Color(0.72, 0.74, 0.52), 198.0)
-	_add_button_row(CAMPAIGN_MODES.map(func(md): return {
-			"t": md["t"], "c": md["c"], "cb": _start_new_game.bind(md["m"]), "tip": md["tip"]
-		}), 226.0, 192.0, 64.0, 17)
+	# New campaign — an auto-battler roguelite run.
+	_add_menu_button("New Campaign", Vector2(490.0, 280.0), Vector2(300.0, 56.0),
+		Color(0.30, 0.50, 0.38), _start_new_game.bind("auto"), 24,
+		"Your roster auto-resolves each fight. Strength comes from the army you've built.")
 
-	# Quick skirmishes — one-off battles, no campaign state touched.
-	_add_centered_label("QUICK SKIRMISH — one-off battles, no campaign", 15,
-		Color(0.62, 0.66, 0.74), 328.0)
-	_add_button_row([
-		{"t": "3D Skirmish",   "c": Color(0.45, 0.30, 0.62), "cb": _on_skirmish_3d},
-		{"t": "2D Real-Time",  "c": Color(0.32, 0.40, 0.55), "cb": _on_skirmish_2d},
-		{"t": "Auto Battle",   "c": Color(0.30, 0.48, 0.36), "cb": _on_auto_battler},
-		{"t": "Tower Defence", "c": Color(0.45, 0.38, 0.20), "cb": _on_tower_defense},
-		{"t": "Base Building", "c": Color(0.50, 0.30, 0.26), "cb": _on_base_builder},
-	], 356.0, 214.0, 52.0, 17)
+	# Quick skirmish — a one-off auto battle, no campaign state touched.
+	_add_menu_button("Quick Auto Battle", Vector2(490.0, 356.0), Vector2(300.0, 50.0),
+		Color(0.28, 0.44, 0.34), _on_auto_battler, 20,
+		"A single auto-resolved fight — no campaign state touched.")
 
-	_add_centered_label("Left-click act · Right-click / Esc cancel · Tab cycle · Enter end turn · Q ability · H help",
+	_add_centered_label("H help · Esc back",
 		13, Color(0.40, 0.40, 0.45), 692.0)
 
 	_add_menu_button("Settings", Vector2(1120.0, 24.0), Vector2(140.0, 40.0),
@@ -119,16 +102,6 @@ func _add_centered_label(text: String, font_size: int, color: Color, y: float) -
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(l)
 
-# Lay a row of {t, c, cb} buttons centred horizontally at y.
-func _add_button_row(items: Array, y: float, bw: float, bh: float, fs: int) -> void:
-	var gap: float = 8.0
-	var total: float = items.size() * (bw + gap) - gap
-	var sx: float = (1280.0 - total) * 0.5
-	for i in range(items.size()):
-		var it: Dictionary = items[i]
-		_add_menu_button(String(it["t"]), Vector2(sx + i * (bw + gap), y),
-			Vector2(bw, bh), it["c"], it["cb"], fs, String(it.get("tip", "")))
-
 func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable, fs: int = -1, tip: String = "") -> void:
 	var btn := Button.new()
 	btn.text     = text
@@ -161,7 +134,7 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 func _start_new_game(mode: String) -> void:
 	GameManager.clear_run()   # discard any in-progress run
 	GameManager.reset()
-	GameManager.battle_mode = mode   # "2d" hex turn-based / "3d" real-time / "auto" auto-battler
+	GameManager.battle_mode = mode   # always "auto" — campaign runs are auto-battler
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
 func _on_continue() -> void:
@@ -173,22 +146,9 @@ func _on_continue() -> void:
 		GameManager.reset()
 		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
-func _on_skirmish_3d() -> void:
-	# Skirmish is a self-contained battle scene — no campaign state is
-	# touched, so the player can dip in and out without losing a run.
-	get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
-
-func _on_skirmish_2d() -> void:
-	get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
-
 func _on_auto_battler() -> void:
+	# Quick skirmish — self-contained, no campaign state touched.
 	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
-
-func _on_tower_defense() -> void:
-	get_tree().change_scene_to_file("res://src/towerdefense/towerdefense.tscn")
-
-func _on_base_builder() -> void:
-	get_tree().change_scene_to_file("res://src/basebuilder/basebuilder.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the

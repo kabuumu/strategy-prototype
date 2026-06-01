@@ -227,7 +227,7 @@ var player_roster: Array[Dictionary] = []
 var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
 var curses: Array[String] = []   # afflictions (run-long negative passives)
-var battle_mode: String = "2d"   # how campaign battles play: "2d" hex turn-based / "3d" real-time / "auto" auto-battler
+var battle_mode: String = "auto"   # campaign battles are auto-resolved by the auto-battler
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -313,16 +313,8 @@ const CURSES: Dictionary = {
 # Set before switching to the battle scene
 var pending_battle_tier: int = 0
 var pending_battle_elite: bool = false
-# When true, the campaign battle is fought as a 3D skirmish (set by level_select).
-var pending_skirmish: bool = false
 # When true, the campaign battle is auto-resolved by the auto-battler (set by level_select).
 var pending_autobattle: bool = false
-# When true, the campaign battle is a tower-defence stand (set by level_select).
-var pending_td: bool = false
-# When true, the campaign battle is a base-building RTS (set by level_select).
-var pending_base: bool = false
-# When true, the campaign battle is a 2D real-time (Total War) fight (set by level_select).
-var pending_rt: bool = false
 # Set by the non-hex campaign modes on a win so level_select offers an upgrade
 # pick (the hex battle has its own inline upgrade picker). Consumed on the map.
 var pending_upgrade_reward: bool = false
@@ -471,7 +463,7 @@ func load_run() -> bool:
 	map_data          = raw_map
 	battles_won       = int(cfg.get_value("run", "battles_won", 0))
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
-	battle_mode       = str(cfg.get_value("run", "battle_mode", "2d"))
+	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true

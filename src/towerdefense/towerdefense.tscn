@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://towerdefense001"]
-
-[ext_resource type="Script" path="res://src/towerdefense/towerdefense.gd" id="1_td"]
-
-[node name="TowerDefense" type="Node2D"]
-script = ExtResource("1_td")

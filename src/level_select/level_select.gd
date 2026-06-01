@@ -486,12 +486,7 @@ func _build_hud() -> void:
 # ---------------------------------------------------------------------------
 # Friendly name for the run's battle style (shown in the Run panel).
 func _battle_mode_name() -> String:
-	match GameManager.battle_mode:
-		"3d":   return "3D Real-Time"
-		"auto": return "Auto-Battler"
-		"td":   return "Tower Defence"
-		"base": return "Base Building"
-		_:      return "2D Tactics"
+	return "Auto-Battler"
 
 func _refresh() -> void:
 	var reachable := GameManager.get_reachable_indices()
@@ -590,25 +585,8 @@ func _on_node_pressed(tier: int, index: int) -> void:
 		"battle", "elite_battle":
 			GameManager.pending_battle_tier  = tier
 			GameManager.pending_battle_elite = node_data["type"] == "elite_battle"
-			# Route to the run's chosen battle style.
-			match GameManager.battle_mode:
-				"3d":
-					GameManager.pending_skirmish = true
-					get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
-				"auto":
-					GameManager.pending_autobattle = true
-					get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
-				"td":
-					GameManager.pending_td = true
-					get_tree().change_scene_to_file("res://src/towerdefense/towerdefense.tscn")
-				"base":
-					GameManager.pending_base = true
-					get_tree().change_scene_to_file("res://src/basebuilder/basebuilder.tscn")
-				"rt":
-					GameManager.pending_rt = true
-					get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
-				_:
-					get_tree().change_scene_to_file("res://src/battle/battle.tscn")
+			GameManager.pending_autobattle = true
+			get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
 		"gain_unit":
 			_show_unit_select_popup()
 		"shop":

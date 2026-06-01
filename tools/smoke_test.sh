@@ -11,12 +11,7 @@ cd "$(dirname "$0")/.."
 SCENES=(
 	src/title/title.tscn
 	src/level_select/level_select.tscn
-	src/battle/battle.tscn
-	src/skirmish3d/skirmish3d.tscn
-	src/rtbattle/rtbattle.tscn
 	src/autobattler/autobattler.tscn
-	src/towerdefense/towerdefense.tscn
-	src/basebuilder/basebuilder.tscn
 )
 
 echo "== importing assets =="

@@ -7,7 +7,7 @@ nothing else in the game has to change:
 
     assets/units/<class>_<team>.png   (32x32, RGBA, NEAREST-friendly)
 
-loaded by src/battle/unit.gd via load("res://assets/units/%s_%s.png").
+loaded by src/autobattler/autobattler.gd and src/rtbattle/rt_unit.gd via load("res://assets/units/%s_%s.png").
 
 Source pack (NOT committed — download once into assets/incoming/):
     Kenney "Tiny Dungeon"  https://kenney.nl/assets/tiny-dungeon  (CC0)

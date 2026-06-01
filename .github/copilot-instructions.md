@@ -2,25 +2,23 @@
 
 ## Project
 
-Godot 4.4 turn-based strategy game written in GDScript. Engine version: 4.4, renderer: Forward Plus, viewport: 1280×720 (`canvas_items` stretch).
+Godot 4.4 auto-battler strategy roguelite written in GDScript. Engine version: 4.4, renderer: Forward Plus, viewport: 1280×720 (`canvas_items` stretch). The only fight mode is the auto-battler (`src/autobattler/`) — your roster auto-resolves each encounter.
 
-There are no build/test/lint commands — the game is run and tested through the Godot editor.
+There are no build/test/lint commands — the game is run and tested through the Godot editor. Boot-test scenes headless with `tools/smoke_test.sh`.
 
 ## Assets
 
 Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed. SFX via `tools/gen_sfx.py`. Unit sprites (32×32 `<class>_<team>.png`) are sliced from the CC0 Kenney Tiny Dungeon tilemap by `tools/import_pixel_units.py` (tile map + enemy tint in its header); `tools/gen_sprites.py` is the older procedural fallback. Raw source packs live in the gitignored `assets/incoming/` staging area.
-
-**3D models are NOT committed** — `assets/models/*.glb` is gitignored (large binaries). The 3D skirmish mode (`src/skirmish3d/`) uses them when present and falls back to procedural low-poly figures otherwise, so it always runs. Check `assets/models/` and `assets/models/README.md` (expected filenames + CC0 sources) before assuming models are available; `SkirmishUnit3D.MODEL_FILES` maps unit type → filename.
 
 ## Architecture
 
 ### Scene flow
 
 ```
-title.tscn  →  level_select.tscn  ⇄  battle.tscn
+title.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 ```
 
-The `title` screen resets state and starts a new run. `level_select` handles the overworld map. `battle` handles one tactical fight; when it ends the player is returned to `level_select`.
+The `title` screen resets state and starts a new run. `level_select` handles the overworld map. `autobattler` auto-resolves one fight; when it ends the player is returned to `level_select`. `level_select` sets `pending_autobattle = true` before switching scenes. The auto-battler is also a standalone Quick Auto Battle from the title (no campaign state).
 
 ### GameManager (autoload singleton)
 
@@ -29,34 +27,18 @@ The `title` screen resets state and starts a new run. `level_select` handles the
 - `player_roster: Array[String]` — list of unit type keys the player currently owns
 - `map_data: Array` — 2D array `[tier][index]` of node dictionaries
 - `current_tier`, `last_chosen_index` — map navigation cursor
-- `pending_battle_tier`, `pending_battle_elite` — set by `level_select` immediately before switching to `battle.tscn` so the battle scene knows which encounter to load
+- `pending_battle_tier`, `pending_battle_elite` — set by `level_select` immediately before switching to `autobattler.tscn` so the fight knows which encounter to load
 - `UNIT_TYPES: Dictionary` — canonical stat block for all unit types (`soldier`, `archer`, `scout`)
 
 `GameManager.reset()` is called at the start of each new game.
 
-### Battle scene (`src/battle/`)
+### Auto-battler scene (`src/autobattler/`)
 
-`battle.gd` drives a turn-based Phase state machine:
-
-```
-PLAYER_SELECT_UNIT → PLAYER_SELECT_MOVE → PLAYER_SELECT_ATTACK
-                                                     ↓
-                                               AI_ACTING  →  PLAYER_SELECT_UNIT
-                                                     ↓
-                                          BATTLE_WON / BATTLE_LOST
-```
-
-Key details:
-- Grid is 10 columns × 8 rows, `TILE_SIZE = 70` px, origin at `GRID_OFFSET = Vector2(40, 55)`.
-- Turns are **interleaved**: after each player unit acts, one AI unit responds immediately. Pressing "End Turn" causes all remaining AI units to act sequentially (recursive `await` chain).
-- Objectives at fixed `OBJECTIVE_CELLS` grant `"heal"` (+30 HP to all allies) or `"reinforce"` (spawn a Scout) when a unit steps on them.
-- Enemy scaling: HP multiplier = `1.0 + tier * 0.2 + (0.25 if elite)`. Enemy roster is seeded from tier+elite so it is deterministic.
-
-`unit.gd` defines `class_name Unit extends Node2D`. All visual children (body rect, HP bar, label) are created programmatically in `_build_visuals()`. Grid position is stored as `grid_pos: Vector2i`; call `update_visual_position()` after any change.
+`autobattler.gd` builds both armies from rosters and auto-resolves the fight — no player input during combat. It uses `rtbattle/rt_unit.gd` (the only surviving file in `src/rtbattle/`) for per-unit combat behaviour and loads `assets/units/*.png` for sprites. Enemy scaling: HP multiplier = `1.0 + tier * 0.2 + (0.25 if elite)`; roster seeded from tier+elite so it is deterministic. Win/loss reporting goes through `_conclude_campaign`.
 
 ### Level select scene (`src/level_select/`)
 
-Map is 5 tiers × 3 nodes. Node types: `battle`, `elite_battle`, `gain_unit`, `heal`. Navigation rule: from `last_chosen_index` you may reach `index - 1`, `index`, or `index + 1` in the next tier.
+Map is 12–15 tiers (randomized per run). Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable.
 
 ## Key Conventions
 
@@ -72,19 +54,10 @@ Scenes create `StyleBoxFlat` inline and apply it with `add_theme_stylebox_overri
 
 Never store run-state in individual scene scripts. All mutable game state belongs on `GameManager`. Scene scripts read from and write to `GameManager`, then call `get_tree().change_scene_to_file(...)` to navigate.
 
-### Grid math
-
-All grid↔world coordinate conversion goes through:
-```gdscript
-world_pos = grid_pos * TILE_SIZE + Vector2(TILE_SIZE / 2, TILE_SIZE / 2)  # centred
-cell = Vector2i(int((screen_pos - GRID_OFFSET).x / TILE_SIZE), ...)
-```
-
 ### Naming patterns
 
 - `_build_*()` — constructs UI nodes
-- `_refresh_*()` — updates existing UI nodes to reflect current state  
-- `_update_ui()` — main per-phase UI refresh in `battle.gd`, calls `queue_redraw()`
+- `_refresh_*()` — updates existing UI nodes to reflect current state
 - `_try_*()` — player input handlers that validate before acting
 - `_on_*` — signal callbacks
 
