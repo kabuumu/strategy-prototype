@@ -246,6 +246,12 @@ func _toggle_settings_menu() -> void:
 	add_child(root)
 	_settings_overlay = root
 
+var _pulse_t: float = 0.0
+
+func _process(delta: float) -> void:
+	_pulse_t += delta
+	queue_redraw()
+
 func _draw() -> void:
 	# Background
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), UITheme.BG)
@@ -260,6 +266,15 @@ func _draw() -> void:
 			for j in GameManager.map_data[tier][i]["connections"]:
 				var to := Vector2(_node_x(j, to_count), TIER_Y[tier + 1])
 				draw_line(from, to, Color(0.36, 0.37, 0.50, 0.62), 2.0)
+	# Pulsing ring around the nodes you can move to next, so the choice pops.
+	var ct: int = GameManager.current_tier
+	if ct < GameManager.MAP_TIERS:
+		var count: int = GameManager.map_data[ct].size()
+		var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
+		for idx in GameManager.get_reachable_indices():
+			var c := Vector2(_node_x(int(idx), count), TIER_Y[ct])
+			draw_arc(c, NODE_R + 6.0 + pulse * 4.0, 0.0, TAU, 40,
+				Color(0.95, 0.85, 0.35, 0.30 + pulse * 0.40), 3.0, true)
 
 # ---------------------------------------------------------------------------
 # Build UI
