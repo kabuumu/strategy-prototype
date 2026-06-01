@@ -46,9 +46,11 @@ The **only** place persistent cross-scene state lives. Scene scripts read/write 
 - `pending_battle_tier` / `pending_battle_elite` — set by `level_select` right before switching to `autobattler.tscn`.
 - `reset()` runs at start of each new game and regenerates the map.
 
-### Map (`level_select`)
+### Map (`level_select`) — walkable overworld
 
-12–15 tiers (randomized per run, `MAP_TIERS_RANGE`). Tier 0 = single start node (always a regular `battle`); middle tiers = 2–5 nodes; final tier = single boss (`elite_battle`). Connections wired per adjacent tier pair (proportional mapping + occasional branch); every target guaranteed an incoming edge. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable. Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`.
+The same tier/node/connection graph (below) is presented as **one continuous horizontal world**: the hero avatar walks left→right (`x = MARGIN_X + tier*TIER_DX`, `y` = lane within the tier), steering into forks with ↑↓ and holding →/D to travel an edge. A camera (`_cam_x`) follows the avatar. A small `Nav` state machine (`AT_NODE`/`TRAVELING`) lives in `level_select`: `_anchor_to_current` sets the avatar on the current node + computes `_targets` from `get_reachable_indices`; `_begin_travel`→`_update_travel`→`_arrive` walks an edge (collecting seeded gold/Valor pickups, ~25% roadside encounter = `random_event` or a dialogue/persuasion recruit); arrival calls `_trigger_node` (the old `_on_node_pressed` body) which fires the node handler. Scene-changing nodes (battle/duel) set `_leaving`; popup nodes set `_awaiting_resolve` (re-anchored in `_process` when the popup closes). All rendering is in `_draw` (placeholder shapes + the hero sprite). See `docs/superpowers/specs/2026-06-01-walkable-overworld-design.md`.
+
+Graph data: 12–15 tiers (randomized per run, `MAP_TIERS_RANGE`). Tier 0 = single start node (always a regular `battle`); middle tiers = 2–5 nodes; final tier = single boss (`elite_battle`). Connections wired per adjacent tier pair (proportional mapping + occasional branch); every target guaranteed an incoming edge. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable. Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`.
 
 ### Auto-battler (`src/autobattler/`)
 

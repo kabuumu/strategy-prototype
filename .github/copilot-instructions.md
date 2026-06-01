@@ -44,6 +44,8 @@ title.tscn  →  charselect.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 
 Map is 12–15 tiers (randomized per run). Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable.
 
+The map is presented as **one continuous horizontal walkable world**: the hero avatar walks left→right, steering into forks (↑↓ to pick, hold →/D to travel), collecting seeded gold/Valor pickups and hitting ~25% roadside encounters. A `Nav` state machine (`AT_NODE`/`TRAVELING`) in `level_select` (`_anchor_to_current`/`_begin_travel`/`_update_travel`/`_arrive`/`_trigger_node`) drives it; rendering is all in `_draw` (placeholder shapes + hero sprite). The tier/node/connection graph and node handlers are unchanged.
+
 ## Key Conventions
 
 ### All UI is built in code — no scene-file UI nodes

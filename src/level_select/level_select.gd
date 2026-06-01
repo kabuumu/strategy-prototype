@@ -5,23 +5,40 @@ const UITheme := preload("res://src/ui/ui_theme.gd")
 # ---------------------------------------------------------------------------
 # Layout constants
 # ---------------------------------------------------------------------------
-const NODE_R: float = 32.0
-const MAP_LEFT: float = 72.0
-const MAP_RIGHT: float = 820.0
-const SIDE_X: float = 880.0
-# Maps now span 12-15 tiers — too many to fit at once, so the map scrolls
-# vertically (tier 0 at the bottom, the boss up top) and auto-centres on the
-# current tier. These bound the on-screen map band; tiers sit TIER_GAP apart on
-# a taller virtual canvas that we slide by _scroll_y.
-const MAP_TOP: float = 104.0
-const MAP_BOTTOM: float = 704.0
-const TIER_GAP: float = 120.0
-const CONTENT_PAD: float = 56.0
-const VIEW_CENTER: float = (MAP_TOP + MAP_BOTTOM) * 0.5
+const NODE_R: float = 26.0
+const SIDE_X: float = 880.0            # right-hand HUD panel starts here
+# The overworld is one continuous horizontal world: tier 0 at the left, the boss
+# far right. The hero avatar walks left->right, steering into forks to pick the
+# next node. The world is wider than the play viewport (left of the HUD), so a
+# horizontal camera (_cam_x) follows the avatar.
+const PLAY_W: float = 858.0            # world viewport width (left of the HUD)
+const PLAY_TOP: float = 96.0
+const PLAY_BOTTOM: float = 688.0
+const TIER_DX: float = 280.0           # horizontal gap between tiers
+const MARGIN_X: float = 120.0          # world x of tier 0
+const LANE_GAP: float = 104.0          # vertical gap between nodes in a tier
+const WALK_SPEED: float = 165.0        # px/sec the avatar travels along an edge
+const CENTER_Y: float = (PLAY_TOP + PLAY_BOTTOM) * 0.5
 
-var _scroll_y: float = 0.0
-var _scroll_min: float = 0.0
-var _scroll_max: float = 0.0
+enum Nav { AT_NODE, TRAVELING }
+var _nav: int = Nav.AT_NODE
+var _at_start: bool = true             # true before any node is visited (virtual start)
+var _cur_tier: int = 0                 # tier of the node the avatar stands on
+var _cur_index: int = 0                # index within that tier
+var _targets: Array = []               # reachable next nodes [{tier,index}]
+var _sel: int = 0                      # selected target in _targets
+var _travel_t: float = 0.0             # 0..1 progress along the current edge
+var _travel_from: Vector2 = Vector2.ZERO
+var _travel_to: Vector2 = Vector2.ZERO
+var _travel_target: Dictionary = {}    # {tier,index} being walked to
+var _avatar: Vector2 = Vector2.ZERO    # world position of the hero
+var _cam_x: float = 0.0
+var _world_w: float = 0.0
+var _hero_tex: Texture2D = null
+var _edge_pickups: Array = []          # [{t,pos,kind,amount,taken}]
+var _awaiting_resolve: bool = false    # arrived; waiting for a popup to close
+var _leaving: bool = false             # a node handler is changing scene
+var _encounter_pending: bool = false   # encounter popup open; resume travel on close
 
 const TYPE_COLORS: Dictionary = {
 	"battle":       Color(0.80, 0.28, 0.28),
@@ -52,7 +69,6 @@ const TYPE_DESC: Dictionary = {
 }
 
 # ---------------------------------------------------------------------------
-var _node_buttons: Array = []
 var _roster_label: Label
 var _gold_label: Label
 var _relics_label: Label
@@ -81,7 +97,8 @@ func _ready() -> void:
 		GameManager.pending_duel = false
 		GameManager.duel_recruit_type = ""
 		_pending_recruit_toast = {"win": dwin, "type": dtype}
-	_build_node_buttons()
+	_build_world()
+	_anchor_to_current()
 	_build_hud()
 	# Checkpoint the run between battles so it can be resumed. Once the run is
 	# over (boss cleared), drop the save instead.
@@ -182,26 +199,14 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Mouse wheel scrolls the map (only matters when there's off-screen map).
-	if event is InputEventMouseButton and event.pressed and _popup == null \
-			and _inventory_popup == null and _settings_overlay == null:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_scroll_by(-TIER_GAP * 0.5)
-			return
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_scroll_by(TIER_GAP * 0.5)
-			return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	# Arrow / page keys also scroll the map.
-	if event.keycode == KEY_UP:
-		_scroll_by(-TIER_GAP * 0.5); return
-	elif event.keycode == KEY_DOWN:
-		_scroll_by(TIER_GAP * 0.5); return
-	elif event.keycode == KEY_PAGEUP:
-		_scroll_by(-(MAP_BOTTOM - MAP_TOP) * 0.8); return
-	elif event.keycode == KEY_PAGEDOWN:
-		_scroll_by((MAP_BOTTOM - MAP_TOP) * 0.8); return
+	# ↑/↓ (W/S) choose which fork to take while standing at a node.
+	if not _input_blocked() and _nav == Nav.AT_NODE:
+		if event.keycode == KEY_UP or event.keycode == KEY_W:
+			_select_target(-1); return
+		elif event.keycode == KEY_DOWN or event.keycode == KEY_S:
+			_select_target(1); return
 	if event.keycode == KEY_I:
 		if _popup == null:
 			_toggle_inventory()
@@ -302,136 +307,253 @@ var _pulse_t: float = 0.0
 
 func _process(delta: float) -> void:
 	_pulse_t += delta
+	_update_camera(delta)
+	if not _input_blocked():
+		if _nav == Nav.AT_NODE:
+			if not _targets.is_empty() and (Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
+				_begin_travel()
+		elif _nav == Nav.TRAVELING:
+			_update_travel(delta)
+	# Once an arrived node's popup closes, set up the next fork.
+	if _awaiting_resolve and _popup == null and not _leaving:
+		_awaiting_resolve = false
+		_anchor_to_current()
+		_refresh()
 	queue_redraw()
 
+func _input_blocked() -> bool:
+	# Note: _encounter_pending is deliberately NOT here — an open encounter popup
+	# already blocks via _popup, and _update_travel must run once it closes to
+	# clear the flag and resume walking.
+	return _popup != null or _settings_overlay != null or _inventory_popup != null \
+		or _awaiting_resolve or _leaving
+
+# Camera follows the avatar horizontally, clamped to the world.
+func _update_camera(delta: float) -> void:
+	var want: float = clampf(_avatar.x - PLAY_W * 0.42, 0.0, maxf(0.0, _world_w - PLAY_W))
+	_cam_x = lerp(_cam_x, want, clampf(delta * 6.0, 0.0, 1.0))
+
+# ---------------------------------------------------------------------------
+# Drawing — one continuous horizontal world, offset by the camera.
+# ---------------------------------------------------------------------------
 func _draw() -> void:
-	# Background
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), UITheme.BG)
-	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
-	draw_line(Vector2(SIDE_X - 22.0, 0.0), Vector2(SIDE_X - 22.0, 720.0), Color(0.25, 0.27, 0.35, 0.85), 1.0)
-	# Connection lines — drawn from stored connections so locked-out paths aren't shown
+	# Ground band the avatar walks above (screen-space, decorative).
+	draw_rect(Rect2(0.0, PLAY_BOTTOM - 4.0, PLAY_W, 720.0 - PLAY_BOTTOM), Color(0.10, 0.13, 0.10, 0.6))
+
+	var font := ThemeDB.fallback_font
+	var sel_target: Dictionary = _targets[_sel] if (_nav == Nav.AT_NODE and _sel < _targets.size()) else {}
+
+	# Connection paths.
 	for tier in range(GameManager.MAP_TIERS - 1):
-		var from_count: int = GameManager.map_data[tier].size()
-		var to_count:   int = GameManager.map_data[tier + 1].size()
-		var ya := _tier_screen_y(tier)
-		var yb := _tier_screen_y(tier + 1)
-		# Skip pairs entirely outside the band (both ends off-screen on same side).
-		if (ya < MAP_TOP and yb < MAP_TOP) or (ya > MAP_BOTTOM and yb > MAP_BOTTOM):
-			continue
-		for i in range(from_count):
-			var from := Vector2(_node_x(i, from_count), ya)
+		for i in range(GameManager.map_data[tier].size()):
+			var from := _w2s(_node_world_pos(tier, i))
 			for j in GameManager.map_data[tier][i]["connections"]:
-				var to := Vector2(_node_x(j, to_count), yb)
-				draw_line(from, to, Color(0.36, 0.37, 0.50, 0.62), 2.0)
-	# Pulsing ring around the nodes you can move to next, so the choice pops.
-	var ct: int = GameManager.current_tier
-	if ct < GameManager.MAP_TIERS:
-		var count: int = GameManager.map_data[ct].size()
-		var cy := _tier_screen_y(ct)
-		if cy >= MAP_TOP and cy <= MAP_BOTTOM:
-			var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
-			for idx in GameManager.get_reachable_indices():
-				var c := Vector2(_node_x(int(idx), count), cy)
-				draw_arc(c, NODE_R + 6.0 + pulse * 4.0, 0.0, TAU, 40,
-					Color(0.95, 0.85, 0.35, 0.30 + pulse * 0.40), 3.0, true)
-	# Mask any line/ring overflow above and below the scrolling band (the title
-	# and hint labels are child nodes, so they still render on top of this).
-	draw_rect(Rect2(0.0, 0.0, SIDE_X - 22.0, MAP_TOP), UITheme.BG)
-	draw_rect(Rect2(0.0, MAP_BOTTOM, SIDE_X - 22.0, 720.0 - MAP_BOTTOM), UITheme.BG)
-	# Scrollbar — shows how much map lies above/below the view.
-	if _scroll_max > _scroll_min:
-		var band := MAP_BOTTOM - MAP_TOP
-		var bx := MAP_RIGHT + 18.0
-		draw_rect(Rect2(bx, MAP_TOP, 5.0, band), Color(0.20, 0.22, 0.30, 0.55))
-		var view_frac: float = band / (band + (_scroll_max - _scroll_min))
-		var thumb_h: float = maxf(28.0, band * view_frac)
-		var t: float = (_scroll_y - _scroll_min) / (_scroll_max - _scroll_min)
-		draw_rect(Rect2(bx, MAP_TOP + t * (band - thumb_h), 5.0, thumb_h),
-			Color(0.70, 0.72, 0.82, 0.85))
+				var to := _w2s(_node_world_pos(tier + 1, int(j)))
+				if (from.x < -40.0 and to.x < -40.0) or (from.x > PLAY_W + 40.0 and to.x > PLAY_W + 40.0):
+					continue
+				var lit: bool = not _at_start and tier == _cur_tier and i == _cur_index \
+					and not sel_target.is_empty() and int(sel_target["tier"]) == tier + 1 and int(sel_target["index"]) == int(j)
+				draw_line(from, to, Color(0.95, 0.85, 0.40, 0.9) if lit else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit else 2.0)
 
-# ---------------------------------------------------------------------------
-# Build UI
-# ---------------------------------------------------------------------------
-func _build_node_buttons() -> void:
-	add_child(UITheme.label("Choose Your Path", 38, Color(0.95, 0.90, 0.65), Vector2(72.0, 24.0)))
-	add_child(UITheme.label("Only highlighted nodes are reachable. Hover to preview · scroll / ↑↓ to see the whole path.", 14, UITheme.TEXT_MUTED, Vector2(76.0, 70.0), Vector2(760.0, 28.0)))
+	# Path from the (virtual) start node to its targets.
+	if _at_start:
+		var sfrom := _w2s(_standing_pos())
+		for tgt: Dictionary in _targets:
+			var sto := _w2s(_node_world_pos(int(tgt["tier"]), int(tgt["index"])))
+			var lit2: bool = not sel_target.is_empty() and tgt == sel_target
+			draw_line(sfrom, sto, Color(0.95, 0.85, 0.40, 0.9) if lit2 else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit2 else 2.0)
 
-	# Node buttons
+	# Pickups on the current edge.
+	for p: Dictionary in _edge_pickups:
+		if bool(p.get("taken", false)):
+			continue
+		var pp := _w2s(p["pos"])
+		if pp.x < -20.0 or pp.x > PLAY_W + 20.0:
+			continue
+		var pc: Color = Color(0.95, 0.82, 0.30) if String(p["kind"]) == "gold" else Color(0.62, 0.72, 0.98)
+		draw_circle(pp, 8.0, pc)
+		draw_arc(pp, 8.0, 0.0, TAU, 20, pc.darkened(0.4), 1.5)
+
+	# Nodes.
+	var reach_idx: Array = GameManager.get_reachable_indices()
+	var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
 	for tier in range(GameManager.MAP_TIERS):
 		for i in range(GameManager.map_data[tier].size()):
-			_add_node_button(tier, i)
+			var c := _w2s(_node_world_pos(tier, i))
+			if c.x < -NODE_R or c.x > PLAY_W + NODE_R:
+				continue
+			var nd: Dictionary = GameManager.map_data[tier][i]
+			var col: Color = TYPE_COLORS.get(nd["type"], Color.GRAY)
+			var is_target: bool = tier == GameManager.current_tier and i in reach_idx
+			if bool(nd.get("visited", false)):
+				col = col.darkened(0.55)
+			elif not is_target:
+				col = col.darkened(0.3)
+			draw_circle(c, NODE_R, col)
+			draw_arc(c, NODE_R, 0.0, TAU, 32, col.lightened(0.3), 2.0)
+			if is_target:
+				draw_arc(c, NODE_R + 5.0 + pulse * 4.0, 0.0, TAU, 36, Color(0.95, 0.85, 0.35, 0.35 + pulse * 0.4), 3.0)
+			if not sel_target.is_empty() and int(sel_target["tier"]) == tier and int(sel_target["index"]) == i:
+				draw_arc(c, NODE_R + 3.0, 0.0, TAU, 32, Color(1.0, 1.0, 1.0, 0.95), 3.0)
+			var lbl: String = TYPE_LABELS.get(nd["type"], "?")
+			draw_string(font, c + Vector2(-NODE_R, NODE_R + 14.0), lbl, HORIZONTAL_ALIGNMENT_CENTER, NODE_R * 2.0, 12, Color(0.85, 0.88, 0.94))
 
-	# Position everything and slide the view to the tier the player is on.
-	_update_scroll_bounds()
-	_center_on_tier(GameManager.current_tier)
+	# Avatar (hero sprite).
+	var ascr := _w2s(_avatar)
+	if _hero_tex != null:
+		var sz := Vector2(46.0, 46.0)
+		draw_texture_rect(_hero_tex, Rect2(ascr - sz * 0.5 - Vector2(0.0, 6.0), sz), false)
+	else:
+		draw_circle(ascr, 16.0, Color(0.9, 0.85, 0.5))
 
-func _node_x(index: int, count: int) -> float:
-	if count == 1:
-		return (MAP_LEFT + MAP_RIGHT) * 0.5
-	return MAP_LEFT + float(index) * (MAP_RIGHT - MAP_LEFT) / float(count - 1)
+	# Mask the world bleeding under the right-hand HUD, then the panel backdrop.
+	draw_rect(Rect2(PLAY_W, 0.0, 1280.0 - PLAY_W, 720.0), UITheme.BG)
+	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
+	draw_line(Vector2(SIDE_X - 22.0, 0.0), Vector2(SIDE_X - 22.0, 720.0), Color(0.25, 0.27, 0.35, 0.85), 1.0)
 
-# Screen Y for a tier at the current scroll. Tier 0 sits at the bottom of the
-# virtual canvas, the final (boss) tier at the top.
-func _tier_screen_y(tier: int) -> float:
-	var last: int = GameManager.MAP_TIERS - 1
-	return MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - _scroll_y
+func _w2s(world: Vector2) -> Vector2:
+	return world - Vector2(_cam_x, 0.0)
 
-func _update_scroll_bounds() -> void:
-	var last: int = GameManager.MAP_TIERS - 1
-	# _scroll_y = 0 shows the top (boss) tier; max shows tier 0 at the bottom.
-	_scroll_min = 0.0
-	_scroll_max = maxf(0.0, CONTENT_PAD + float(last) * TIER_GAP - (MAP_BOTTOM - CONTENT_PAD - MAP_TOP))
+# ---------------------------------------------------------------------------
+# World layout + navigation
+# ---------------------------------------------------------------------------
+func _build_world() -> void:
+	_world_w = MARGIN_X + float(GameManager.MAP_TIERS - 1) * TIER_DX + MARGIN_X
+	var key := "soldier"
+	if GameManager.has_hero():
+		key = String(GameManager.hero_data().get("sprite_key", "soldier"))
+	_hero_tex = load("res://assets/units/%s_player.png" % key)
+	add_child(UITheme.label("Your Journey", 30, Color(0.95, 0.90, 0.65), Vector2(72.0, 20.0)))
+	add_child(UITheme.label("→/D walk · ↑↓ choose the fork · I inventory · Esc menu",
+		14, UITheme.TEXT_MUTED, Vector2(76.0, 58.0), Vector2(720.0, 24.0)))
 
-func _center_on_tier(tier: int) -> void:
-	var last: int = GameManager.MAP_TIERS - 1
-	var desired: float = MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - VIEW_CENTER
-	_scroll_y = clampf(desired, _scroll_min, _scroll_max)
-	_reposition_nodes()
+func _node_world_pos(tier: int, index: int) -> Vector2:
+	var count: int = GameManager.map_data[tier].size()
+	var x := MARGIN_X + float(tier) * TIER_DX
+	var y := CENTER_Y + (float(index) - float(count - 1) * 0.5) * LANE_GAP
+	return Vector2(x, y)
 
-func _scroll_by(dy: float) -> void:
-	var prev := _scroll_y
-	_scroll_y = clampf(_scroll_y + dy, _scroll_min, _scroll_max)
-	if _scroll_y != prev:
-		_reposition_nodes()
+func _standing_pos() -> Vector2:
+	if _at_start:
+		return Vector2(46.0, CENTER_Y)
+	return _node_world_pos(_cur_tier, _cur_index)
 
-# Re-place every node button for the current scroll, hiding those outside the
-# visible band so they don't bleed into the header or footer.
-func _reposition_nodes() -> void:
-	for bd: Dictionary in _node_buttons:
-		var btn: Button = bd["button"]
-		var tier: int = bd["tier"]
-		var index: int = bd["index"]
-		var count: int = GameManager.map_data[tier].size()
-		var y := _tier_screen_y(tier)
-		btn.position = Vector2(_node_x(index, count), y) - Vector2(NODE_R, NODE_R)
-		btn.visible = y >= MAP_TOP + NODE_R and y <= MAP_BOTTOM - NODE_R
+# Place the avatar on the node GameManager says the run is at, and compute the
+# reachable forks.
+func _anchor_to_current() -> void:
+	if GameManager.last_chosen_index == -1:
+		_at_start = true
+		_cur_tier = 0
+		_cur_index = 0
+	else:
+		_at_start = false
+		_cur_tier = GameManager.current_tier - 1
+		_cur_index = GameManager.last_chosen_index
+	_avatar = _standing_pos()
+	_nav = Nav.AT_NODE
+	_edge_pickups.clear()
+	_encounter_pending = false
+	_targets.clear()
+	for idx in GameManager.get_reachable_indices():
+		_targets.append({"tier": GameManager.current_tier, "index": int(idx)})
+	_sel = clampi(_sel, 0, maxi(0, _targets.size() - 1))
+	_update_node_detail()
+
+func _select_target(dir: int) -> void:
+	if _nav != Nav.AT_NODE or _targets.size() <= 1:
+		return
+	_sel = wrapi(_sel + dir, 0, _targets.size())
+	_update_node_detail()
 	queue_redraw()
 
-func _add_node_button(tier: int, index: int) -> void:
-	var node_data: Dictionary = GameManager.map_data[tier][index]
-	var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
-	var count: int = GameManager.map_data[tier].size()
-	var pos := Vector2(_node_x(index, count), _tier_screen_y(tier))
-
-	var btn := Button.new()
-	btn.size = Vector2(NODE_R * 2.0, NODE_R * 2.0)
-	btn.position = pos - Vector2(NODE_R, NODE_R)
-	btn.text = TYPE_LABELS.get(node_data["type"], "?")
-	btn.tooltip_text = String(TYPE_DESC.get(node_data["type"], ""))
-	btn.add_theme_font_size_override("font_size", 11)
-	btn.add_theme_stylebox_override("normal",   _circle_style(base_color, NODE_R))
-	btn.add_theme_stylebox_override("hover",    _circle_style(base_color.lightened(0.25), NODE_R))
-	btn.add_theme_stylebox_override("pressed",  _circle_style(base_color.darkened(0.25), NODE_R))
-	btn.add_theme_stylebox_override("disabled", _circle_style(Color(0.28, 0.28, 0.32), NODE_R))
-	btn.pressed.connect(_on_node_pressed.bind(tier, index))
-	btn.mouse_entered.connect(_show_node_detail.bind(tier, index))
-	add_child(btn)
-	_node_buttons.append({"button": btn, "tier": tier, "index": index})
-
-func _show_node_detail(tier: int, index: int) -> void:
-	if _node_detail_label == null:
+func _update_node_detail() -> void:
+	if _node_detail_label == null or _targets.is_empty():
 		return
-	_node_detail_label.text = _node_detail_text(tier, index)
+	var t: Dictionary = _targets[_sel]
+	_node_detail_label.text = _node_detail_text(int(t["tier"]), int(t["index"]))
+
+func _begin_travel() -> void:
+	if _targets.is_empty():
+		return
+	_travel_target = _targets[_sel]
+	_travel_from = _standing_pos()
+	_travel_to = _node_world_pos(int(_travel_target["tier"]), int(_travel_target["index"]))
+	_travel_t = 0.0
+	_nav = Nav.TRAVELING
+	_gen_edge_content()
+
+# Seeded pickups + a chance of an encounter for the edge being entered.
+func _gen_edge_content() -> void:
+	_edge_pickups.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = (_cur_tier + 1) * 7919 + _cur_index * 131 + int(_travel_target["index"]) * 17
+	var n: int = rng.randi_range(0, 2)
+	for _i in range(n):
+		var t: float = rng.randf_range(0.28, 0.82)
+		var pos := _travel_from.lerp(_travel_to, t) + Vector2(0.0, rng.randf_range(-26.0, 26.0))
+		var is_gold: bool = rng.randf() < 0.7
+		_edge_pickups.append({
+			"t": t, "pos": pos, "taken": false,
+			"kind": "gold" if is_gold else "valor",
+			"amount": rng.randi_range(8, 15) if is_gold else 1,
+		})
+	# ~25% encounter, opened at the start of the edge (no mid-edge scene change).
+	if rng.randf() < 0.25:
+		_trigger_encounter(rng)
+
+func _update_travel(delta: float) -> void:
+	if _encounter_pending:
+		if _popup == null:
+			_encounter_pending = false   # encounter resolved — resume next frame
+		return
+	if not (Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
+		return   # hold to walk; release pauses
+	var dist: float = maxf(1.0, _travel_from.distance_to(_travel_to))
+	_travel_t = minf(1.0, _travel_t + delta * WALK_SPEED / dist)
+	_avatar = _travel_from.lerp(_travel_to, _travel_t)
+	for p: Dictionary in _edge_pickups:
+		if not bool(p.get("taken", false)) and _travel_t >= float(p["t"]):
+			_collect_pickup(p)
+	if _travel_t >= 1.0:
+		_arrive()
+
+func _collect_pickup(p: Dictionary) -> void:
+	p["taken"] = true
+	if String(p["kind"]) == "gold":
+		GameManager.add_gold(int(p["amount"]))
+		_show_toast("+%d gold" % int(p["amount"]), Color(0.95, 0.82, 0.30))
+	else:
+		GameManager.add_valor(int(p["amount"]))
+		_show_toast("+%d Valor" % int(p["amount"]), Color(0.62, 0.72, 0.98))
+	Sfx.play("gold")
+	_refresh()
+
+func _arrive() -> void:
+	var tgt := _travel_target
+	_avatar = _travel_to
+	_nav = Nav.AT_NODE
+	_trigger_node(int(tgt["tier"]), int(tgt["index"]))
+
+# A roadside encounter: a random event, or a lone recruit (dialogue/persuasion
+# only — never a duel, which would change scene mid-travel).
+func _trigger_encounter(rng: RandomNumberGenerator) -> void:
+	_encounter_pending = true
+	if rng.randf() < 0.5:
+		_build_event_popup(GameManager.random_event())
+		return
+	var pool: Array[String] = GameManager.recruitable_types()
+	var rtype: String = pool[rng.randi_range(0, pool.size() - 1)]
+	var sway: String = "dialogue" if rng.randf() < 0.5 else "persuasion"
+	var cand := {"type": rtype, "sway": sway, "correct": rng.randi_range(0, 2)}
+	_popup = UITheme.panel(self, Vector2(300.0, 180.0), Vector2(680.0, 360.0),
+		Color(0.10, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
+	_popup.add_child(UITheme.label("A traveller blocks the road...", 18, UITheme.TEXT_MUTED,
+		Vector2(28.0, 14.0), Vector2(624.0, 24.0)))
+	if sway == "dialogue":
+		_show_dialogue_resolver(cand)
+	else:
+		_show_persuasion_resolver(_cur_tier if not _at_start else 0, cand)
 
 func _node_detail_text(tier: int, index: int) -> String:
 	var nd: Dictionary = GameManager.map_data[tier][index]
@@ -516,37 +638,7 @@ func _battle_mode_name() -> String:
 	return "Auto-Battler"
 
 func _refresh() -> void:
-	var reachable := GameManager.get_reachable_indices()
 	var cur_tier := GameManager.current_tier
-
-	for btn_data: Dictionary in _node_buttons:
-		var tier: int = btn_data["tier"]
-		var index: int = btn_data["index"]
-		var btn: Button = btn_data["button"]
-		var node_data: Dictionary = GameManager.map_data[tier][index]
-
-		var is_reachable := tier == cur_tier and index in reachable
-		var is_visited: bool = node_data["visited"]
-		btn.disabled = not is_reachable
-
-		var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
-		var display_color: Color
-		if is_visited:
-			display_color = base_color.darkened(0.6)
-		elif not is_reachable:
-			display_color = base_color.darkened(0.38)
-		else:
-			display_color = base_color
-
-		var style := _circle_style(display_color, NODE_R)
-		if is_reachable:
-			style.border_width_left   = 3
-			style.border_width_right  = 3
-			style.border_width_top    = 3
-			style.border_width_bottom = 3
-			style.border_color = Color(1.0, 1.0, 1.0, 0.9)
-		btn.add_theme_stylebox_override("normal",   style)
-		btn.add_theme_stylebox_override("disabled", style)
 
 	_roster_label.text = _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
@@ -560,10 +652,7 @@ func _refresh() -> void:
 	_depth_label.text  = "%s  ·  Tier %d / %d  ·  Wins %d" % [
 		_battle_mode_name(), cur_tier, GameManager.MAP_TIERS, GameManager.battles_won
 	]
-	if _node_detail_label != null and _node_detail_label.text == "":
-		var reach: Array = GameManager.get_reachable_indices()
-		if not reach.is_empty() and cur_tier < GameManager.MAP_TIERS:
-			_show_node_detail(cur_tier, int(reach[0]))
+	_update_node_detail()
 
 	if cur_tier >= GameManager.MAP_TIERS:
 		_show_victory()
@@ -608,10 +697,13 @@ func _roster_text() -> String:
 # ---------------------------------------------------------------------------
 # Node interaction
 # ---------------------------------------------------------------------------
-func _on_node_pressed(tier: int, index: int) -> void:
-	if _popup:
-		return
+# Called when the avatar arrives at a node. Visits it, then runs the node's
+# handler. Scene-changing nodes set _leaving; popup nodes set _awaiting_resolve
+# (the next fork is set up in _process once the popup closes); instant nodes
+# re-anchor immediately.
+func _trigger_node(tier: int, index: int) -> void:
 	var node_data: Dictionary = GameManager.map_data[tier][index]
+	_leaving = false
 	GameManager.visit_node(tier, index)
 
 	match node_data["type"]:
@@ -646,7 +738,17 @@ func _on_node_pressed(tier: int, index: int) -> void:
 		_:
 			_refresh()
 
+	# Decide how the avatar resumes after this node.
+	if _leaving:
+		return                       # scene is changing; nothing to resume
+	elif _popup != null:
+		_awaiting_resolve = true     # _process re-anchors when the popup closes
+	else:
+		_anchor_to_current()         # instant node — offer the next fork now
+		_refresh()
+
 func _launch_autobattle(tier: int, elite: bool) -> void:
+	_leaving = true
 	GameManager.pending_battle_tier  = tier
 	GameManager.pending_battle_elite = elite
 	GameManager.pending_autobattle = true
@@ -805,6 +907,7 @@ func _approach_candidate(tier: int, index: int, cand: Dictionary) -> void:
 		"persuasion":
 			_show_persuasion_resolver(tier, cand)
 		"duel":
+			_leaving = true
 			GameManager.pending_duel = true
 			GameManager.duel_recruit_type = String(cand["type"])
 			GameManager.duel_outcome = -1
