@@ -405,8 +405,10 @@ func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
 	var out: Array = ["elite_battle"]
 	if count >= 3:
 		out.append("battle")
-	# No "heal" here — units start a run at full HP, so a heal opener is wasted.
-	var utility: Array = ["gain_unit", "shop"]
+	# Openers exclude "heal" (units start full) and "shop" (no gold yet) — both
+	# are pointless before the first battle. Gain-unit is the useful non-combat
+	# start.
+	var utility: Array = ["gain_unit"]
 	utility.shuffle()
 	var ui: int = 0
 	while out.size() < count:
