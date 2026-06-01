@@ -84,6 +84,7 @@ var _campaign_reward_gold: int = 0
 var _enemy_strength: float = 1.0
 
 func _ready() -> void:
+	Music.play("battle")
 	_rng.randomize()
 	set_process_unhandled_input(true)
 	if GameManager.pending_base:

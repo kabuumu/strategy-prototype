@@ -123,6 +123,7 @@ var _rng := RandomNumberGenerator.new()
 const HELP_BODY: String = "Defend your keep (far left) from waves marching down the lane.\n\nPlace defenders: pick a type from the top bar, then click buildable ground (anywhere off the lane and clear of the keep). They hold position and auto-fire on anything in range.\n\nGold comes from kills and from clearing each wave — spend it on more defenders, then press Start Wave (or Enter) to send the next wave.\n\nEnemies that reach the keep damage it. Lose all keep HP and it's over. Survive every wave to win.\n\nSPACE pause  ·  Esc menu  ·  H help"
 
 func _ready() -> void:
+	Music.play("battle")
 	_rng.randomize()
 	set_process_unhandled_input(true)
 	_waves = WAVES.duplicate(true)

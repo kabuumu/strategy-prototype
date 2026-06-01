@@ -234,6 +234,7 @@ var _restart_hint_label: Label
 var _drag_box: ColorRect
 
 func _ready() -> void:
+	Music.play("battle")
 	set_process_unhandled_input(true)
 	_campaign = GameManager.pending_skirmish
 	GameManager.pending_skirmish = false   # consume the flag

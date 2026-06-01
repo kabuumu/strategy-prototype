@@ -58,6 +58,7 @@ var _preview_label: Label = null
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
+	Music.play("map")
 	_build_node_buttons()
 	_build_hud()
 	# Checkpoint the run between battles so it can be resumed. Once the run is

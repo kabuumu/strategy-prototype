@@ -123,6 +123,7 @@ func _set_passthrough(node: Control) -> void:
 	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _ready() -> void:
+	Music.play("battle")
 	_build_field()
 	_build_ui()
 	if GameManager.pending_rt:

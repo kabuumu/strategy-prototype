@@ -127,6 +127,7 @@ var _campaign_relic: String = ""
 var _campaign_gold: int = 0
 
 func _ready() -> void:
+	Music.play("battle")
 	_rng.randomize()
 	if GameManager.pending_autobattle:
 		GameManager.pending_autobattle = false

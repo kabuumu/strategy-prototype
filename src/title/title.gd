@@ -1,6 +1,7 @@
 extends Node2D
 
 func _ready() -> void:
+	Music.play("title")
 	_build_ui()
 
 func _draw() -> void:

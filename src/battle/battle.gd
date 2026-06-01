@@ -140,6 +140,7 @@ var _damage_taken_total: int = 0
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
+	Music.play("battle")
 	_build_ui()
 	_init_objectives()
 	_generate_terrain()
