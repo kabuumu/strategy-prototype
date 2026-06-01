@@ -125,6 +125,28 @@ const UNIT_TYPES: Dictionary = {
 		"sprite_unit": "juggernaut",
 		# Crushing Blow: heavy melee hit that stuns the target
 		"ability": {"id": "bash", "name": "Crushing Blow", "desc": "Melee hit that stuns the target"}
+	},
+	"berserker": {
+		"name": "Berserker",
+		"max_hp": 75,
+		"move_range": 3,
+		"attack_range": 1,
+		"damage": 42,
+		"color": Color(0.85, 0.32, 0.22),
+		"sprite_unit": "soldier",
+		# Bloodrush: dash in for a savage strike (glass-cannon melee)
+		"ability": {"id": "dash", "name": "Bloodrush", "desc": "Move a second time this turn"}
+	},
+	"marksman": {
+		"name": "Marksman",
+		"max_hp": 55,
+		"move_range": 2,
+		"attack_range": 4,
+		"damage": 30,
+		"color": Color(0.40, 0.70, 0.45),
+		"sprite_unit": "archer",
+		# Piercing Bolt: long-range shot that punches through to the unit behind
+		"ability": {"id": "pierce", "name": "Piercing Bolt", "desc": "Hits the target and the unit behind it"}
 	}
 }
 
@@ -136,7 +158,7 @@ const HEAL_ABILITY_AMOUNT: int = 35
 const UNIT_AP: Dictionary = {
 	"soldier": 2, "archer": 2, "scout": 3, "healer": 2,
 	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
-	"knight": 3, "mage": 2, "guardian": 2,
+	"knight": 3, "mage": 2, "guardian": 2, "berserker": 3, "marksman": 2,
 }
 
 func ap_for(unit_type: String) -> int:
@@ -539,9 +561,11 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 	if tier >= 2:
 		pool.append("healer")
 		pool.append("knight")
+		pool.append("berserker")
 	if tier >= 3:
 		pool.append("mage")
 		pool.append("guardian")
+		pool.append("marksman")
 	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 5)
 	var result: Array[String] = []
 	for _i in range(count):
