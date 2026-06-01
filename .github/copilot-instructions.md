@@ -22,7 +22,7 @@ title.tscn  →  charselect.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 
 **Hero:** one per run (`GameManager.HEROES`, chosen on `charselect`). Each battle the player toggles `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card, never persisted) or **buff** (hero sits out; spend **Valor**, a buff-only resource earned on wins, to apply a team buff via `_apply_hero_buff`). The hero also **levels up** from wins and picks permanent **perks** (`GameManager.HERO_PERKS`) that scale its fight/buff power and sway via `hero_fight_mult`/`hero_buff_mult`/`hero_buff_cost`/`hero_fight_bonus_level`.
 
-**Recruiting:** `gain_unit` nodes offer 2–3 candidates (`GameManager.recruit_candidates`), each with a `sway` type resolved in `level_select`: **dialogue** (pick the right response; hero `dialogue` aptitude hints it), **persuasion** (pay gold, discounted by `persuasion` aptitude), or **duel** (1v1 in the autobattler via `pending_duel`/`_start_duel_fight`/`duel_outcome`; recruited on a win). `hero_sway_aptitude(type)` gates the help.
+**Recruiting:** `gain_unit` nodes offer 2–3 candidates (`GameManager.recruit_candidates`), each with a `sway` type resolved in `level_select`: **dialogue** (pick the right response; hero `dialogue` aptitude hints it), **persuasion** (pay gold, discounted by `persuasion` aptitude), or **duel** (1v1 in the autobattler via `pending_duel`/`_start_duel_fight`/`duel_outcome`; recruited on a win). `hero_sway_aptitude(type)` gates the help. Recruits carry a `personality` + dialogue `scene` (flavour). `GameManager.battle_odds(tier,elite,mode)` gives a heuristic Favorable/Even/Risky/Dire shown in the prebattle popup, node detail, and autobattler header.
 
 ### GameManager (autoload singleton)
 
