@@ -103,8 +103,33 @@ var _unit_state: Dictionary = {}
 var _feedback: Array = []
 var _last_recap: Dictionary = {}
 
+# --- Campaign integration (battle_mode "auto") -----------------------------
+# Launched from the campaign map, the auto-battler runs a SINGLE fight — the
+# player's roster vs the tier's enemy roster — then reports the result back to
+# GameManager and returns to the map, mirroring the 2D/3D battle contract.
+# Campaign unit types are mapped onto the four auto-battler archetypes; the
+# advanced recruits / bosses fight as higher-level (stronger) cards.
+const CAMPAIGN_CARD_MAP: Dictionary = {
+	"soldier": "soldier", "archer": "archer", "scout": "scout", "healer": "healer",
+	"knight": "soldier", "guardian": "healer", "mage": "archer",
+	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "healer",
+}
+const CAMPAIGN_CARD_LEVEL: Dictionary = {
+	"knight": 2, "guardian": 2, "mage": 2,
+	"warlord": 3, "pyromancer": 3, "juggernaut": 3,
+}
+var _campaign: bool = false
+var _campaign_lost: bool = false
+var _campaign_relic: String = ""
+var _campaign_gold: int = 0
+
 func _ready() -> void:
 	_rng.randomize()
+	if GameManager.pending_autobattle:
+		GameManager.pending_autobattle = false
+		_campaign = true
+		_start_campaign_fight()
+		return
 	for _i in range(TEAM_SIZE):
 		team.append({})
 	_roll_shop(true)
@@ -178,8 +203,14 @@ func _rebuild_ui() -> void:
 	_ui_nodes.clear()
 
 	_add_label("AUTO BATTLER", 28, UITheme.GOLD, Vector2(28.0, 14.0), Vector2(250.0, 36.0))
-	_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
-			17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(470.0, 26.0))
+	if _campaign:
+		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
+		_add_label("Campaign Battle — Tier %d%s   ·   Your army vs the enemy host" % [
+				GameManager.pending_battle_tier + 1, et],
+				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(620.0, 26.0))
+	else:
+		_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
+				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(470.0, 26.0))
 	_add_button("Menu", Vector2(1120.0, 16.0), Vector2(104.0, 38.0), UITheme.RED, _on_menu)
 
 	if phase == Phase.SHOP:
@@ -213,7 +244,21 @@ func _rebuild_ui() -> void:
 	elif phase == Phase.RESULT:
 		_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
 		_add_recap_panel()
-		_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
+		if _campaign:
+			var msg: String = ""
+			if _campaign_lost:
+				msg = "Your army was wiped out — the run ends here."
+			else:
+				msg = "+%d gold" % _campaign_gold
+				if _campaign_relic != "":
+					msg += "   ·   Relic found: %s" % String(GameManager.RELICS[_campaign_relic]["name"])
+			_add_label(msg, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
+			if _campaign_lost:
+				_add_button("To Title", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
+			else:
+				_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue)
+		else:
+			_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
 	elif phase == Phase.REWARD:
 		_add_label("PICK A REWARD", 34, UITheme.GOLD, Vector2(420.0, 505.0), Vector2(440.0, 46.0))
 		_add_recap_panel(Vector2(330.0, 552.0))
@@ -825,6 +870,87 @@ func _spawn_fight() -> void:
 	_start_abilities_applied = false
 	_speed_scale = 1.0
 
+# ---------------------------------------------------------------------------
+# Campaign single-fight (battle_mode "auto")
+# ---------------------------------------------------------------------------
+func _campaign_card(unit_type: String) -> Dictionary:
+	return {
+		"id": String(CAMPAIGN_CARD_MAP.get(unit_type, "soldier")),
+		"level": int(CAMPAIGN_CARD_LEVEL.get(unit_type, 1)),
+		"xp": 0,
+	}
+
+func _start_campaign_fight() -> void:
+	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	# Player team — one regiment per campaign roster entry (remembered so the
+	# survivors can be written back with permadeath after the fight).
+	var p_cards: Array = []
+	var p_entries: Array = []
+	for entry: Dictionary in GameManager.player_roster:
+		p_cards.append(_campaign_card(String(entry["type"])))
+		p_entries.append(entry)
+	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
+	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
+	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
+	var e_cards: Array = []
+	for t in e_types:
+		e_cards.append(_campaign_card(String(t)))
+	var p_counts := _unit_counts(p_cards)
+	var e_counts := _unit_counts(e_cards)
+	var p_pos := _formation_positions(p_cards.size(), 0)
+	for i in range(p_cards.size()):
+		var u := _spawn_unit(p_cards[i], 0, p_pos[i], 1.0, p_counts)
+		_unit_state[u.get_instance_id()]["roster_entry"] = p_entries[i]
+		player_units.append(u)
+	var e_pos := _formation_positions(e_cards.size(), 1)
+	for i in range(e_cards.size()):
+		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
+	phase = Phase.FIGHT
+	_fight_intro_timer = FIGHT_INTRO_SECONDS
+	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 1.0
+	_rebuild_ui()
+
+func _conclude_campaign(win: bool) -> void:
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	_campaign_lost = not win
+	_campaign_relic = ""
+	_campaign_gold = 0
+	if win:
+		# Survivors carry forward (permadeath drops the fallen regiments).
+		var survivors: Array[Dictionary] = []
+		for u: RTUnit in player_units:
+			if is_instance_valid(u) and u.is_alive():
+				var st: Dictionary = _unit_state.get(u.get_instance_id(), {})
+				var entry = st.get("roster_entry", null)
+				if entry != null:
+					survivors.append(entry)
+		GameManager.set_roster(survivors)
+		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
+		GameManager.add_gold(_campaign_gold)
+		GameManager.register_battle_won(elite)
+		if elite:
+			_campaign_relic = GameManager.grant_random_relic()
+		GameManager.save_run()
+		_result_text = "VICTORY"
+		Sfx.play("win", -7.0)
+	else:
+		GameManager.clear_run()   # permadeath — the run is over
+		_result_text = "DEFEAT"
+		Sfx.play("lose", -7.0)
+	phase = Phase.RESULT
+	_rebuild_ui()
+
+func _on_campaign_continue() -> void:
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
 func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
 	var u: RTUnit = RTUnit.new()
 	add_child(u)
@@ -1034,6 +1160,9 @@ func _check_fight_end() -> bool:
 	if p_alive and e_alive:
 		return false
 	_build_recap(p_alive, e_alive)
+	if _campaign:
+		_conclude_campaign(p_alive and not e_alive)
+		return true
 	if p_alive and not e_alive:
 		wins += 1
 		_result_text = "WIN"

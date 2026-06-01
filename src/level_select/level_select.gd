@@ -387,11 +387,15 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			GameManager.pending_battle_tier  = tier
 			GameManager.pending_battle_elite = node_data["type"] == "elite_battle"
 			# Route to the run's chosen battle style.
-			if GameManager.battle_mode == "3d":
-				GameManager.pending_skirmish = true
-				get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
-			else:
-				get_tree().change_scene_to_file("res://src/battle/battle.tscn")
+			match GameManager.battle_mode:
+				"3d":
+					GameManager.pending_skirmish = true
+					get_tree().change_scene_to_file("res://src/skirmish3d/skirmish3d.tscn")
+				"auto":
+					GameManager.pending_autobattle = true
+					get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+				_:
+					get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":
 			_show_unit_select_popup()
 		"shop":

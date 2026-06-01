@@ -44,6 +44,9 @@ func _build_ui() -> void:
 	y += 64.0
 	_add_menu_button("New Game · 3D Real-Time", Vector2(490.0, y), Vector2(300.0, 58.0),
 		Color(0.36, 0.26, 0.60), _on_new_game_3d)
+	y += 64.0
+	_add_menu_button("New Game · Auto-Battler", Vector2(490.0, y), Vector2(300.0, 58.0),
+		Color(0.30, 0.50, 0.38), _on_new_game_auto)
 	y += 78.0
 
 	# Skirmishes are self-contained battle modes, no campaign state touched.
@@ -94,7 +97,7 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 func _start_new_game(mode: String) -> void:
 	GameManager.clear_run()   # discard any in-progress run
 	GameManager.reset()
-	GameManager.battle_mode = mode   # "2d" hex turn-based or "3d" real-time
+	GameManager.battle_mode = mode   # "2d" hex turn-based / "3d" real-time / "auto" auto-battler
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
 func _on_new_game_2d() -> void:
@@ -102,6 +105,9 @@ func _on_new_game_2d() -> void:
 
 func _on_new_game_3d() -> void:
 	_start_new_game("3d")
+
+func _on_new_game_auto() -> void:
+	_start_new_game("auto")
 
 func _on_continue() -> void:
 	if GameManager.load_run():

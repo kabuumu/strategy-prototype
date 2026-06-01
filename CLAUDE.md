@@ -29,7 +29,7 @@ Push to `main` triggers the GitHub Pages build/deploy workflow. The CI adds a CO
 
 ## Architecture
 
-Scene flow: `title.tscn → level_select.tscn ⇄ battle.tscn`. Title resets state and starts a run; `level_select` is the overworld map; `battle` is one tactical fight that returns to `level_select` when it ends.
+Scene flow: `title.tscn → level_select.tscn ⇄ <battle scene>`. Title resets state and starts a run; `level_select` is the overworld map; a battle node launches one fight that returns to `level_select` when it ends. The battle scene depends on the run's `GameManager.battle_mode`: `"2d"` → `battle.tscn` (hex turn-based), `"3d"` → `skirmish3d.tscn` (real-time, sets `pending_skirmish`), `"auto"` → `autobattler.tscn` (auto-resolved single fight, sets `pending_autobattle`). The auto-battler is also a standalone roguelite from the title; its campaign path (`_start_campaign_fight`/`_conclude_campaign`) builds teams from the roster and reports win/loss back to GameManager exactly like the other modes. Skirmish 2D/3D from the title are self-contained and touch no campaign state.
 
 ### GameManager (autoload singleton) — `src/game_manager.gd`
 
