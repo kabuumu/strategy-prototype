@@ -241,6 +241,10 @@ var pending_battle_elite: bool = false
 var pending_skirmish: bool = false
 # When true, the campaign battle is auto-resolved by the auto-battler (set by level_select).
 var pending_autobattle: bool = false
+# When true, the campaign battle is a tower-defence stand (set by level_select).
+var pending_td: bool = false
+# When true, the campaign battle is a base-building RTS (set by level_select).
+var pending_base: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:

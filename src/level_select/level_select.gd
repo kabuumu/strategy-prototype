@@ -394,6 +394,12 @@ func _on_node_pressed(tier: int, index: int) -> void:
 				"auto":
 					GameManager.pending_autobattle = true
 					get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+				"td":
+					GameManager.pending_td = true
+					get_tree().change_scene_to_file("res://src/towerdefense/towerdefense.tscn")
+				"base":
+					GameManager.pending_base = true
+					get_tree().change_scene_to_file("res://src/basebuilder/basebuilder.tscn")
 				_:
 					get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":

@@ -7,7 +7,9 @@ extends Node2D
 # enemy either smashes through a blocker or leaks to the keep and damages it.
 # Survive every wave to win; the keep falling ends the run.
 #
-# Like the other skirmishes this touches no campaign / GameManager state.
+# Two entry points: a standalone skirmish from the title (no campaign state), or
+# a campaign battle (battle_mode "td", GameManager.pending_td) where your roster
+# auto-deploys as the starting defenders and the result reports back to the run.
 
 const UITheme := preload("res://src/ui/ui_theme.gd")
 const RTUnit := preload("res://src/rtbattle/rt_unit.gd")
@@ -90,6 +92,21 @@ var _spawn_queue: Array = []       # pending [enemy_id] this wave
 var _spawn_timer: float = 0.0
 var _retarget_timer: float = 0.0
 var _selected_type: String = "archer"
+var _waves: Array = []             # active wave script (WAVES, or campaign-built)
+
+# --- Campaign integration (battle_mode "td") -------------------------------
+# Launched from the campaign map: your roster auto-deploys as the initial
+# defenders, waves scale with the tier, and the result reports back to
+# GameManager (survivors carried, gold + elite relic) like the other modes.
+const CAMPAIGN_TD_MAP: Dictionary = {
+	"soldier": "soldier", "archer": "archer", "scout": "soldier", "healer": "guardian",
+	"knight": "guardian", "mage": "mage", "guardian": "guardian",
+	"warlord": "guardian", "pyromancer": "mage", "juggernaut": "guardian",
+}
+var _campaign: bool = false
+var _campaign_lost: bool = false
+var _campaign_relic: String = ""
+var _campaign_reward_gold: int = 0
 
 var _ui: CanvasLayer
 var _gold_label: Label
@@ -102,9 +119,51 @@ var _rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	_rng.randomize()
 	set_process_unhandled_input(true)
+	_waves = WAVES.duplicate(true)
+	if GameManager.pending_td:
+		GameManager.pending_td = false
+		_campaign = true
+		_setup_campaign()
 	_build_ui()
 	_refresh_ui()
 	queue_redraw()
+
+# Campaign setup — roster becomes the starting defenders, waves scale to tier.
+func _setup_campaign() -> void:
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	_keep_hp = START_KEEP_HP + tier * 2
+	_gold = 50 + tier * 15
+	_waves = _build_campaign_waves(tier, elite)
+	var roster: Array = GameManager.player_roster
+	for i in range(roster.size()):
+		var entry: Dictionary = roster[i]
+		var dtype: String = String(CAMPAIGN_TD_MAP.get(String(entry["type"]), "soldier"))
+		var side: float = -1.0 if (i % 2 == 0) else 1.0
+		var rank: int = i / 2
+		var y: float = clampf(LANE_Y + side * (LANE_HALF + 48.0 + rank * 64.0),
+			FIELD_RECT.position.y + 30.0, FIELD_RECT.end.y - 30.0)
+		var x: float = 300.0 + float(i % 2) * 64.0
+		var u := RTUnit.new()
+		add_child(u)
+		u.setup(dtype, 0, Vector2(x, y), DEFENDER_TYPES[dtype])
+		u.clear_order()
+		u.set_meta("roster_entry", entry)
+		_defenders.append(u)
+
+func _build_campaign_waves(tier: int, elite: bool) -> Array:
+	var n: int = 3 + tier
+	var waves: Array = []
+	for w in range(n):
+		var wave: Array = [["runner", 2 + w]]
+		if w >= 1:
+			wave.append(["soldier", 2 + w])
+		if tier >= 2 and w >= 2:
+			wave.append(["brute", 1 + w / 2])
+		waves.append(wave)
+	if (elite or tier >= GameManager.MAP_TIERS - 1) and not waves.is_empty():
+		waves[waves.size() - 1].append(["warlord", 1])
+	return waves
 
 # ---------------------------------------------------------------------------
 # UI
@@ -146,7 +205,7 @@ func _build_ui() -> void:
 func _refresh_ui() -> void:
 	_keep_label.text = "Keep HP: %d" % _keep_hp
 	_gold_label.text = "Gold: %d" % _gold
-	var total: int = WAVES.size()
+	var total: int = _waves.size()
 	if _ended:
 		_wave_label.text = "VICTORY" if _won else "DEFEAT"
 	elif _wave_active:
@@ -160,11 +219,11 @@ func _on_pick_type(id: String) -> void:
 		String(DEFENDER_TYPES[id]["name"]), int(DEFENDER_TYPES[id]["cost"])]
 
 func _on_start_wave() -> void:
-	if _ended or _wave_active or _wave_index >= WAVES.size():
+	if _ended or _wave_active or _wave_index >= _waves.size():
 		return
 	_wave_active = true
 	_spawn_queue.clear()
-	for entry in WAVES[_wave_index]:
+	for entry in _waves[_wave_index]:
 		var id: String = String(entry[0])
 		for _i in range(int(entry[1])):
 			_spawn_queue.append(id)
@@ -305,7 +364,7 @@ func _check_wave_end() -> void:
 	if _spawn_queue.is_empty() and _enemies.is_empty():
 		_wave_active = false
 		_wave_index += 1
-		if _wave_index >= WAVES.size():
+		if _wave_index >= _waves.size():
 			_conclude(true)
 			return
 		var bonus: int = 20 + _wave_index * 6
@@ -316,6 +375,8 @@ func _check_wave_end() -> void:
 func _conclude(win: bool) -> void:
 	_ended = true
 	_won = win
+	if _campaign:
+		_conclude_campaign(win)
 	_status_label.text = "The keep held — victory!" if win else "The keep has fallen."
 	Sfx.play("win" if win else "lose", -6.0)
 	_refresh_ui()
@@ -326,16 +387,54 @@ func _conclude(win: bool) -> void:
 	dim.color = Color(0.0, 0.0, 0.0, 0.6)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(dim)
-	UITheme.panel(root, Vector2(480.0, 250.0), Vector2(320.0, 220.0))
+	UITheme.panel(root, Vector2(480.0, 244.0), Vector2(320.0, 240.0))
 	root.add_child(UITheme.label("VICTORY" if win else "DEFEAT", 40,
-		UITheme.GOLD if win else UITheme.RED, Vector2(556.0, 274.0)))
-	root.add_child(UITheme.label("You cleared every wave." if win else "The keep was overrun.",
-		15, UITheme.TEXT_MUTED, Vector2(512.0, 330.0), Vector2(256.0, 24.0)))
-	root.add_child(UITheme.button("Play Again", Vector2(512.0, 366.0), Vector2(256.0, 44.0),
-		UITheme.GREEN, func() -> void: get_tree().reload_current_scene()))
-	root.add_child(UITheme.button("To Title", Vector2(512.0, 416.0), Vector2(256.0, 40.0),
-		Color(0.45, 0.30, 0.34), func() -> void: get_tree().change_scene_to_file("res://src/title/title.tscn")))
+		UITheme.GOLD if win else UITheme.RED, Vector2(556.0, 266.0)))
+	var sub: String
+	if _campaign:
+		sub = ("+%d gold%s" % [_campaign_reward_gold,
+			"   ·   Relic: %s" % String(GameManager.RELICS[_campaign_relic]["name"]) if _campaign_relic != "" else ""]) if win \
+			else "Your army was wiped out — the run ends here."
+	else:
+		sub = "You cleared every wave." if win else "The keep was overrun."
+	root.add_child(UITheme.label(sub, 15, UITheme.TEXT_MUTED, Vector2(500.0, 322.0), Vector2(280.0, 40.0)))
+	if _campaign and win:
+		root.add_child(UITheme.button("Continue", Vector2(512.0, 372.0), Vector2(256.0, 46.0),
+			UITheme.GREEN, func() -> void: get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")))
+	elif _campaign and not win:
+		root.add_child(UITheme.button("To Title", Vector2(512.0, 372.0), Vector2(256.0, 46.0),
+			Color(0.45, 0.30, 0.34), func() -> void: get_tree().change_scene_to_file("res://src/title/title.tscn")))
+	else:
+		root.add_child(UITheme.button("Play Again", Vector2(512.0, 372.0), Vector2(256.0, 44.0),
+			UITheme.GREEN, func() -> void: get_tree().reload_current_scene()))
+		root.add_child(UITheme.button("To Title", Vector2(512.0, 424.0), Vector2(256.0, 40.0),
+			Color(0.45, 0.30, 0.34), func() -> void: get_tree().change_scene_to_file("res://src/title/title.tscn")))
 	_ui.add_child(root)
+
+# Write the campaign result back to GameManager (survivors, gold, relic, save).
+func _conclude_campaign(win: bool) -> void:
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	_campaign_lost = not win
+	_campaign_relic = ""
+	_campaign_reward_gold = 0
+	if win:
+		var survivors: Array[Dictionary] = []
+		for u: RTUnit in _defenders:
+			if is_instance_valid(u) and u.is_alive() and u.has_meta("roster_entry"):
+				survivors.append(u.get_meta("roster_entry"))
+		# A keep that holds always saves at least your hardiest regiment.
+		if survivors.is_empty() and not GameManager.player_roster.is_empty():
+			survivors.append(GameManager.player_roster[0])
+		GameManager.set_roster(survivors)
+		_campaign_reward_gold = GameManager.battle_gold_reward(tier, elite)
+		GameManager.add_gold(_campaign_reward_gold)
+		GameManager.register_battle_won(elite)
+		if elite:
+			_campaign_relic = GameManager.grant_random_relic()
+		GameManager.save_run()
+	else:
+		GameManager.clear_run()
 
 # ---------------------------------------------------------------------------
 # Input
