@@ -222,6 +222,7 @@ var _ui: CanvasLayer
 var _status_label: Label
 var _selection_label: Label
 var _command_label: Label
+var _begin_button: Button = null
 var _settings_overlay: Control = null
 var _info_panel: Panel
 var _info_label: Label
@@ -242,7 +243,9 @@ func _ready() -> void:
 	if _campaign:
 		_deploying = true
 		if _command_label != null:
-			_command_label.text = "DEPLOYMENT — right-click to position your regiments, then press ENTER to begin"
+			_command_label.text = "DEPLOYMENT — right-click to position your regiments, then press Begin (or Enter)"
+		if _begin_button != null:
+			_begin_button.visible = true
 	_refresh_ui()
 
 # Feature effect radii (gameplay) by type.
@@ -636,6 +639,13 @@ func _build_ui() -> void:
 	_command_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_command_label)
 
+	# Prominent start control for the campaign deployment phase (hidden until
+	# deploying, hidden again once the battle begins). ENTER also works.
+	_begin_button = UITheme.button("▶  Begin Battle   (Enter)", Vector2(528.0, 646.0),
+		Vector2(224.0, 50.0), UITheme.GREEN, _begin_battle, 16)
+	_begin_button.visible = false
+	_ui.add_child(_begin_button)
+
 	var hint := Label.new()
 	hint.text = "Drag-box select · Shift add · R-click move/attack · WASD/edge pan · wheel zoom · G shield-wall · V volley · F formation · SPACE pause"
 	hint.add_theme_font_size_override("font_size", 13)
@@ -950,6 +960,8 @@ func _begin_battle() -> void:
 	if not _deploying:
 		return
 	_deploying = false
+	if _begin_button != null:
+		_begin_button.visible = false
 	for u: SkirmishUnit3D in player_units:
 		u.clear_order()
 	if _command_label != null:
