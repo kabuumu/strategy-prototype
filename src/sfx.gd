@@ -5,6 +5,7 @@ extends Node
 const NAMES: Array[String] = [
 	"attack", "hit", "death", "heal", "ability",
 	"capture", "gold", "stun", "win", "lose",
+	"step", "select",
 ]
 const POOL_SIZE: int = 8
 

@@ -125,10 +125,16 @@ var _campaign: bool = false
 var _campaign_lost: bool = false
 var _campaign_relic: String = ""
 var _campaign_gold: int = 0
+var _duel: bool = false
 
 func _ready() -> void:
 	Music.play("battle")
 	_rng.randomize()
+	if GameManager.pending_duel:
+		GameManager.pending_duel = false
+		_duel = true
+		_start_duel_fight()
+		return
 	if GameManager.pending_autobattle:
 		GameManager.pending_autobattle = false
 		_campaign = true
@@ -209,9 +215,14 @@ func _rebuild_ui() -> void:
 	_add_label("AUTO BATTLER", 28, UITheme.GOLD, Vector2(28.0, 14.0), Vector2(250.0, 36.0))
 	if _campaign:
 		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
-		_add_label("Campaign Battle — Tier %d%s   ·   Your army vs the enemy host" % [
-				GameManager.pending_battle_tier + 1, et],
-				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(620.0, 26.0))
+		var odds: String = GameManager.battle_odds(
+			GameManager.pending_battle_tier, GameManager.pending_battle_elite, GameManager.hero_battle_mode)
+		var mod_text: String = ""
+		if GameManager.pending_battle_elite:
+			mod_text = "   ·   %s" % String(GameManager.elite_modifier_data(GameManager.pending_battle_tier).get("name", ""))
+		_add_label("Campaign Battle — Tier %d%s   ·   Odds: %s%s" % [
+				GameManager.pending_battle_tier + 1, et, odds, mod_text],
+				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(760.0, 26.0))
 	else:
 		_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
 				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(470.0, 26.0))
@@ -249,7 +260,13 @@ func _rebuild_ui() -> void:
 	elif phase == Phase.RESULT:
 		_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
 		_add_recap_panel()
-		if _campaign:
+		if _duel:
+			var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
+			var won := GameManager.duel_outcome == 1
+			var fate := "%s joins your army!" % recruit_name if won else "%s walks away." % recruit_name
+			_add_label(fate, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
+			_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+		elif _campaign:
 			var msg: String = ""
 			if _campaign_lost:
 				msg = "Your army was wiped out — the run ends here."
@@ -898,6 +915,12 @@ func _start_campaign_fight() -> void:
 	for entry: Dictionary in GameManager.player_roster:
 		p_cards.append(_campaign_card(String(entry["type"])))
 		p_entries.append(entry)
+	# Hero fights as an extra card (Fight mode). The null roster entry keeps the
+	# zip aligned and signals the survivor write-back to skip it (never persisted).
+	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
+		var hd := GameManager.hero_data()
+		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true})
+		p_entries.append(null)
 	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
@@ -913,16 +936,50 @@ func _start_campaign_fight() -> void:
 		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
+		if bool(p_cards[i].get("hero", false)):
+			var m := GameManager.hero_fight_mult()
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * m)))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * m)))
 		player_units.append(u)
+	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
+	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
+		_apply_hero_buff(GameManager.pending_hero_buff)
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
+	# Elite battles roll a deterministic modifier that buffs the whole enemy host.
+	if elite:
+		var m := GameManager.elite_modifier_data(tier)
+		for u: RTUnit in enemy_units:
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * float(m.get("hp", 1.0)))))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * float(m.get("dmg", 1.0)))))
+			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
+			if u.has_method("_refresh_hp_bar"):
+				u.call("_refresh_hp_bar")
 	phase = Phase.FIGHT
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
 	_speed_scale = 1.0
 	_rebuild_ui()
+
+func _apply_hero_buff(buff_id: String) -> void:
+	var bm := GameManager.hero_buff_mult()
+	for u: RTUnit in player_units:
+		match buff_id:
+			"aegis":
+				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * bm))))
+				u.hp = u.max_hp
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
+			"march":
+				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * bm))))
+			"warchest":
+				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * bm)))
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
 
 func _conclude_campaign(win: bool) -> void:
 	var tier: int = GameManager.pending_battle_tier
@@ -943,6 +1000,7 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
+		GameManager.add_valor(2 + (1 if elite else 0))
 		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
@@ -957,6 +1015,58 @@ func _conclude_campaign(win: bool) -> void:
 	_rebuild_ui()
 
 func _on_campaign_continue() -> void:
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+# ---------------------------------------------------------------------------
+# Duel (sway recruiting — battle_mode "auto", pending_duel)
+# ---------------------------------------------------------------------------
+# A 1v1: the hero (team 0) vs a single recruit candidate (team 1). On
+# resolution the outcome is reported via GameManager.duel_outcome and the map
+# (level_select) recruits the unit on a win.
+func _start_duel_fight() -> void:
+	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
+	var hero_card: Dictionary
+	if GameManager.has_hero():
+		var hd := GameManager.hero_data()
+		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0}
+	else:
+		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0}
+	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
+	var hero_pos := _formation_positions(1, 0)
+	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
+	if GameManager.hero_sway_aptitude("duel") > 0:
+		hero_unit.max_hp = maxi(1, int(round(hero_unit.max_hp * 1.25)))
+		hero_unit.hp = hero_unit.max_hp
+		hero_unit.damage_per_attack = maxi(1, int(round(hero_unit.damage_per_attack * 1.25)))
+		if hero_unit.has_method("_refresh_hp_bar"):
+			hero_unit.call("_refresh_hp_bar")
+	var fm := GameManager.hero_fight_mult()
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * fm)))
+	hero_unit.hp = hero_unit.max_hp
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * fm)))
+	if hero_unit.has_method("_refresh_hp_bar"):
+		hero_unit.call("_refresh_hp_bar")
+	player_units.append(hero_unit)
+	var recruit_pos := _formation_positions(1, 1)
+	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 1.0))
+	phase = Phase.FIGHT
+	_fight_intro_timer = FIGHT_INTRO_SECONDS
+	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 1.0
+	_rebuild_ui()
+
+func _conclude_duel(win: bool) -> void:
+	GameManager.duel_outcome = 1 if win else 0
+	_result_text = "DUEL WON" if win else "DUEL LOST"
+	phase = Phase.RESULT
+	Sfx.play("win" if win else "lose", -7.0)
+	_rebuild_ui()
+
+func _on_duel_continue() -> void:
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
 func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
@@ -1171,6 +1281,9 @@ func _check_fight_end() -> bool:
 	if p_alive and e_alive:
 		return false
 	_build_recap(p_alive, e_alive)
+	if _duel:
+		_conclude_duel(p_alive and not e_alive)
+		return true
 	if _campaign:
 		_conclude_campaign(p_alive and not e_alive)
 		return true

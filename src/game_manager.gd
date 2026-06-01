@@ -173,6 +173,371 @@ func recruitable_types() -> Array[String]:
 	return out
 
 # ---------------------------------------------------------------------------
+# Heroes — chosen at the start of a campaign on the character-select screen.
+# The hero walks the overworld and, each battle, either FIGHTS (joins the army
+# as a unit built from fight_archetype/fight_level) or BUFFS (sits out, spends
+# Valor to apply `buff` across the team). `sway_aptitudes` is stored now and
+# consumed by the Phase 2 recruitment rework. `sprite_key` reuses existing unit
+# art as placeholder; real hero art is a later task.
+#
+# buff ids applied by the auto-battler:
+#   "aegis"    — team +15% max HP (and heal to full)
+#   "march"    — team +15% attack damage
+#   "warchest" — heal team 25% of max HP
+# ---------------------------------------------------------------------------
+const HEROES: Dictionary = {
+	"knight_captain": {
+		"name": "Knight-Captain",
+		"blurb": "A frontline commander — joins the fight as a tough soldier.",
+		"sprite_key": "soldier",
+		"fight_archetype": "soldier",
+		"fight_level": 3,
+		"buff": {"id": "aegis", "name": "Aegis", "desc": "Team +15% max HP", "cost": 4},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 0, "duel": 2},
+		"start_bonus": {"gold": 0, "units": []},
+	},
+	"bard": {
+		"name": "Bard",
+		"blurb": "A silver tongue — weak in a brawl, but inspires the army.",
+		"sprite_key": "scout",
+		"fight_archetype": "scout",
+		"fight_level": 1,
+		"buff": {"id": "march", "name": "Marching Song", "desc": "Team +15% damage", "cost": 4},
+		"sway_aptitudes": {"dialogue": 2, "persuasion": 0, "duel": 0},
+		"start_bonus": {"gold": 0, "units": ["scout"]},
+	},
+	"merchant_prince": {
+		"name": "Merchant-Prince",
+		"blurb": "Coin opens doors — starts richer and buys loyalty cheaply.",
+		"sprite_key": "healer",
+		"fight_archetype": "healer",
+		"fight_level": 2,
+		"buff": {"id": "warchest", "name": "War Chest", "desc": "Heal team 25%", "cost": 3},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 2, "duel": 0},
+		"start_bonus": {"gold": 6, "units": []},
+	},
+	# Unlockable heroes (see HERO_UNLOCK) — earned via meta-progression.
+	"warden": {
+		"name": "Warden",
+		"blurb": "An unbreakable shield — soaks hits so the army survives.",
+		"sprite_key": "healer",
+		"fight_archetype": "healer",
+		"fight_level": 3,
+		"buff": {"id": "aegis", "name": "Bulwark", "desc": "Team +15% max HP", "cost": 3},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 1, "duel": 1},
+		"start_bonus": {"gold": 0, "units": ["soldier"]},
+	},
+	"trickster": {
+		"name": "Trickster",
+		"blurb": "Fast and cunning — talks circles around recruits.",
+		"sprite_key": "scout",
+		"fight_archetype": "scout",
+		"fight_level": 2,
+		"buff": {"id": "march", "name": "Feint", "desc": "Team +15% damage", "cost": 4},
+		"sway_aptitudes": {"dialogue": 2, "persuasion": 1, "duel": 0},
+		"start_bonus": {"gold": 4, "units": []},
+	},
+	"templar": {
+		"name": "Templar",
+		"blurb": "A holy duelist — strong alone, steadies the line.",
+		"sprite_key": "archer",
+		"fight_archetype": "archer",
+		"fight_level": 3,
+		"buff": {"id": "warchest", "name": "Benediction", "desc": "Heal team 25%", "cost": 4},
+		"sway_aptitudes": {"dialogue": 0, "persuasion": 0, "duel": 2},
+		"start_bonus": {"gold": 0, "units": []},
+	},
+}
+
+const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince", "warden", "trickster", "templar"]
+
+# Heroes not listed here are always unlocked (the three starters). Each entry:
+# the meta stat to check, the minimum value, and a hint shown on the locked card.
+const HERO_UNLOCK: Dictionary = {
+	"warden":    {"stat": "runs_won",          "min": 1, "hint": "Win a run"},
+	"trickster": {"stat": "best_tier_reached", "min": 6, "hint": "Reach tier 6 in a run"},
+	"templar":   {"stat": "best_streak_ever",  "min": 6, "hint": "Win 6 battles in a row"},
+}
+
+func _meta_stat(key: String) -> int:
+	match key:
+		"runs_won":          return runs_won
+		"best_tier_reached": return best_tier_reached
+		"best_streak_ever":  return best_streak_ever
+		"total_runs":        return total_runs
+	return 0
+
+func is_hero_unlocked(id: String) -> bool:
+	if not HERO_UNLOCK.has(id):
+		return true
+	var req: Dictionary = HERO_UNLOCK[id]
+	return _meta_stat(String(req["stat"])) >= int(req["min"])
+
+func hero_unlock_hint(id: String) -> String:
+	return String(HERO_UNLOCK.get(id, {}).get("hint", ""))
+
+# Hero data for the active run ({} when no hero / standalone mode).
+func hero_data() -> Dictionary:
+	return HEROES.get(selected_hero, {})
+
+func has_hero() -> bool:
+	return selected_hero != "" and HEROES.has(selected_hero)
+
+# Choose a hero for a fresh run. Call AFTER reset() so the starting roster and
+# gold exist for the hero's start_bonus to add to.
+func select_hero(id: String) -> void:
+	if not HEROES.has(id):
+		return
+	selected_hero = id
+	valor = 0
+	hero_battle_mode = "fight"
+	pending_hero_buff = ""
+	hero_level = 1
+	hero_xp = 0
+	hero_perks = []
+	pending_hero_perk = false
+	var bonus: Dictionary = HEROES[id].get("start_bonus", {})
+	gold += int(bonus.get("gold", 0))
+	for t in bonus.get("units", []):
+		add_unit(str(t))
+
+func add_valor(n: int) -> void:
+	valor = max(0, valor + n)
+
+func spend_valor(n: int) -> bool:
+	if valor < n:
+		return false
+	valor -= n
+	return true
+
+# Hero's aptitude for a sway type ("dialogue"/"persuasion"/"duel"); 0 if no hero.
+# The Silver Tongue perk lifts every aptitude by 1.
+func hero_sway_aptitude(sway_type: String) -> int:
+	if not has_hero():
+		return 0
+	var apt: Dictionary = hero_data().get("sway_aptitudes", {})
+	return int(apt.get(sway_type, 0)) + (1 if has_perk("silver_tongue") else 0)
+
+# ---------------------------------------------------------------------------
+# Hero progression — gain a level every HERO_XP_PER_LEVEL battle wins (up to
+# HERO_MAX_LEVEL). Each level boosts the hero passively (fight + buff scaling)
+# and offers a permanent perk pick. Perks are applied via the helpers below,
+# which the auto-battler and level_select read.
+# ---------------------------------------------------------------------------
+const HERO_XP_PER_LEVEL: int = 2
+const HERO_MAX_LEVEL: int = 10
+const HERO_PERKS: Dictionary = {
+	"warlord":       {"name": "Warlord",       "desc": "+20% hero combat power"},
+	"veteran_hero":  {"name": "Veteran",       "desc": "Hero fights one card level higher"},
+	"inspiring":     {"name": "Inspiring",     "desc": "+50% stronger team buffs"},
+	"thrifty":       {"name": "Thrifty",       "desc": "Hero buffs cost 1 less Valor"},
+	"silver_tongue": {"name": "Silver Tongue", "desc": "+1 to all sway aptitudes"},
+}
+const HERO_PERK_IDS: Array[String] = ["warlord", "veteran_hero", "inspiring", "thrifty", "silver_tongue"]
+
+func has_perk(id: String) -> bool:
+	return id in hero_perks
+
+# Called on each battle win (from register_battle_won). Levels up and flags a
+# perk pick when a threshold is crossed.
+func hero_gain_xp() -> void:
+	if not has_hero() or hero_level >= HERO_MAX_LEVEL:
+		return
+	hero_xp += 1
+	while hero_xp >= HERO_XP_PER_LEVEL and hero_level < HERO_MAX_LEVEL:
+		hero_xp -= HERO_XP_PER_LEVEL
+		hero_level += 1
+		if not _unowned_perks().is_empty():
+			pending_hero_perk = true
+
+func _unowned_perks() -> Array[String]:
+	var out: Array[String] = []
+	for id: String in HERO_PERK_IDS:
+		if not has_perk(id):
+			out.append(id)
+	return out
+
+# Up to n random unowned perk ids for the level-up pick.
+func random_hero_perk_choices(n: int) -> Array[String]:
+	var pool: Array[String] = _unowned_perks()
+	pool.shuffle()
+	return pool.slice(0, mini(n, pool.size()))
+
+func grant_hero_perk(id: String) -> void:
+	if HERO_PERKS.has(id) and not has_perk(id):
+		hero_perks.append(id)
+
+# Multiplier on the hero's combat stats when it FIGHTS (level scaling + Warlord).
+func hero_fight_mult() -> float:
+	return 1.0 + 0.10 * float(hero_level - 1) + (0.20 if has_perk("warlord") else 0.0)
+
+# Extra card levels the fighting hero spawns at (Veteran perk).
+func hero_fight_bonus_level() -> int:
+	return 1 if has_perk("veteran_hero") else 0
+
+# Multiplier on the bonus portion of a team BUFF (level scaling + Inspiring).
+func hero_buff_mult() -> float:
+	return 1.0 + 0.05 * float(hero_level - 1) + (0.50 if has_perk("inspiring") else 0.0)
+
+# Valor cost of a buff after the Thrifty perk.
+func hero_buff_cost(base: int) -> int:
+	return maxi(0, base - (1 if has_perk("thrifty") else 0))
+
+# ---------------------------------------------------------------------------
+# Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
+# sway type the player must beat to recruit. Deterministic per node so the offer
+# is stable across popup rebuilds and run reloads.
+# ---------------------------------------------------------------------------
+const SWAY_TYPES: Array[String] = ["dialogue", "persuasion", "duel"]
+
+# Recruit flavour (Phase 2 depth). `personality` colours the recruit's intro and
+# tints the sway. `scene` picks one of these dialogue exchanges; the dialogue
+# resolver shows its prompt/options and treats `correct` as the winning line.
+const RECRUIT_PERSONALITIES: Array[Dictionary] = [
+	{"name": "Grizzled",  "line": "A scarred veteran who has seen too many battles."},
+	{"name": "Eager",     "line": "A green recruit itching to prove themselves."},
+	{"name": "Proud",     "line": "A haughty warrior who respects only strength."},
+	{"name": "Greedy",    "line": "A sellsword whose loyalty follows the coin."},
+	{"name": "Wary",      "line": "A cautious sort, slow to trust strangers."},
+]
+const DIALOGUE_SCENES: Array[Dictionary] = [
+	{"prompt": "They eye your banner. What's your pitch?",
+		"options": ["Promise them glory", "Offer a fair share of plunder", "Appeal to a common enemy"], "correct": 2},
+	{"prompt": "\"And why should I follow you?\"",
+		"options": ["\"For coin and conquest.\"", "\"Because the realm needs us.\"", "\"You'll die alone otherwise.\""], "correct": 1},
+	{"prompt": "They size you up in silence.",
+		"options": ["Stand tall and meet their eyes", "Crack a disarming joke", "Reel off your victories"], "correct": 0},
+	{"prompt": "\"What's in it for me?\"",
+		"options": ["\"Glory enough for songs.\"", "\"A warm fire and good company.\"", "\"Vengeance on those who wronged you.\""], "correct": 2},
+]
+
+func recruit_candidates(tier: int, index: int) -> Array[Dictionary]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = tier * 100 + index + 1
+	var pool: Array[String] = recruitable_types()
+	# Shuffle the pool deterministically, then take the first N distinct types.
+	for i in range(pool.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: String = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+	var count: int = clampi(2 + rng.randi_range(0, 1), 2, min(3, pool.size()))
+	var out: Array[Dictionary] = []
+	for k in range(count):
+		var sway: String = SWAY_TYPES[rng.randi_range(0, SWAY_TYPES.size() - 1)]
+		out.append({
+			"type": pool[k],
+			"sway": sway,
+			"scene": rng.randi_range(0, DIALOGUE_SCENES.size() - 1),
+			"personality": rng.randi_range(0, RECRUIT_PERSONALITIES.size() - 1),
+		})
+	return out
+
+# A single roadside-encounter recruit (Phase 3 paths). sway restricted to the
+# in-popup resolvers (dialogue/persuasion — never a duel mid-travel).
+func encounter_recruit(seed_val: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_val
+	var pool: Array[String] = recruitable_types()
+	return {
+		"type": pool[rng.randi_range(0, pool.size() - 1)],
+		"sway": "dialogue" if rng.randf() < 0.5 else "persuasion",
+		"scene": rng.randi_range(0, DIALOGUE_SCENES.size() - 1),
+		"personality": rng.randi_range(0, RECRUIT_PERSONALITIES.size() - 1),
+	}
+
+# Gold cost to persuade a recruit. Below SHOP_UNIT_COST so swaying is the cheaper
+# (but riskier / hero-gated) path. Stronger units and deeper tiers cost more.
+func recruit_persuasion_cost(type: String, tier: int) -> int:
+	if not UNIT_TYPES.has(type):
+		return 40
+	var u: Dictionary = UNIT_TYPES[type]
+	var power: int = int(u["max_hp"]) + int(u["damage"]) * 2
+	return int(round(power * 0.18)) + tier * 4
+
+# ---------------------------------------------------------------------------
+# Battle clarity (heuristic) — rough army-vs-enemy power so the player can read
+# a fight before committing. Not the actual combat sim; just guidance.
+# ---------------------------------------------------------------------------
+func _unit_power(max_hp: int, damage: int) -> float:
+	return float(max_hp) + float(damage) * 6.0
+
+func army_power_base() -> float:
+	var total: float = 0.0
+	for entry: Dictionary in player_roster:
+		var u: Dictionary = UNIT_TYPES[entry["type"]]
+		total += _unit_power(unit_effective_max_hp(entry), int(u["damage"]) * unit_level(entry))
+	return total
+
+func hero_fight_power() -> float:
+	if not has_hero():
+		return 0.0
+	var hd: Dictionary = hero_data()
+	var u: Dictionary = UNIT_TYPES.get(hd.get("fight_archetype", "soldier"), UNIT_TYPES["soldier"])
+	var lvl: int = int(hd.get("fight_level", 1)) + hero_fight_bonus_level()
+	return _unit_power(int(u["max_hp"]) * lvl, int(u["damage"]) * lvl) * hero_fight_mult()
+
+# Approximate army-power multiplier from a team buff.
+func buff_power_factor(buff_id: String) -> float:
+	var bonus: float = 0.15
+	if buff_id == "warchest":
+		bonus = 0.12
+	return 1.0 + bonus * hero_buff_mult()
+
+# ---------------------------------------------------------------------------
+# Elite modifiers — every elite_battle (and the boss) rolls a deterministic
+# modifier that buffs the enemy host. Applied to enemy units in the autobattler;
+# factored into enemy_power so the odds reflect it.
+# ---------------------------------------------------------------------------
+const ELITE_MODIFIERS: Dictionary = {
+	"frenzied": {"name": "Frenzied", "desc": "Enemies deal +25% damage",        "hp": 1.0,  "dmg": 1.25, "speed": 1.0},
+	"armored":  {"name": "Armored",  "desc": "Enemies have +30% HP",            "hp": 1.30, "dmg": 1.0,  "speed": 1.0},
+	"swift":    {"name": "Swift",    "desc": "Enemies move +30% faster",        "hp": 1.0,  "dmg": 1.0,  "speed": 1.30},
+	"vengeful": {"name": "Vengeful", "desc": "Enemies have +15% HP and damage", "hp": 1.15, "dmg": 1.15, "speed": 1.0},
+}
+const ELITE_MODIFIER_IDS: Array[String] = ["frenzied", "armored", "swift", "vengeful"]
+
+func elite_modifier(tier: int) -> String:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = tier * 911 + 17
+	return ELITE_MODIFIER_IDS[rng.randi_range(0, ELITE_MODIFIER_IDS.size() - 1)]
+
+func elite_modifier_data(tier: int) -> Dictionary:
+	return ELITE_MODIFIERS.get(elite_modifier(tier), {})
+
+func enemy_power(tier: int, elite: bool) -> float:
+	var total: float = 0.0
+	for t in get_battle_enemy_roster(tier, elite):
+		var u: Dictionary = UNIT_TYPES[t]
+		total += _unit_power(int(u["max_hp"]), int(u["damage"]))
+	total *= get_hp_multiplier(tier, elite)
+	if elite:
+		var m: Dictionary = elite_modifier_data(tier)
+		total *= (float(m.get("hp", 1.0)) + float(m.get("dmg", 1.0))) * 0.5
+	return total
+
+# Army power under a given hero mode ("fight" adds the hero unit, "buff" scales).
+func army_power_for(mode: String) -> float:
+	var base: float = army_power_base()
+	if mode == "fight":
+		return base + hero_fight_power()
+	elif mode == "buff" and has_hero():
+		return base * buff_power_factor(String(hero_data().get("buff", {}).get("id", "")))
+	return base
+
+func odds_label(ratio: float) -> String:
+	if ratio >= 1.35:
+		return "Favorable"
+	elif ratio >= 1.0:
+		return "Even"
+	elif ratio >= 0.75:
+		return "Risky"
+	return "Dire"
+
+func battle_odds(tier: int, elite: bool, mode: String) -> String:
+	return odds_label(army_power_for(mode) / maxf(1.0, enemy_power(tier, elite)))
+
+# ---------------------------------------------------------------------------
 # Persistent unit upgrades earned after battle wins
 # ---------------------------------------------------------------------------
 # Stacking is permitted (multiple SHARPSHOOTERs = +5 dmg each).
@@ -228,6 +593,20 @@ var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
 var curses: Array[String] = []   # afflictions (run-long negative passives)
 var battle_mode: String = "auto"   # campaign battles are auto-resolved by the auto-battler
+# --- Hero (chosen at the start of a campaign; see HEROES) -------------------
+var selected_hero: String = ""           # "" = no hero (standalone Quick Auto Battle)
+var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
+var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
+var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
+# --- Hero progression (levels from wins; perks chosen on level-up) ----------
+var hero_level: int = 1
+var hero_xp: int = 0                       # +1 per battle won; HERO_XP_PER_LEVEL per level
+var hero_perks: Array[String] = []         # owned perk ids (see HERO_PERKS)
+var pending_hero_perk: bool = false        # level_select offers a perk pick when set
+# --- Recruitment duel handshake (Phase 2; resolves within one map visit) ----
+var pending_duel: bool = false            # level_select -> autobattler: run a 1v1 duel
+var duel_recruit_type: String = ""        # the unit being dueled for
+var duel_outcome: int = -1                # autobattler -> level_select: -1 none, 0 loss, 1 win
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -238,6 +617,7 @@ var battles_won: int = 0
 var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
+var runs_won: int = 0           # persists across runs (boss cleared) — gates hero unlocks
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -343,6 +723,8 @@ func reset() -> void:
 		last_run_tier_reached = current_tier + 1  # 1-based
 		last_run_won = battles_won >= MAP_TIERS
 		total_runs += 1
+		if last_run_won:
+			runs_won += 1
 		if last_run_tier_reached > best_tier_reached:
 			best_tier_reached = last_run_tier_reached
 		_save_meta()
@@ -357,6 +739,18 @@ func reset() -> void:
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	battles_won = 0
+	# Hero is chosen on the character-select screen AFTER reset() (select_hero).
+	selected_hero = ""
+	valor = 0
+	hero_battle_mode = "fight"
+	pending_hero_buff = ""
+	hero_level = 1
+	hero_xp = 0
+	hero_perks = []
+	pending_hero_perk = false
+	pending_duel = false
+	duel_recruit_type = ""
+	duel_outcome = -1
 	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()
@@ -370,6 +764,7 @@ func register_battle_won(_elite: bool) -> void:
 	# Surviving regiments gain battle experience (toward veterancy).
 	for entry: Dictionary in player_roster:
 		entry["xp"] = int(entry.get("xp", 0)) + 1
+	hero_gain_xp()   # hero levels up off battle wins too
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
 		_save_meta()
@@ -384,6 +779,7 @@ func _load_meta() -> void:
 	best_streak_ever  = int(cfg.get_value("meta", "best_streak_ever",  0))
 	best_tier_reached = int(cfg.get_value("meta", "best_tier_reached", 0))
 	total_runs        = int(cfg.get_value("meta", "total_runs",        0))
+	runs_won          = int(cfg.get_value("meta", "runs_won",          0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
 
@@ -392,6 +788,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "best_streak_ever",  best_streak_ever)
 	cfg.set_value("meta", "best_tier_reached", best_tier_reached)
 	cfg.set_value("meta", "total_runs",        total_runs)
+	cfg.set_value("meta", "runs_won",          runs_won)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
 	cfg.save(META_PATH)
@@ -410,7 +807,7 @@ func mark_tutorial_seen() -> void:
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
 # Bump when the run-save schema changes incompatibly; older saves are discarded
 # on load instead of loading partial/garbage state.
-const SAVE_VERSION: int = 2
+const SAVE_VERSION: int = 4
 
 func has_saved_run() -> bool:
 	if not FileAccess.file_exists(RUN_SAVE_PATH):
@@ -433,6 +830,12 @@ func save_run() -> void:
 	cfg.set_value("run", "battles_won", battles_won)
 	cfg.set_value("run", "boss_id", boss_id)
 	cfg.set_value("run", "battle_mode", battle_mode)
+	cfg.set_value("run", "selected_hero", selected_hero)
+	cfg.set_value("run", "valor", valor)
+	cfg.set_value("run", "hero_level", hero_level)
+	cfg.set_value("run", "hero_xp", hero_xp)
+	cfg.set_value("run", "hero_perks", hero_perks)
+	cfg.set_value("run", "pending_hero_perk", pending_hero_perk)
 	cfg.save(RUN_SAVE_PATH)
 
 # Load a saved run into the live state. Returns false if no valid save exists.
@@ -464,6 +867,16 @@ func load_run() -> bool:
 	battles_won       = int(cfg.get_value("run", "battles_won", 0))
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
 	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
+	selected_hero     = str(cfg.get_value("run", "selected_hero", ""))
+	valor             = int(cfg.get_value("run", "valor", 0))
+	hero_level        = int(cfg.get_value("run", "hero_level", 1))
+	hero_xp           = int(cfg.get_value("run", "hero_xp", 0))
+	hero_perks = []
+	for pk in cfg.get_value("run", "hero_perks", []):
+		hero_perks.append(str(pk))
+	pending_hero_perk = bool(cfg.get_value("run", "pending_hero_perk", false))
+	hero_battle_mode  = "fight"
+	pending_hero_buff = ""
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true

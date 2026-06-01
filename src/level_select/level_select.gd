@@ -5,23 +5,41 @@ const UITheme := preload("res://src/ui/ui_theme.gd")
 # ---------------------------------------------------------------------------
 # Layout constants
 # ---------------------------------------------------------------------------
-const NODE_R: float = 32.0
-const MAP_LEFT: float = 72.0
-const MAP_RIGHT: float = 820.0
-const SIDE_X: float = 880.0
-# Maps now span 12-15 tiers — too many to fit at once, so the map scrolls
-# vertically (tier 0 at the bottom, the boss up top) and auto-centres on the
-# current tier. These bound the on-screen map band; tiers sit TIER_GAP apart on
-# a taller virtual canvas that we slide by _scroll_y.
-const MAP_TOP: float = 104.0
-const MAP_BOTTOM: float = 704.0
-const TIER_GAP: float = 120.0
-const CONTENT_PAD: float = 56.0
-const VIEW_CENTER: float = (MAP_TOP + MAP_BOTTOM) * 0.5
+const NODE_R: float = 26.0
+const SIDE_X: float = 880.0            # right-hand HUD panel starts here
+# The overworld is one continuous horizontal world: tier 0 at the left, the boss
+# far right. The hero avatar walks left->right, steering into forks to pick the
+# next node. The world is wider than the play viewport (left of the HUD), so a
+# horizontal camera (_cam_x) follows the avatar.
+const PLAY_W: float = 858.0            # world viewport width (left of the HUD)
+const PLAY_TOP: float = 96.0
+const PLAY_BOTTOM: float = 688.0
+const TIER_DX: float = 280.0           # horizontal gap between tiers
+const MARGIN_X: float = 120.0          # world x of tier 0
+const LANE_GAP: float = 104.0          # vertical gap between nodes in a tier
+const WALK_SPEED: float = 165.0        # px/sec the avatar travels along an edge
+const CENTER_Y: float = (PLAY_TOP + PLAY_BOTTOM) * 0.5
 
-var _scroll_y: float = 0.0
-var _scroll_min: float = 0.0
-var _scroll_max: float = 0.0
+enum Nav { AT_NODE, TRAVELING }
+var _nav: int = Nav.AT_NODE
+var _at_start: bool = true             # true before any node is visited (virtual start)
+var _cur_tier: int = 0                 # tier of the node the avatar stands on
+var _cur_index: int = 0                # index within that tier
+var _targets: Array = []               # reachable next nodes [{tier,index}]
+var _sel: int = 0                      # selected target in _targets
+var _travel_t: float = 0.0             # 0..1 progress along the current edge
+var _step_t: float = 0.0               # footstep SFX accumulator while walking
+var _travel_from: Vector2 = Vector2.ZERO
+var _travel_to: Vector2 = Vector2.ZERO
+var _travel_target: Dictionary = {}    # {tier,index} being walked to
+var _avatar: Vector2 = Vector2.ZERO    # world position of the hero
+var _cam_x: float = 0.0
+var _world_w: float = 0.0
+var _hero_tex: Texture2D = null
+var _edge_pickups: Array = []          # [{t,pos,kind,amount,taken}]
+var _awaiting_resolve: bool = false    # arrived; waiting for a popup to close
+var _leaving: bool = false             # a node handler is changing scene
+var _encounter_pending: bool = false   # encounter popup open; resume travel on close
 
 const TYPE_COLORS: Dictionary = {
 	"battle":       Color(0.80, 0.28, 0.28),
@@ -52,22 +70,36 @@ const TYPE_DESC: Dictionary = {
 }
 
 # ---------------------------------------------------------------------------
-var _node_buttons: Array = []
 var _roster_label: Label
 var _gold_label: Label
 var _relics_label: Label
 var _depth_label: Label
+var _hero_label: Label
 var _node_detail_label: Label
 var _popup: Control = null
 var _settings_overlay: Control = null
 var _inventory_popup: Control = null
 var _shop_relic_offer: String = ""
+var _pending_recruit_toast: Dictionary = {}
 
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	Music.play("map")
-	_build_node_buttons()
+	# Consume a pending duel result before the save block so a recruit won in the
+	# auto-battler is persisted with this map visit. The toast waits until the UI
+	# is built (below, after _refresh).
+	if GameManager.duel_outcome != -1:
+		var dwin := GameManager.duel_outcome == 1
+		var dtype := GameManager.duel_recruit_type
+		if dwin and dtype != "" and GameManager.UNIT_TYPES.has(dtype):
+			GameManager.add_unit(dtype)
+		GameManager.duel_outcome = -1
+		GameManager.pending_duel = false
+		GameManager.duel_recruit_type = ""
+		_pending_recruit_toast = {"win": dwin, "type": dtype}
+	_build_world()
+	_anchor_to_current()
 	_build_hud()
 	# Checkpoint the run between battles so it can be resumed. Once the run is
 	# over (boss cleared), drop the save instead.
@@ -78,11 +110,82 @@ func _ready() -> void:
 	# Small hint that Esc opens the menu
 	add_child(UITheme.label("Esc — Menu", 13, UITheme.TEXT_MUTED, Vector2(1150.0, 26.0), Vector2(110.0, 20.0)))
 	_refresh()
-	# Offer the post-battle upgrade pick if a non-hex mode flagged a win reward.
+	# Surface the duel result (recruited / declined) now that the HUD exists.
+	if not _pending_recruit_toast.is_empty():
+		var rt := _pending_recruit_toast
+		_pending_recruit_toast = {}
+		var rtype: String = String(rt.get("type", ""))
+		if rtype != "" and GameManager.UNIT_TYPES.has(rtype):
+			var rname: String = GameManager.UNIT_TYPES[rtype]["name"]
+			if bool(rt.get("win", false)):
+				_show_toast("%s joined your army!" % rname, GameManager.UNIT_TYPES[rtype]["color"])
+			else:
+				_show_toast("%s bested you and walked away." % rname, Color(0.7, 0.6, 0.5))
+	# Offer any pending post-battle rewards (hero perk pick, then upgrade card).
+	call_deferred("_show_pending_rewards")
+
+# Chains the post-battle popups so a perk pick and an upgrade reward don't both
+# try to grab _popup. The hero perk popup (if any) runs first and re-invokes
+# this on close; the upgrade reward is always last.
+func _show_pending_rewards() -> void:
+	if _popup != null:
+		return
+	if GameManager.pending_hero_perk and GameManager.has_hero():
+		GameManager.pending_hero_perk = false
+		_show_hero_perk_popup()
+		return
 	if GameManager.pending_upgrade_reward and not GameManager.player_roster.is_empty() \
 			and GameManager.current_tier < GameManager.MAP_TIERS:
 		GameManager.pending_upgrade_reward = false
-		call_deferred("_show_reward_popup")
+		_show_reward_popup()
+
+# ---------------------------------------------------------------------------
+# Hero level-up perk pick. Mirrors the upgrade reward popup's card layout.
+# ---------------------------------------------------------------------------
+func _show_hero_perk_popup() -> void:
+	if _popup != null:
+		return
+	var choices := GameManager.random_hero_perk_choices(3)
+	if choices.is_empty():
+		call_deferred("_show_pending_rewards")
+		return
+	_popup = UITheme.panel(self, Vector2(220.0, 200.0), Vector2(840.0, 300.0),
+		Color(0.08, 0.10, 0.14, 0.99), Color(0.45, 0.60, 0.85))
+	_popup.add_child(UITheme.label("Hero Level %d! Choose a Perk" % GameManager.hero_level,
+		26, Color(0.78, 0.90, 1.0), Vector2(28.0, 18.0), Vector2(784.0, 32.0)))
+	_popup.add_child(UITheme.label("Pick a perk for your hero.",
+		14, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(784.0, 22.0)))
+	for i in range(choices.size()):
+		var id: String = choices[i]
+		var data: Dictionary = GameManager.HERO_PERKS[id]
+		var btn := Button.new()
+		btn.position = Vector2(40.0 + i * 260.0, 92.0)
+		btn.size = Vector2(240.0, 120.0)
+		btn.text = "%s\n\n%s" % [String(data["name"]), String(data["desc"])]
+		btn.add_theme_font_size_override("font_size", 15)
+		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var col := Color(0.20, 0.30, 0.45)
+		btn.add_theme_stylebox_override("normal",  _circle_style(col, 8))
+		btn.add_theme_stylebox_override("hover",   _circle_style(col.lightened(0.18), 8))
+		btn.add_theme_stylebox_override("pressed", _circle_style(col.darkened(0.2), 8))
+		btn.pressed.connect(_on_hero_perk_pick.bind(id))
+		_popup.add_child(btn)
+	var skip := UITheme.button("Skip", Vector2(360.0, 236.0), Vector2(200.0, 44.0),
+		Color(0.30, 0.30, 0.34), _on_hero_perk_pick.bind(""))
+	_popup.add_child(skip)
+
+func _on_hero_perk_pick(id: String) -> void:
+	if id != "":
+		GameManager.grant_hero_perk(id)
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	GameManager.save_run()
+	if id != "":
+		var data: Dictionary = GameManager.HERO_PERKS[id]
+		_show_toast("%s — %s" % [String(data["name"]), String(data["desc"])], Color(0.75, 0.9, 1.0))
+	_refresh()
+	call_deferred("_show_pending_rewards")
 
 # ---------------------------------------------------------------------------
 # Post-battle upgrade reward (parity with the hex battle's upgrade picker).
@@ -157,26 +260,14 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Mouse wheel scrolls the map (only matters when there's off-screen map).
-	if event is InputEventMouseButton and event.pressed and _popup == null \
-			and _inventory_popup == null and _settings_overlay == null:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_scroll_by(-TIER_GAP * 0.5)
-			return
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_scroll_by(TIER_GAP * 0.5)
-			return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	# Arrow / page keys also scroll the map.
-	if event.keycode == KEY_UP:
-		_scroll_by(-TIER_GAP * 0.5); return
-	elif event.keycode == KEY_DOWN:
-		_scroll_by(TIER_GAP * 0.5); return
-	elif event.keycode == KEY_PAGEUP:
-		_scroll_by(-(MAP_BOTTOM - MAP_TOP) * 0.8); return
-	elif event.keycode == KEY_PAGEDOWN:
-		_scroll_by((MAP_BOTTOM - MAP_TOP) * 0.8); return
+	# ↑/↓ (W/S) choose which fork to take while standing at a node.
+	if not _input_blocked() and _nav == Nav.AT_NODE:
+		if event.keycode == KEY_UP or event.keycode == KEY_W:
+			_select_target(-1); return
+		elif event.keycode == KEY_DOWN or event.keycode == KEY_S:
+			_select_target(1); return
 	if event.keycode == KEY_I:
 		if _popup == null:
 			_toggle_inventory()
@@ -277,136 +368,319 @@ var _pulse_t: float = 0.0
 
 func _process(delta: float) -> void:
 	_pulse_t += delta
+	_update_camera(delta)
+	if not _input_blocked():
+		if _nav == Nav.AT_NODE:
+			if not _targets.is_empty() and (Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
+				_begin_travel()
+		elif _nav == Nav.TRAVELING:
+			_update_travel(delta)
+	# Once an arrived node's popup closes, set up the next fork.
+	if _awaiting_resolve and _popup == null and not _leaving:
+		_awaiting_resolve = false
+		_anchor_to_current()
+		_refresh()
 	queue_redraw()
 
+func _input_blocked() -> bool:
+	# Note: _encounter_pending is deliberately NOT here — an open encounter popup
+	# already blocks via _popup, and _update_travel must run once it closes to
+	# clear the flag and resume walking.
+	return _popup != null or _settings_overlay != null or _inventory_popup != null \
+		or _awaiting_resolve or _leaving
+
+# Camera follows the avatar horizontally, clamped to the world.
+func _update_camera(delta: float) -> void:
+	var want: float = clampf(_avatar.x - PLAY_W * 0.42, 0.0, maxf(0.0, _world_w - PLAY_W))
+	_cam_x = lerp(_cam_x, want, clampf(delta * 6.0, 0.0, 1.0))
+
+# ---------------------------------------------------------------------------
+# Drawing — one continuous horizontal world, offset by the camera.
+# ---------------------------------------------------------------------------
 func _draw() -> void:
-	# Background
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), UITheme.BG)
-	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
-	draw_line(Vector2(SIDE_X - 22.0, 0.0), Vector2(SIDE_X - 22.0, 720.0), Color(0.25, 0.27, 0.35, 0.85), 1.0)
-	# Connection lines — drawn from stored connections so locked-out paths aren't shown
+	# Ground band the avatar walks above (screen-space, decorative).
+	draw_rect(Rect2(0.0, PLAY_BOTTOM - 4.0, PLAY_W, 720.0 - PLAY_BOTTOM), Color(0.10, 0.13, 0.10, 0.6))
+
+	var font := ThemeDB.fallback_font
+	var sel_target: Dictionary = _targets[_sel] if (_nav == Nav.AT_NODE and _sel < _targets.size()) else {}
+
+	# Connection paths.
 	for tier in range(GameManager.MAP_TIERS - 1):
-		var from_count: int = GameManager.map_data[tier].size()
-		var to_count:   int = GameManager.map_data[tier + 1].size()
-		var ya := _tier_screen_y(tier)
-		var yb := _tier_screen_y(tier + 1)
-		# Skip pairs entirely outside the band (both ends off-screen on same side).
-		if (ya < MAP_TOP and yb < MAP_TOP) or (ya > MAP_BOTTOM and yb > MAP_BOTTOM):
-			continue
-		for i in range(from_count):
-			var from := Vector2(_node_x(i, from_count), ya)
+		for i in range(GameManager.map_data[tier].size()):
+			var from := _w2s(_node_world_pos(tier, i))
 			for j in GameManager.map_data[tier][i]["connections"]:
-				var to := Vector2(_node_x(j, to_count), yb)
-				draw_line(from, to, Color(0.36, 0.37, 0.50, 0.62), 2.0)
-	# Pulsing ring around the nodes you can move to next, so the choice pops.
-	var ct: int = GameManager.current_tier
-	if ct < GameManager.MAP_TIERS:
-		var count: int = GameManager.map_data[ct].size()
-		var cy := _tier_screen_y(ct)
-		if cy >= MAP_TOP and cy <= MAP_BOTTOM:
-			var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
-			for idx in GameManager.get_reachable_indices():
-				var c := Vector2(_node_x(int(idx), count), cy)
-				draw_arc(c, NODE_R + 6.0 + pulse * 4.0, 0.0, TAU, 40,
-					Color(0.95, 0.85, 0.35, 0.30 + pulse * 0.40), 3.0, true)
-	# Mask any line/ring overflow above and below the scrolling band (the title
-	# and hint labels are child nodes, so they still render on top of this).
-	draw_rect(Rect2(0.0, 0.0, SIDE_X - 22.0, MAP_TOP), UITheme.BG)
-	draw_rect(Rect2(0.0, MAP_BOTTOM, SIDE_X - 22.0, 720.0 - MAP_BOTTOM), UITheme.BG)
-	# Scrollbar — shows how much map lies above/below the view.
-	if _scroll_max > _scroll_min:
-		var band := MAP_BOTTOM - MAP_TOP
-		var bx := MAP_RIGHT + 18.0
-		draw_rect(Rect2(bx, MAP_TOP, 5.0, band), Color(0.20, 0.22, 0.30, 0.55))
-		var view_frac: float = band / (band + (_scroll_max - _scroll_min))
-		var thumb_h: float = maxf(28.0, band * view_frac)
-		var t: float = (_scroll_y - _scroll_min) / (_scroll_max - _scroll_min)
-		draw_rect(Rect2(bx, MAP_TOP + t * (band - thumb_h), 5.0, thumb_h),
-			Color(0.70, 0.72, 0.82, 0.85))
+				var to := _w2s(_node_world_pos(tier + 1, int(j)))
+				if (from.x < -40.0 and to.x < -40.0) or (from.x > PLAY_W + 40.0 and to.x > PLAY_W + 40.0):
+					continue
+				var lit: bool = not _at_start and tier == _cur_tier and i == _cur_index \
+					and not sel_target.is_empty() and int(sel_target["tier"]) == tier + 1 and int(sel_target["index"]) == int(j)
+				draw_line(from, to, Color(0.95, 0.85, 0.40, 0.9) if lit else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit else 2.0)
 
-# ---------------------------------------------------------------------------
-# Build UI
-# ---------------------------------------------------------------------------
-func _build_node_buttons() -> void:
-	add_child(UITheme.label("Choose Your Path", 38, Color(0.95, 0.90, 0.65), Vector2(72.0, 24.0)))
-	add_child(UITheme.label("Only highlighted nodes are reachable. Hover to preview · scroll / ↑↓ to see the whole path.", 14, UITheme.TEXT_MUTED, Vector2(76.0, 70.0), Vector2(760.0, 28.0)))
+	# Path from the (virtual) start node to its targets.
+	if _at_start:
+		var sfrom := _w2s(_standing_pos())
+		for tgt: Dictionary in _targets:
+			var sto := _w2s(_node_world_pos(int(tgt["tier"]), int(tgt["index"])))
+			var lit2: bool = not sel_target.is_empty() and tgt == sel_target
+			draw_line(sfrom, sto, Color(0.95, 0.85, 0.40, 0.9) if lit2 else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit2 else 2.0)
 
-	# Node buttons
+	# Pickups on the current edge.
+	for p: Dictionary in _edge_pickups:
+		if bool(p.get("taken", false)):
+			continue
+		var pp := _w2s(p["pos"])
+		if pp.x < -20.0 or pp.x > PLAY_W + 20.0:
+			continue
+		var pc: Color = Color(0.95, 0.82, 0.30) if String(p["kind"]) == "gold" else Color(0.62, 0.72, 0.98)
+		draw_circle(pp, 8.0, pc)
+		draw_arc(pp, 8.0, 0.0, TAU, 20, pc.darkened(0.4), 1.5)
+
+	# Nodes.
+	var reach_idx: Array = GameManager.get_reachable_indices()
+	var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
 	for tier in range(GameManager.MAP_TIERS):
 		for i in range(GameManager.map_data[tier].size()):
-			_add_node_button(tier, i)
+			var c := _w2s(_node_world_pos(tier, i))
+			if c.x < -NODE_R or c.x > PLAY_W + NODE_R:
+				continue
+			var nd: Dictionary = GameManager.map_data[tier][i]
+			var col: Color = TYPE_COLORS.get(nd["type"], Color.GRAY)
+			var is_target: bool = tier == GameManager.current_tier and i in reach_idx
+			if bool(nd.get("visited", false)):
+				col = col.darkened(0.55)
+			elif not is_target:
+				col = col.darkened(0.3)
+			draw_circle(c, NODE_R, col)
+			draw_arc(c, NODE_R, 0.0, TAU, 32, col.lightened(0.3), 2.0)
+			if is_target:
+				draw_arc(c, NODE_R + 5.0 + pulse * 4.0, 0.0, TAU, 36, Color(0.95, 0.85, 0.35, 0.35 + pulse * 0.4), 3.0)
+			if not sel_target.is_empty() and int(sel_target["tier"]) == tier and int(sel_target["index"]) == i:
+				draw_arc(c, NODE_R + 3.0, 0.0, TAU, 32, Color(1.0, 1.0, 1.0, 0.95), 3.0)
+			var lbl: String = TYPE_LABELS.get(nd["type"], "?")
+			draw_string(font, c + Vector2(-NODE_R, NODE_R + 14.0), lbl, HORIZONTAL_ALIGNMENT_CENTER, NODE_R * 2.0, 12, Color(0.85, 0.88, 0.94))
 
-	# Position everything and slide the view to the tier the player is on.
-	_update_scroll_bounds()
-	_center_on_tier(GameManager.current_tier)
+	# Avatar (hero sprite).
+	var ascr := _w2s(_avatar)
+	if _hero_tex != null:
+		var sz := Vector2(46.0, 46.0)
+		draw_texture_rect(_hero_tex, Rect2(ascr - sz * 0.5 - Vector2(0.0, 6.0), sz), false)
+	else:
+		draw_circle(ascr, 16.0, Color(0.9, 0.85, 0.5))
 
-func _node_x(index: int, count: int) -> float:
-	if count == 1:
-		return (MAP_LEFT + MAP_RIGHT) * 0.5
-	return MAP_LEFT + float(index) * (MAP_RIGHT - MAP_LEFT) / float(count - 1)
+	_draw_minimap()
 
-# Screen Y for a tier at the current scroll. Tier 0 sits at the bottom of the
-# virtual canvas, the final (boss) tier at the top.
-func _tier_screen_y(tier: int) -> float:
-	var last: int = GameManager.MAP_TIERS - 1
-	return MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - _scroll_y
+	# Mask the world bleeding under the right-hand HUD, then the panel backdrop.
+	draw_rect(Rect2(PLAY_W, 0.0, 1280.0 - PLAY_W, 720.0), UITheme.BG)
+	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
+	draw_line(Vector2(SIDE_X - 22.0, 0.0), Vector2(SIDE_X - 22.0, 720.0), Color(0.25, 0.27, 0.35, 0.85), 1.0)
 
-func _update_scroll_bounds() -> void:
-	var last: int = GameManager.MAP_TIERS - 1
-	# _scroll_y = 0 shows the top (boss) tier; max shows tier 0 at the bottom.
-	_scroll_min = 0.0
-	_scroll_max = maxf(0.0, CONTENT_PAD + float(last) * TIER_GAP - (MAP_BOTTOM - CONTENT_PAD - MAP_TOP))
+func _w2s(world: Vector2) -> Vector2:
+	return world - Vector2(_cam_x, 0.0)
 
-func _center_on_tier(tier: int) -> void:
-	var last: int = GameManager.MAP_TIERS - 1
-	var desired: float = MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - VIEW_CENTER
-	_scroll_y = clampf(desired, _scroll_min, _scroll_max)
-	_reposition_nodes()
+# Bottom-left overview of the whole run: every node + connection scaled to fit,
+# with visited/current/reachable/selected markers and a box showing where the
+# camera (the slice you can see) sits along the path. Restores the route-planning
+# the side-scroll view loses.
+func _draw_minimap() -> void:
+	var font := ThemeDB.fallback_font
+	var rect := Rect2(14.0, 498.0, 300.0, 184.0)
+	draw_rect(rect, Color(0.06, 0.07, 0.11, 0.88))
+	draw_rect(rect, Color(0.30, 0.32, 0.44, 0.9), false, 1.0)
+	draw_string(font, rect.position + Vector2(8.0, 16.0), "Map", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.60, 0.63, 0.72))
 
-func _scroll_by(dy: float) -> void:
-	var prev := _scroll_y
-	_scroll_y = clampf(_scroll_y + dy, _scroll_min, _scroll_max)
-	if _scroll_y != prev:
-		_reposition_nodes()
-
-# Re-place every node button for the current scroll, hiding those outside the
-# visible band so they don't bleed into the header or footer.
-func _reposition_nodes() -> void:
-	for bd: Dictionary in _node_buttons:
-		var btn: Button = bd["button"]
-		var tier: int = bd["tier"]
-		var index: int = bd["index"]
+	var last: int = maxi(1, GameManager.MAP_TIERS - 1)
+	var inner_x: float = rect.position.x + 20.0
+	var inner_w: float = rect.size.x - 32.0
+	var cy: float = rect.position.y + rect.size.y * 0.58
+	var lane: float = minf(16.0, (rect.size.y * 0.5 - 14.0) / 2.5)
+	var mm := func(tier: int, idx: int) -> Vector2:
 		var count: int = GameManager.map_data[tier].size()
-		var y := _tier_screen_y(tier)
-		btn.position = Vector2(_node_x(index, count), y) - Vector2(NODE_R, NODE_R)
-		btn.visible = y >= MAP_TOP + NODE_R and y <= MAP_BOTTOM - NODE_R
+		return Vector2(
+			inner_x + (float(tier) / float(last)) * inner_w,
+			cy + (float(idx) - float(count - 1) * 0.5) * lane)
+
+	# Connections.
+	for tier in range(GameManager.MAP_TIERS - 1):
+		for i in range(GameManager.map_data[tier].size()):
+			var a: Vector2 = mm.call(tier, i)
+			for j in GameManager.map_data[tier][i]["connections"]:
+				draw_line(a, mm.call(tier + 1, int(j)), Color(0.32, 0.34, 0.46, 0.5), 1.0)
+
+	# Camera viewport indicator (which slice of the world is on screen).
+	var vx0: float = inner_x + (_cam_x / maxf(1.0, _world_w)) * inner_w
+	var vx1: float = inner_x + ((_cam_x + PLAY_W) / maxf(1.0, _world_w)) * inner_w
+	draw_rect(Rect2(vx0, rect.position.y + 22.0, maxf(3.0, vx1 - vx0), rect.size.y - 34.0),
+		Color(0.90, 0.92, 1.0, 0.07))
+
+	# Nodes.
+	var reach: Array = GameManager.get_reachable_indices()
+	var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
+	for tier in range(GameManager.MAP_TIERS):
+		for i in range(GameManager.map_data[tier].size()):
+			var nd: Dictionary = GameManager.map_data[tier][i]
+			var col: Color = TYPE_COLORS.get(nd["type"], Color.GRAY)
+			if bool(nd.get("visited", false)):
+				col = col.darkened(0.5)
+			var p: Vector2 = mm.call(tier, i)
+			draw_circle(p, 3.5, col)
+			if tier == GameManager.current_tier and i in reach:
+				draw_arc(p, 5.0 + pulse * 2.0, 0.0, TAU, 16, Color(0.95, 0.85, 0.35, 0.6), 1.5)
+
+	# Selected fork + current position.
+	if _nav == Nav.AT_NODE and _sel < _targets.size():
+		var t: Dictionary = _targets[_sel]
+		draw_arc(mm.call(int(t["tier"]), int(t["index"])), 6.0, 0.0, TAU, 16, Color(1.0, 1.0, 1.0, 0.9), 1.5)
+	if not _at_start:
+		draw_circle(mm.call(_cur_tier, _cur_index), 4.5, Color(0.95, 0.95, 1.0))
+
+# ---------------------------------------------------------------------------
+# World layout + navigation
+# ---------------------------------------------------------------------------
+func _build_world() -> void:
+	_world_w = MARGIN_X + float(GameManager.MAP_TIERS - 1) * TIER_DX + MARGIN_X
+	var key := "soldier"
+	if GameManager.has_hero():
+		key = String(GameManager.hero_data().get("sprite_key", "soldier"))
+	_hero_tex = load("res://assets/units/%s_player.png" % key)
+	add_child(UITheme.label("Your Journey", 30, Color(0.95, 0.90, 0.65), Vector2(72.0, 20.0)))
+	add_child(UITheme.label("→/D walk · ↑↓ choose the fork · I inventory · Esc menu",
+		14, UITheme.TEXT_MUTED, Vector2(76.0, 58.0), Vector2(720.0, 24.0)))
+
+func _node_world_pos(tier: int, index: int) -> Vector2:
+	var count: int = GameManager.map_data[tier].size()
+	var x := MARGIN_X + float(tier) * TIER_DX
+	var y := CENTER_Y + (float(index) - float(count - 1) * 0.5) * LANE_GAP
+	return Vector2(x, y)
+
+func _standing_pos() -> Vector2:
+	if _at_start:
+		return Vector2(46.0, CENTER_Y)
+	return _node_world_pos(_cur_tier, _cur_index)
+
+# Place the avatar on the node GameManager says the run is at, and compute the
+# reachable forks.
+func _anchor_to_current() -> void:
+	if GameManager.last_chosen_index == -1:
+		_at_start = true
+		_cur_tier = 0
+		_cur_index = 0
+	else:
+		_at_start = false
+		_cur_tier = GameManager.current_tier - 1
+		_cur_index = GameManager.last_chosen_index
+	_avatar = _standing_pos()
+	_nav = Nav.AT_NODE
+	_edge_pickups.clear()
+	_encounter_pending = false
+	_targets.clear()
+	for idx in GameManager.get_reachable_indices():
+		_targets.append({"tier": GameManager.current_tier, "index": int(idx)})
+	_sel = clampi(_sel, 0, maxi(0, _targets.size() - 1))
+	_update_node_detail()
+
+func _select_target(dir: int) -> void:
+	if _nav != Nav.AT_NODE or _targets.size() <= 1:
+		return
+	var prev := _sel
+	_sel = wrapi(_sel + dir, 0, _targets.size())
+	if _sel != prev:
+		Sfx.play("select", -12.0)
+	_update_node_detail()
 	queue_redraw()
 
-func _add_node_button(tier: int, index: int) -> void:
-	var node_data: Dictionary = GameManager.map_data[tier][index]
-	var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
-	var count: int = GameManager.map_data[tier].size()
-	var pos := Vector2(_node_x(index, count), _tier_screen_y(tier))
-
-	var btn := Button.new()
-	btn.size = Vector2(NODE_R * 2.0, NODE_R * 2.0)
-	btn.position = pos - Vector2(NODE_R, NODE_R)
-	btn.text = TYPE_LABELS.get(node_data["type"], "?")
-	btn.tooltip_text = String(TYPE_DESC.get(node_data["type"], ""))
-	btn.add_theme_font_size_override("font_size", 11)
-	btn.add_theme_stylebox_override("normal",   _circle_style(base_color, NODE_R))
-	btn.add_theme_stylebox_override("hover",    _circle_style(base_color.lightened(0.25), NODE_R))
-	btn.add_theme_stylebox_override("pressed",  _circle_style(base_color.darkened(0.25), NODE_R))
-	btn.add_theme_stylebox_override("disabled", _circle_style(Color(0.28, 0.28, 0.32), NODE_R))
-	btn.pressed.connect(_on_node_pressed.bind(tier, index))
-	btn.mouse_entered.connect(_show_node_detail.bind(tier, index))
-	add_child(btn)
-	_node_buttons.append({"button": btn, "tier": tier, "index": index})
-
-func _show_node_detail(tier: int, index: int) -> void:
-	if _node_detail_label == null:
+func _update_node_detail() -> void:
+	if _node_detail_label == null or _targets.is_empty():
 		return
-	_node_detail_label.text = _node_detail_text(tier, index)
+	var t: Dictionary = _targets[_sel]
+	_node_detail_label.text = _node_detail_text(int(t["tier"]), int(t["index"]))
+
+func _begin_travel() -> void:
+	if _targets.is_empty():
+		return
+	_travel_target = _targets[_sel]
+	_travel_from = _standing_pos()
+	_travel_to = _node_world_pos(int(_travel_target["tier"]), int(_travel_target["index"]))
+	_travel_t = 0.0
+	_step_t = 0.0
+	_nav = Nav.TRAVELING
+	_gen_edge_content()
+
+# Seeded pickups + a chance of an encounter for the edge being entered.
+func _gen_edge_content() -> void:
+	_edge_pickups.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = (_cur_tier + 1) * 7919 + _cur_index * 131 + int(_travel_target["index"]) * 17
+	var n: int = rng.randi_range(0, 2)
+	for _i in range(n):
+		var t: float = rng.randf_range(0.28, 0.82)
+		var pos := _travel_from.lerp(_travel_to, t) + Vector2(0.0, rng.randf_range(-26.0, 26.0))
+		var is_gold: bool = rng.randf() < 0.7
+		_edge_pickups.append({
+			"t": t, "pos": pos, "taken": false,
+			"kind": "gold" if is_gold else "valor",
+			"amount": rng.randi_range(8, 15) if is_gold else 1,
+		})
+	# ~25% encounter, opened at the start of the edge (no mid-edge scene change).
+	if rng.randf() < 0.25:
+		_trigger_encounter(rng)
+
+func _update_travel(delta: float) -> void:
+	if _encounter_pending:
+		if _popup == null:
+			_encounter_pending = false   # encounter resolved — resume next frame
+		return
+	if not (Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
+		return   # hold to walk; release pauses
+	var dist: float = maxf(1.0, _travel_from.distance_to(_travel_to))
+	_travel_t = minf(1.0, _travel_t + delta * WALK_SPEED / dist)
+	_avatar = _travel_from.lerp(_travel_to, _travel_t)
+	# Quiet footsteps while actually advancing (plays often, so keep it low).
+	_step_t += delta
+	if _step_t >= 0.32:
+		_step_t -= 0.32
+		Sfx.play("step", -18.0)
+	for p: Dictionary in _edge_pickups:
+		if not bool(p.get("taken", false)) and _travel_t >= float(p["t"]):
+			_collect_pickup(p)
+	if _travel_t >= 1.0:
+		_arrive()
+
+func _collect_pickup(p: Dictionary) -> void:
+	p["taken"] = true
+	if String(p["kind"]) == "gold":
+		GameManager.add_gold(int(p["amount"]))
+		_show_toast("+%d gold" % int(p["amount"]), Color(0.95, 0.82, 0.30))
+	else:
+		GameManager.add_valor(int(p["amount"]))
+		_show_toast("+%d Valor" % int(p["amount"]), Color(0.62, 0.72, 0.98))
+	Sfx.play("gold")
+	_refresh()
+
+func _arrive() -> void:
+	var tgt := _travel_target
+	_avatar = _travel_to
+	_nav = Nav.AT_NODE
+	_step_t = 0.0
+	Sfx.play("capture", -10.0)   # soft "you reached a node" cue
+	_trigger_node(int(tgt["tier"]), int(tgt["index"]))
+
+# A roadside encounter: a random event, or a lone recruit (dialogue/persuasion
+# only — never a duel, which would change scene mid-travel).
+func _trigger_encounter(rng: RandomNumberGenerator) -> void:
+	_encounter_pending = true
+	if rng.randf() < 0.5:
+		_build_event_popup(GameManager.random_event())
+		return
+	var cand := GameManager.encounter_recruit(rng.randi())
+	_popup = UITheme.panel(self, Vector2(300.0, 180.0), Vector2(680.0, 360.0),
+		Color(0.10, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
+	_popup.add_child(UITheme.label("A traveller blocks the road...", 18, UITheme.TEXT_MUTED,
+		Vector2(28.0, 14.0), Vector2(624.0, 24.0)))
+	if String(cand["sway"]) == "dialogue":
+		_show_dialogue_resolver(cand)
+	else:
+		_show_persuasion_resolver(_cur_tier if not _at_start else 0, cand)
 
 func _node_detail_text(tier: int, index: int) -> String:
 	var nd: Dictionary = GameManager.map_data[tier][index]
@@ -415,6 +689,10 @@ func _node_detail_text(tier: int, index: int) -> String:
 	var lines: Array[String] = [title, TYPE_DESC.get(type_key, "")]
 	if type_key in ["battle", "elite_battle"]:
 		var elite := type_key == "elite_battle"
+		if elite:
+			var m := GameManager.elite_modifier_data(tier)
+			if not m.is_empty():
+				lines.append("Elite: %s — %s" % [String(m["name"]), String(m["desc"])])
 		var roster: Array[String] = GameManager.get_battle_enemy_roster(tier, elite)
 		var counts: Dictionary = {}
 		for k: String in roster:
@@ -427,6 +705,7 @@ func _node_detail_text(tier: int, index: int) -> String:
 		var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
 		if hp_mult > 1.001:
 			lines.append("HP scaling x%.2f" % hp_mult)
+		lines.append("Odds: %s" % GameManager.battle_odds(tier, elite, "fight"))
 	elif type_key == "gain_unit":
 		lines.append("")
 		lines.append("Adds one recruit of your choice.")
@@ -454,10 +733,12 @@ func _build_hud() -> void:
 
 	_depth_label = UITheme.label("", 14, UITheme.TEXT_MUTED, Vector2(18.0, 48.0), Vector2(286.0, 22.0))
 	side.add_child(_depth_label)
-	_gold_label = UITheme.label("", 18, UITheme.GOLD, Vector2(18.0, 82.0), Vector2(286.0, 24.0))
+	_gold_label = UITheme.label("", 18, UITheme.GOLD, Vector2(18.0, 80.0), Vector2(286.0, 24.0))
 	side.add_child(_gold_label)
+	_hero_label = UITheme.label("", 14, Color(0.78, 0.84, 0.98), Vector2(18.0, 104.0), Vector2(286.0, 22.0))
+	side.add_child(_hero_label)
 
-	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 124.0)))
+	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 130.0)))
 	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 144.0), Vector2(292.0, 112.0))
 	side.add_child(_roster_label)
 
@@ -489,48 +770,21 @@ func _battle_mode_name() -> String:
 	return "Auto-Battler"
 
 func _refresh() -> void:
-	var reachable := GameManager.get_reachable_indices()
 	var cur_tier := GameManager.current_tier
-
-	for btn_data: Dictionary in _node_buttons:
-		var tier: int = btn_data["tier"]
-		var index: int = btn_data["index"]
-		var btn: Button = btn_data["button"]
-		var node_data: Dictionary = GameManager.map_data[tier][index]
-
-		var is_reachable := tier == cur_tier and index in reachable
-		var is_visited: bool = node_data["visited"]
-		btn.disabled = not is_reachable
-
-		var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
-		var display_color: Color
-		if is_visited:
-			display_color = base_color.darkened(0.6)
-		elif not is_reachable:
-			display_color = base_color.darkened(0.38)
-		else:
-			display_color = base_color
-
-		var style := _circle_style(display_color, NODE_R)
-		if is_reachable:
-			style.border_width_left   = 3
-			style.border_width_right  = 3
-			style.border_width_top    = 3
-			style.border_width_bottom = 3
-			style.border_color = Color(1.0, 1.0, 1.0, 0.9)
-		btn.add_theme_stylebox_override("normal",   style)
-		btn.add_theme_stylebox_override("disabled", style)
 
 	_roster_label.text = _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
+	if _hero_label != null:
+		if GameManager.has_hero():
+			_hero_label.text = "Hero: %s  Lv%d   ·   Valor: %d" % [
+				String(GameManager.hero_data().get("name", "Hero")), GameManager.hero_level, GameManager.valor]
+		else:
+			_hero_label.text = ""
 	_relics_label.text = _relics_text()
 	_depth_label.text  = "%s  ·  Tier %d / %d  ·  Wins %d" % [
 		_battle_mode_name(), cur_tier, GameManager.MAP_TIERS, GameManager.battles_won
 	]
-	if _node_detail_label != null and _node_detail_label.text == "":
-		var reach: Array = GameManager.get_reachable_indices()
-		if not reach.is_empty() and cur_tier < GameManager.MAP_TIERS:
-			_show_node_detail(cur_tier, int(reach[0]))
+	_update_node_detail()
 
 	if cur_tier >= GameManager.MAP_TIERS:
 		_show_victory()
@@ -575,20 +829,26 @@ func _roster_text() -> String:
 # ---------------------------------------------------------------------------
 # Node interaction
 # ---------------------------------------------------------------------------
-func _on_node_pressed(tier: int, index: int) -> void:
-	if _popup:
-		return
+# Called when the avatar arrives at a node. Visits it, then runs the node's
+# handler. Scene-changing nodes set _leaving; popup nodes set _awaiting_resolve
+# (the next fork is set up in _process once the popup closes); instant nodes
+# re-anchor immediately.
+func _trigger_node(tier: int, index: int) -> void:
 	var node_data: Dictionary = GameManager.map_data[tier][index]
+	_leaving = false
 	GameManager.visit_node(tier, index)
 
 	match node_data["type"]:
 		"battle", "elite_battle":
-			GameManager.pending_battle_tier  = tier
-			GameManager.pending_battle_elite = node_data["type"] == "elite_battle"
-			GameManager.pending_autobattle = true
-			get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+			var elite: bool = node_data["type"] == "elite_battle"
+			if not GameManager.has_hero():
+				# Defensive — campaigns always have a hero. No hero, no toggle.
+				GameManager.hero_battle_mode = "fight"
+				_launch_autobattle(tier, elite)
+			else:
+				_show_prebattle_popup(tier, elite)
 		"gain_unit":
-			_show_unit_select_popup()
+			_show_recruit_popup(tier, index)
 		"shop":
 			_show_shop_popup()
 		"heal":
@@ -610,58 +870,299 @@ func _on_node_pressed(tier: int, index: int) -> void:
 		_:
 			_refresh()
 
+	# Decide how the avatar resumes after this node.
+	if _leaving:
+		return                       # scene is changing; nothing to resume
+	elif _popup != null:
+		_awaiting_resolve = true     # _process re-anchors when the popup closes
+	else:
+		_anchor_to_current()         # instant node — offer the next fork now
+		_refresh()
+
+func _launch_autobattle(tier: int, elite: bool) -> void:
+	_leaving = true
+	GameManager.pending_battle_tier  = tier
+	GameManager.pending_battle_elite = elite
+	GameManager.pending_autobattle = true
+	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+
 # ---------------------------------------------------------------------------
-# Unit selection popup
+# Pre-battle popup — choose the hero's role for the upcoming fight.
+# Fight: the hero joins the army. Buff: spend Valor for a team-wide boon.
 # ---------------------------------------------------------------------------
-func _show_unit_select_popup() -> void:
-	_popup = Panel.new()
-	_popup.position = Vector2(130.0, 180.0)
-	_popup.size = Vector2(1020.0, 360.0)
+func _show_prebattle_popup(tier: int, elite: bool) -> void:
+	if _popup != null:
+		return
+	var hero: Dictionary = GameManager.hero_data()
+	var buff: Dictionary = hero.get("buff", {})
+	var cost: int = GameManager.hero_buff_cost(int(buff.get("cost", 0)))
+	var valor: int = GameManager.valor
 
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.09, 0.09, 0.16, 0.97)
-	for side in ["left", "right", "top", "bottom"]:
-		style.set("border_width_" + side, 2)
-	style.border_color = Color(0.50, 0.50, 0.75)
-	for corner in ["corner_radius_top_left", "corner_radius_top_right",
-			"corner_radius_bottom_left", "corner_radius_bottom_right"]:
-		style.set(corner, 8)
-	_popup.add_theme_stylebox_override("panel", style)
-	add_child(_popup)
+	_popup = UITheme.panel(self, Vector2(360.0, 180.0), Vector2(560.0, 360.0),
+		Color(0.09, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
+	_popup.add_child(UITheme.label("Battle — Your Hero's Role", 26, UITheme.GOLD,
+		Vector2(28.0, 18.0), Vector2(504.0, 32.0)))
+	_popup.add_child(UITheme.label("%s — choose how %s joins this fight." % [
+		String(hero.get("name", "Hero")), String(hero.get("name", "your hero"))],
+		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(504.0, 24.0)))
 
-	var title := Label.new()
-	title.text = "Choose a Unit to Add to Your Roster"
-	title.add_theme_font_size_override("font_size", 22)
-	title.modulate = Color(0.95, 0.90, 1.0)
-	title.position = Vector2(330.0, 16.0)
-	_popup.add_child(title)
+	# Elite modifier note (only meaningful for elite battles), under the subtitle.
+	if elite:
+		var m := GameManager.elite_modifier_data(tier)
+		if not m.is_empty():
+			_popup.add_child(UITheme.label("Elite — %s: %s" % [String(m["name"]), String(m["desc"])],
+				13, Color(0.92, 0.72, 0.98), Vector2(28.0, 76.0), Vector2(504.0, 18.0)))
 
-	# 5-column grid so the roster of recruitable types wraps cleanly.
-	var keys := GameManager.recruitable_types()
-	var cols := 5
-	for i in range(keys.size()):
-		var utype: String = keys[i]
-		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
-		var col := i % cols
-		var row := i / cols
-		var btn := Button.new()
-		btn.position = Vector2(20.0 + col * 196.0, 60.0 + row * 145.0)
-		btn.size = Vector2(188.0, 132.0)
-		btn.text = "%s\nHP %d  Mv %d\nRng %d  Dmg %d\n%s" % [
-			udata["name"], udata["max_hp"], udata["move_range"],
-			udata["attack_range"], udata["damage"], udata["ability"]["name"]
-		]
-		btn.add_theme_font_size_override("font_size", 12)
-		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		var ab: Dictionary = udata.get("ability", {})
-		if not ab.is_empty():
-			btn.tooltip_text = "%s: %s" % [String(ab.get("name", "")), String(ab.get("desc", ""))]
-		var bs := _circle_style(udata["color"].darkened(0.15), 8)
-		btn.add_theme_stylebox_override("normal",  bs)
-		btn.add_theme_stylebox_override("hover",   _circle_style(udata["color"].lightened(0.15), 8))
-		btn.add_theme_stylebox_override("pressed", _circle_style(udata["color"].darkened(0.30), 8))
-		btn.pressed.connect(_on_unit_chosen.bind(utype))
+	# Active army synergies (composition bonuses) under the subtitle.
+	var syn_ids := GameManager.army_synergies()
+	var syn_text: String
+	if syn_ids.is_empty():
+		syn_text = "Synergies: none"
+	else:
+		var syn_names: Array[String] = []
+		for sid: String in syn_ids:
+			syn_names.append(String(GameManager.SYNERGIES[sid]["name"]))
+		syn_text = "Synergies: " + "  ·  ".join(syn_names)
+	_popup.add_child(UITheme.label(syn_text, 13, Color(0.70, 0.92, 0.88),
+		Vector2(28.0, 94.0), Vector2(504.0, 20.0)))
+
+	# Fight — hero joins the army as a unit.
+	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 116.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("Fights alongside your army.  Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 140.0), Vector2(504.0, 20.0)))
+	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 162.0), Vector2(504.0, 42.0),
+		UITheme.GREEN.darkened(0.1), _on_prebattle_fight.bind(tier, elite)))
+
+	# Buff — spend Valor for a team-wide boon instead of fighting.
+	_popup.add_child(UITheme.label("Buff", 18, UITheme.TEXT, Vector2(28.0, 204.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("%s: %s — costs %d Valor (you have %d)\nOdds: %s" % [
+		String(buff.get("name", "—")), String(buff.get("desc", "")), cost, valor,
+		GameManager.battle_odds(tier, elite, "buff")],
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 228.0), Vector2(504.0, 50.0)))
+	var can_afford: bool = valor >= cost
+	var buff_btn := UITheme.button("Buff", Vector2(28.0, 282.0), Vector2(504.0, 42.0),
+		UITheme.BLUE, _on_prebattle_buff.bind(tier, elite, String(buff.get("id", "")), cost))
+	buff_btn.disabled = not can_afford
+	if not can_afford:
+		buff_btn.add_theme_stylebox_override("disabled", UITheme.button_style(Color(0.20, 0.22, 0.30)))
+	_popup.add_child(buff_btn)
+	if not can_afford:
+		_popup.add_child(UITheme.label("Not enough Valor.", 12, UITheme.RED,
+			Vector2(28.0, 328.0), Vector2(504.0, 18.0)))
+
+	# No Cancel: entering a battle node commits the visit (visit_node already
+	# advanced the tier), and Fight is always available — so the player can't
+	# back out into a softlock.
+
+func _on_prebattle_fight(tier: int, elite: bool) -> void:
+	_popup.queue_free()
+	_popup = null
+	GameManager.hero_battle_mode = "fight"
+	_launch_autobattle(tier, elite)
+
+func _on_prebattle_buff(tier: int, elite: bool, buff_id: String, cost: int) -> void:
+	_popup.queue_free()
+	_popup = null
+	GameManager.hero_battle_mode = "buff"
+	GameManager.pending_hero_buff = buff_id
+	GameManager.spend_valor(cost)
+	_launch_autobattle(tier, elite)
+
+# ---------------------------------------------------------------------------
+# Recruitment popup (Phase 2) — "meet & sway". A gain_unit node offers 2-3
+# candidates, each with its own sway type (dialogue / persuasion / duel). The
+# player approaches one to win them over; that commits the node either way.
+# ---------------------------------------------------------------------------
+const _SWAY_BADGE: Dictionary = {
+	"dialogue":   {"label": "Talk",     "color": Color(0.36, 0.66, 0.92)},
+	"persuasion": {"label": "Persuade", "color": Color(0.85, 0.70, 0.24)},
+	"duel":       {"label": "Duel",     "color": Color(0.82, 0.32, 0.32)},
+}
+func _show_recruit_popup(tier: int, index: int) -> void:
+	if _popup != null:
+		return
+	var cands := GameManager.recruit_candidates(tier, index)
+	_popup = UITheme.panel(self, Vector2(130.0, 150.0), Vector2(1020.0, 420.0),
+		Color(0.09, 0.09, 0.16, 0.98), Color(0.50, 0.50, 0.75))
+	_popup.add_child(UITheme.label("Recruit — Win Them Over", 26, Color(0.95, 0.90, 1.0),
+		Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("Approach a recruit to win them over. Choosing one commits this node.",
+		14, UITheme.TEXT_MUTED, Vector2(28.0, 52.0), Vector2(964.0, 22.0)))
+
+	var n: int = cands.size()
+	var card_w: float = (964.0 - float(n - 1) * 20.0) / float(n)
+	for i in range(n):
+		var cand: Dictionary = cands[i]
+		var cx: float = 28.0 + float(i) * (card_w + 20.0)
+		_build_recruit_card(tier, index, cand, Vector2(cx, 88.0), Vector2(card_w, 280.0))
+
+func _build_recruit_card(tier: int, index: int, cand: Dictionary, pos: Vector2, size: Vector2) -> void:
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var sway: String = String(cand["sway"])
+	var badge: Dictionary = _SWAY_BADGE.get(sway, {"label": sway, "color": Color.GRAY})
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
+
+	# Card backing panel
+	var card := UITheme.panel(_popup, pos, size, Color(0.12, 0.12, 0.20, 0.96),
+		udata["color"].lightened(0.1))
+	# Personality name leads; the unit class sits beneath it as a sub-label.
+	card.add_child(UITheme.label(String(pers["name"]), 20, Color(0.98, 0.92, 0.78),
+		Vector2(14.0, 8.0), Vector2(size.x - 28.0, 26.0)))
+	card.add_child(UITheme.label(String(udata["name"]), 13, Color(0.74, 0.80, 0.92),
+		Vector2(14.0, 34.0), Vector2(size.x - 28.0, 18.0)))
+	# Sway badge chip
+	UITheme.chip(card, String(badge["label"]), Vector2(14.0, 54.0), badge["color"],
+		size.x - 28.0)
+	# Personality flavour line.
+	card.add_child(UITheme.label("\"%s\"" % String(pers["line"]), 11, Color(0.78, 0.78, 0.70),
+		Vector2(14.0, 80.0), Vector2(size.x - 28.0, 30.0)))
+
+	var ability: Dictionary = udata.get("ability", {})
+	var stat_txt := "HP %d   Dmg %d   Rng %d\nMove %d\nAbility: %s" % [
+		int(udata["max_hp"]), int(udata["damage"]), int(udata["attack_range"]),
+		int(udata["move_range"]), String(ability.get("name", "—"))]
+	card.add_child(UITheme.label(stat_txt, 13, UITheme.TEXT,
+		Vector2(14.0, 112.0), Vector2(size.x - 28.0, 70.0)))
+
+	# Ask preview + the discounted cost for persuasion.
+	var ask: String
+	match sway:
+		"dialogue":
+			ask = "Win them over with words."
+		"persuasion":
+			var cost := GameManager.recruit_persuasion_cost(utype, tier)
+			if GameManager.hero_sway_aptitude("persuasion") > 0:
+				cost = int(round(cost * 0.6))
+			ask = "Hire for %d gold." % cost
+		"duel":
+			ask = "Fight a 1v1 duel."
+		_:
+			ask = ""
+	card.add_child(UITheme.label(ask, 13, Color(0.82, 0.86, 0.92),
+		Vector2(14.0, 184.0), Vector2(size.x - 28.0, 22.0)))
+
+	# Hero-excels marker when the hero is good at this sway type.
+	if GameManager.hero_sway_aptitude(sway) > 0:
+		card.add_child(UITheme.label("★ your hero excels here", 12, Color(0.98, 0.86, 0.40),
+			Vector2(14.0, 208.0), Vector2(size.x - 28.0, 18.0)))
+
+	var approach := UITheme.button("Approach", Vector2(14.0, size.y - 52.0),
+		Vector2(size.x - 28.0, 40.0), udata["color"].darkened(0.1),
+		_approach_candidate.bind(tier, index, cand), 16)
+	card.add_child(approach)
+
+func _approach_candidate(tier: int, index: int, cand: Dictionary) -> void:
+	match String(cand["sway"]):
+		"dialogue":
+			_show_dialogue_resolver(cand)
+		"persuasion":
+			_show_persuasion_resolver(tier, cand)
+		"duel":
+			_leaving = true
+			GameManager.pending_duel = true
+			GameManager.duel_recruit_type = String(cand["type"])
+			GameManager.duel_outcome = -1
+			if _popup != null:
+				_popup.queue_free()
+				_popup = null
+			get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+
+# Swap the popup body for the dialogue sub-screen (keeps the same _popup panel).
+func _show_dialogue_resolver(cand: Dictionary) -> void:
+	if _popup == null:
+		return
+	for c in _popup.get_children():
+		c.queue_free()
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
+	var scene: Dictionary = GameManager.DIALOGUE_SCENES[int(cand["scene"])]
+	var options: Array = scene["options"]
+	var correct: int = int(scene["correct"])
+	var hint: bool = GameManager.hero_sway_aptitude("dialogue") > 0
+
+	_popup.add_child(UITheme.label("Win Over %s the %s" % [String(pers["name"]), String(udata["name"])], 26,
+		Color(0.95, 0.90, 1.0), Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("\"%s\"" % String(pers["line"]),
+		14, Color(0.80, 0.82, 0.72), Vector2(28.0, 50.0), Vector2(964.0, 22.0)))
+	_popup.add_child(UITheme.label(String(scene["prompt"]),
+		16, UITheme.TEXT, Vector2(28.0, 76.0), Vector2(964.0, 24.0)))
+
+	for i in range(options.size()):
+		var is_hint: bool = hint and i == correct
+		var txt: String = String(options[i])
+		if is_hint:
+			txt = "★ " + txt
+		var col: Color = Color(0.30, 0.55, 0.40) if is_hint else Color(0.24, 0.28, 0.40)
+		var btn := UITheme.button(txt, Vector2(28.0, 112.0 + float(i) * 84.0),
+			Vector2(964.0, 70.0), col, _on_dialogue_response.bind(cand, i), 18)
 		_popup.add_child(btn)
+
+func _on_dialogue_response(cand: Dictionary, picked: int) -> void:
+	var correct: int = int(GameManager.DIALOGUE_SCENES[int(cand["scene"])]["correct"])
+	if picked == correct:
+		_recruit_succeed(String(cand["type"]))
+	else:
+		_recruit_decline(String(cand["type"]))
+
+# Swap the popup body for the persuasion sub-screen.
+func _show_persuasion_resolver(tier: int, cand: Dictionary) -> void:
+	if _popup == null:
+		return
+	for c in _popup.get_children():
+		c.queue_free()
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
+	var cost := GameManager.recruit_persuasion_cost(utype, tier)
+	if GameManager.hero_sway_aptitude("persuasion") > 0:
+		cost = int(round(cost * 0.6))
+	var affordable: bool = GameManager.gold >= cost
+
+	_popup.add_child(UITheme.label("Persuade %s the %s" % [String(pers["name"]), String(udata["name"])], 26,
+		UITheme.GOLD, Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("\"%s\"" % String(pers["line"]),
+		14, Color(0.80, 0.82, 0.72), Vector2(28.0, 50.0), Vector2(964.0, 22.0)))
+	_popup.add_child(UITheme.label("Costs %d gold (you have %d)." % [cost, GameManager.gold],
+		16, UITheme.TEXT, Vector2(28.0, 76.0), Vector2(964.0, 24.0)))
+	if not affordable:
+		_popup.add_child(UITheme.label("Not enough gold to make the offer.", 13, UITheme.RED,
+			Vector2(28.0, 102.0), Vector2(964.0, 20.0)))
+
+	var pay := UITheme.button("Pay %d" % cost, Vector2(28.0, 130.0), Vector2(964.0, 56.0),
+		UITheme.GREEN.darkened(0.1), _on_persuasion_pay.bind(cand, cost), 18)
+	pay.disabled = not affordable
+	if not affordable:
+		pay.add_theme_stylebox_override("disabled", UITheme.button_style(Color(0.20, 0.22, 0.30)))
+	_popup.add_child(pay)
+
+	_popup.add_child(UITheme.button("Walk away", Vector2(28.0, 200.0), Vector2(964.0, 56.0),
+		Color(0.30, 0.30, 0.34), _recruit_decline.bind(String(cand["type"])), 18))
+
+func _on_persuasion_pay(cand: Dictionary, cost: int) -> void:
+	if GameManager.spend_gold(cost):
+		_recruit_succeed(String(cand["type"]))
+	else:
+		_recruit_decline(String(cand["type"]))
+
+func _recruit_succeed(type: String) -> void:
+	GameManager.add_unit(type)
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	Sfx.play("heal")
+	_show_toast("%s joined your army!" % GameManager.UNIT_TYPES[type]["name"],
+		GameManager.UNIT_TYPES[type]["color"])
+	_refresh()
+
+func _recruit_decline(type: String) -> void:
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	_show_toast("%s decided not to join." % GameManager.UNIT_TYPES[type]["name"],
+		Color(0.7, 0.6, 0.5))
+	_refresh()
 
 # ---------------------------------------------------------------------------
 # Random event popup
@@ -713,14 +1214,6 @@ func _on_event_choice(choice: Dictionary) -> void:
 		_popup.queue_free()
 		_popup = null
 	_show_toast(msg, Color(0.55, 0.90, 0.90))
-
-func _on_unit_chosen(unit_type: String) -> void:
-	GameManager.add_unit(unit_type)
-	_popup.queue_free()
-	_popup = null
-	var name_str: String = GameManager.UNIT_TYPES[unit_type]["name"]
-	var color: Color = GameManager.UNIT_TYPES[unit_type]["color"]
-	_show_toast("Added %s to your roster!" % name_str, color)
 
 # ---------------------------------------------------------------------------
 # Shop popup — spend gold; stays open for multiple purchases until "Leave"

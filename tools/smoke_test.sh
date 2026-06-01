@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 
 SCENES=(
 	src/title/title.tscn
+	src/charselect/charselect.tscn
 	src/level_select/level_select.tscn
 	src/autobattler/autobattler.tscn
 )
