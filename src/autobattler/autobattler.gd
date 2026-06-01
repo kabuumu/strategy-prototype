@@ -914,7 +914,7 @@ func _start_campaign_fight() -> void:
 	# zip aligned and signals the survivor write-back to skip it (never persisted).
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
 		var hd := GameManager.hero_data()
-		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]), "xp": 0, "hero": true})
+		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true})
 		p_entries.append(null)
 	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
@@ -931,6 +931,11 @@ func _start_campaign_fight() -> void:
 		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
+		if bool(p_cards[i].get("hero", false)):
+			var m := GameManager.hero_fight_mult()
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * m)))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * m)))
 		player_units.append(u)
 	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
@@ -946,17 +951,18 @@ func _start_campaign_fight() -> void:
 	_rebuild_ui()
 
 func _apply_hero_buff(buff_id: String) -> void:
+	var bm := GameManager.hero_buff_mult()
 	for u: RTUnit in player_units:
 		match buff_id:
 			"aegis":
-				u.max_hp = maxi(1, int(round(float(u.max_hp) * 1.15)))
+				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * bm))))
 				u.hp = u.max_hp
 				if u.has_method("_refresh_hp_bar"):
 					u.call("_refresh_hp_bar")
 			"march":
-				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * 1.15)))
+				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * bm))))
 			"warchest":
-				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25)))
+				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * bm)))
 				if u.has_method("_refresh_hp_bar"):
 					u.call("_refresh_hp_bar")
 
@@ -1010,9 +1016,9 @@ func _start_duel_fight() -> void:
 	var hero_card: Dictionary
 	if GameManager.has_hero():
 		var hd := GameManager.hero_data()
-		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]), "xp": 0}
+		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0}
 	else:
-		hero_card = {"id": "soldier", "level": 1, "xp": 0}
+		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0}
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
@@ -1022,6 +1028,12 @@ func _start_duel_fight() -> void:
 		hero_unit.damage_per_attack = maxi(1, int(round(hero_unit.damage_per_attack * 1.25)))
 		if hero_unit.has_method("_refresh_hp_bar"):
 			hero_unit.call("_refresh_hp_bar")
+	var fm := GameManager.hero_fight_mult()
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * fm)))
+	hero_unit.hp = hero_unit.max_hp
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * fm)))
+	if hero_unit.has_method("_refresh_hp_bar"):
+		hero_unit.call("_refresh_hp_bar")
 	player_units.append(hero_unit)
 	var recruit_pos := _formation_positions(1, 1)
 	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 1.0))

@@ -236,6 +236,10 @@ func select_hero(id: String) -> void:
 	valor = 0
 	hero_battle_mode = "fight"
 	pending_hero_buff = ""
+	hero_level = 1
+	hero_xp = 0
+	hero_perks = []
+	pending_hero_perk = false
 	var bonus: Dictionary = HEROES[id].get("start_bonus", {})
 	gold += int(bonus.get("gold", 0))
 	for t in bonus.get("units", []):
@@ -251,9 +255,77 @@ func spend_valor(n: int) -> bool:
 	return true
 
 # Hero's aptitude for a sway type ("dialogue"/"persuasion"/"duel"); 0 if no hero.
+# The Silver Tongue perk lifts every aptitude by 1.
 func hero_sway_aptitude(sway_type: String) -> int:
+	if not has_hero():
+		return 0
 	var apt: Dictionary = hero_data().get("sway_aptitudes", {})
-	return int(apt.get(sway_type, 0))
+	return int(apt.get(sway_type, 0)) + (1 if has_perk("silver_tongue") else 0)
+
+# ---------------------------------------------------------------------------
+# Hero progression — gain a level every HERO_XP_PER_LEVEL battle wins (up to
+# HERO_MAX_LEVEL). Each level boosts the hero passively (fight + buff scaling)
+# and offers a permanent perk pick. Perks are applied via the helpers below,
+# which the auto-battler and level_select read.
+# ---------------------------------------------------------------------------
+const HERO_XP_PER_LEVEL: int = 2
+const HERO_MAX_LEVEL: int = 10
+const HERO_PERKS: Dictionary = {
+	"warlord":       {"name": "Warlord",       "desc": "+20% hero combat power"},
+	"veteran_hero":  {"name": "Veteran",       "desc": "Hero fights one card level higher"},
+	"inspiring":     {"name": "Inspiring",     "desc": "+50% stronger team buffs"},
+	"thrifty":       {"name": "Thrifty",       "desc": "Hero buffs cost 1 less Valor"},
+	"silver_tongue": {"name": "Silver Tongue", "desc": "+1 to all sway aptitudes"},
+}
+const HERO_PERK_IDS: Array[String] = ["warlord", "veteran_hero", "inspiring", "thrifty", "silver_tongue"]
+
+func has_perk(id: String) -> bool:
+	return id in hero_perks
+
+# Called on each battle win (from register_battle_won). Levels up and flags a
+# perk pick when a threshold is crossed.
+func hero_gain_xp() -> void:
+	if not has_hero() or hero_level >= HERO_MAX_LEVEL:
+		return
+	hero_xp += 1
+	while hero_xp >= HERO_XP_PER_LEVEL and hero_level < HERO_MAX_LEVEL:
+		hero_xp -= HERO_XP_PER_LEVEL
+		hero_level += 1
+		if not _unowned_perks().is_empty():
+			pending_hero_perk = true
+
+func _unowned_perks() -> Array[String]:
+	var out: Array[String] = []
+	for id: String in HERO_PERK_IDS:
+		if not has_perk(id):
+			out.append(id)
+	return out
+
+# Up to n random unowned perk ids for the level-up pick.
+func random_hero_perk_choices(n: int) -> Array[String]:
+	var pool: Array[String] = _unowned_perks()
+	pool.shuffle()
+	return pool.slice(0, mini(n, pool.size()))
+
+func grant_hero_perk(id: String) -> void:
+	if HERO_PERKS.has(id) and not has_perk(id):
+		hero_perks.append(id)
+
+# Multiplier on the hero's combat stats when it FIGHTS (level scaling + Warlord).
+func hero_fight_mult() -> float:
+	return 1.0 + 0.10 * float(hero_level - 1) + (0.20 if has_perk("warlord") else 0.0)
+
+# Extra card levels the fighting hero spawns at (Veteran perk).
+func hero_fight_bonus_level() -> int:
+	return 1 if has_perk("veteran_hero") else 0
+
+# Multiplier on the bonus portion of a team BUFF (level scaling + Inspiring).
+func hero_buff_mult() -> float:
+	return 1.0 + 0.05 * float(hero_level - 1) + (0.50 if has_perk("inspiring") else 0.0)
+
+# Valor cost of a buff after the Thrifty perk.
+func hero_buff_cost(base: int) -> int:
+	return maxi(0, base - (1 if has_perk("thrifty") else 0))
 
 # ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
@@ -353,6 +425,11 @@ var selected_hero: String = ""           # "" = no hero (standalone Quick Auto B
 var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
 var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
 var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
+# --- Hero progression (levels from wins; perks chosen on level-up) ----------
+var hero_level: int = 1
+var hero_xp: int = 0                       # +1 per battle won; HERO_XP_PER_LEVEL per level
+var hero_perks: Array[String] = []         # owned perk ids (see HERO_PERKS)
+var pending_hero_perk: bool = false        # level_select offers a perk pick when set
 # --- Recruitment duel handshake (Phase 2; resolves within one map visit) ----
 var pending_duel: bool = false            # level_select -> autobattler: run a 1v1 duel
 var duel_recruit_type: String = ""        # the unit being dueled for
@@ -491,6 +568,10 @@ func reset() -> void:
 	valor = 0
 	hero_battle_mode = "fight"
 	pending_hero_buff = ""
+	hero_level = 1
+	hero_xp = 0
+	hero_perks = []
+	pending_hero_perk = false
 	pending_duel = false
 	duel_recruit_type = ""
 	duel_outcome = -1
@@ -507,6 +588,7 @@ func register_battle_won(_elite: bool) -> void:
 	# Surviving regiments gain battle experience (toward veterancy).
 	for entry: Dictionary in player_roster:
 		entry["xp"] = int(entry.get("xp", 0)) + 1
+	hero_gain_xp()   # hero levels up off battle wins too
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
 		_save_meta()
@@ -547,7 +629,7 @@ func mark_tutorial_seen() -> void:
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
 # Bump when the run-save schema changes incompatibly; older saves are discarded
 # on load instead of loading partial/garbage state.
-const SAVE_VERSION: int = 3
+const SAVE_VERSION: int = 4
 
 func has_saved_run() -> bool:
 	if not FileAccess.file_exists(RUN_SAVE_PATH):
@@ -572,6 +654,10 @@ func save_run() -> void:
 	cfg.set_value("run", "battle_mode", battle_mode)
 	cfg.set_value("run", "selected_hero", selected_hero)
 	cfg.set_value("run", "valor", valor)
+	cfg.set_value("run", "hero_level", hero_level)
+	cfg.set_value("run", "hero_xp", hero_xp)
+	cfg.set_value("run", "hero_perks", hero_perks)
+	cfg.set_value("run", "pending_hero_perk", pending_hero_perk)
 	cfg.save(RUN_SAVE_PATH)
 
 # Load a saved run into the live state. Returns false if no valid save exists.
@@ -605,6 +691,12 @@ func load_run() -> bool:
 	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
 	selected_hero     = str(cfg.get_value("run", "selected_hero", ""))
 	valor             = int(cfg.get_value("run", "valor", 0))
+	hero_level        = int(cfg.get_value("run", "hero_level", 1))
+	hero_xp           = int(cfg.get_value("run", "hero_xp", 0))
+	hero_perks = []
+	for pk in cfg.get_value("run", "hero_perks", []):
+		hero_perks.append(str(pk))
+	pending_hero_perk = bool(cfg.get_value("run", "pending_hero_perk", false))
 	hero_battle_mode  = "fight"
 	pending_hero_buff = ""
 	pending_battle_tier = 0

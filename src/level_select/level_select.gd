@@ -120,11 +120,71 @@ func _ready() -> void:
 				_show_toast("%s joined your army!" % rname, GameManager.UNIT_TYPES[rtype]["color"])
 			else:
 				_show_toast("%s bested you and walked away." % rname, Color(0.7, 0.6, 0.5))
-	# Offer the post-battle upgrade pick if a non-hex mode flagged a win reward.
+	# Offer any pending post-battle rewards (hero perk pick, then upgrade card).
+	call_deferred("_show_pending_rewards")
+
+# Chains the post-battle popups so a perk pick and an upgrade reward don't both
+# try to grab _popup. The hero perk popup (if any) runs first and re-invokes
+# this on close; the upgrade reward is always last.
+func _show_pending_rewards() -> void:
+	if _popup != null:
+		return
+	if GameManager.pending_hero_perk and GameManager.has_hero():
+		GameManager.pending_hero_perk = false
+		_show_hero_perk_popup()
+		return
 	if GameManager.pending_upgrade_reward and not GameManager.player_roster.is_empty() \
 			and GameManager.current_tier < GameManager.MAP_TIERS:
 		GameManager.pending_upgrade_reward = false
-		call_deferred("_show_reward_popup")
+		_show_reward_popup()
+
+# ---------------------------------------------------------------------------
+# Hero level-up perk pick. Mirrors the upgrade reward popup's card layout.
+# ---------------------------------------------------------------------------
+func _show_hero_perk_popup() -> void:
+	if _popup != null:
+		return
+	var choices := GameManager.random_hero_perk_choices(3)
+	if choices.is_empty():
+		call_deferred("_show_pending_rewards")
+		return
+	_popup = UITheme.panel(self, Vector2(220.0, 200.0), Vector2(840.0, 300.0),
+		Color(0.08, 0.10, 0.14, 0.99), Color(0.45, 0.60, 0.85))
+	_popup.add_child(UITheme.label("Hero Level %d! Choose a Perk" % GameManager.hero_level,
+		26, Color(0.78, 0.90, 1.0), Vector2(28.0, 18.0), Vector2(784.0, 32.0)))
+	_popup.add_child(UITheme.label("Pick a perk for your hero.",
+		14, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(784.0, 22.0)))
+	for i in range(choices.size()):
+		var id: String = choices[i]
+		var data: Dictionary = GameManager.HERO_PERKS[id]
+		var btn := Button.new()
+		btn.position = Vector2(40.0 + i * 260.0, 92.0)
+		btn.size = Vector2(240.0, 120.0)
+		btn.text = "%s\n\n%s" % [String(data["name"]), String(data["desc"])]
+		btn.add_theme_font_size_override("font_size", 15)
+		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var col := Color(0.20, 0.30, 0.45)
+		btn.add_theme_stylebox_override("normal",  _circle_style(col, 8))
+		btn.add_theme_stylebox_override("hover",   _circle_style(col.lightened(0.18), 8))
+		btn.add_theme_stylebox_override("pressed", _circle_style(col.darkened(0.2), 8))
+		btn.pressed.connect(_on_hero_perk_pick.bind(id))
+		_popup.add_child(btn)
+	var skip := UITheme.button("Skip", Vector2(360.0, 236.0), Vector2(200.0, 44.0),
+		Color(0.30, 0.30, 0.34), _on_hero_perk_pick.bind(""))
+	_popup.add_child(skip)
+
+func _on_hero_perk_pick(id: String) -> void:
+	if id != "":
+		GameManager.grant_hero_perk(id)
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	GameManager.save_run()
+	if id != "":
+		var data: Dictionary = GameManager.HERO_PERKS[id]
+		_show_toast("%s — %s" % [String(data["name"]), String(data["desc"])], Color(0.75, 0.9, 1.0))
+	_refresh()
+	call_deferred("_show_pending_rewards")
 
 # ---------------------------------------------------------------------------
 # Post-battle upgrade reward (parity with the hex battle's upgrade picker).
@@ -702,8 +762,8 @@ func _refresh() -> void:
 	_gold_label.text   = "Gold: %d" % GameManager.gold
 	if _hero_label != null:
 		if GameManager.has_hero():
-			_hero_label.text = "Hero: %s   ·   Valor: %d" % [
-				String(GameManager.hero_data().get("name", "Hero")), GameManager.valor]
+			_hero_label.text = "Hero: %s  Lv%d   ·   Valor: %d" % [
+				String(GameManager.hero_data().get("name", "Hero")), GameManager.hero_level, GameManager.valor]
 		else:
 			_hero_label.text = ""
 	_relics_label.text = _relics_text()
@@ -821,7 +881,7 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 		return
 	var hero: Dictionary = GameManager.hero_data()
 	var buff: Dictionary = hero.get("buff", {})
-	var cost: int = int(buff.get("cost", 0))
+	var cost: int = GameManager.hero_buff_cost(int(buff.get("cost", 0)))
 	var valor: int = GameManager.valor
 
 	_popup = UITheme.panel(self, Vector2(360.0, 180.0), Vector2(560.0, 360.0),
