@@ -42,7 +42,7 @@ The **only** place persistent cross-scene state lives. Scene scripts read/write 
 
 ### Map (`level_select`)
 
-5 tiers. Tier 0 = 2–3 varied starting nodes (one tougher `elite_battle`, never all battles — see `_starting_node_types`); middle tiers = 2–5 nodes; final tier = single boss (`elite_battle`). Connections wired per adjacent tier pair (proportional mapping + occasional branch); every target guaranteed an incoming edge. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable. Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`.
+5 tiers. Tier 0 = single start node (always a regular `battle` node); middle tiers = 2–5 nodes; final tier = single boss (`elite_battle`). Connections wired per adjacent tier pair (proportional mapping + occasional branch); every target guaranteed an incoming edge. Reachable nodes come from the last visited node's `connections`; before any node is visited every tier-0 node is selectable. Node types: `battle`, `elite_battle`, `gain_unit`, `shop`, `heal`.
 
 ### Battle (`src/battle/`)
 
