@@ -16,21 +16,24 @@ const TYPE_COLORS: Dictionary = {
 	"elite_battle": Color(0.55, 0.10, 0.65),
 	"gain_unit":    Color(0.25, 0.55, 0.95),
 	"shop":         Color(0.85, 0.70, 0.20),
-	"heal":         Color(0.20, 0.72, 0.35)
+	"heal":         Color(0.20, 0.72, 0.35),
+	"event":        Color(0.30, 0.72, 0.72)
 }
 const TYPE_LABELS: Dictionary = {
 	"battle":       "Battle",
 	"elite_battle": "Elite!",
 	"gain_unit":    "+Unit",
 	"shop":         "Shop",
-	"heal":         "Heal"
+	"heal":         "Heal",
+	"event":        "?"
 }
 const TYPE_DESC: Dictionary = {
 	"battle":       "Standard battle",
 	"elite_battle": "Harder battle, tougher enemies",
 	"gain_unit":    "Choose a new unit",
 	"shop":         "Spend gold on heals and units",
-	"heal":         "Heal all units to full"
+	"heal":         "Heal all units to full",
+	"event":        "A random encounter — a choice to make"
 }
 
 # ---------------------------------------------------------------------------
@@ -419,6 +422,8 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			Sfx.play("heal")
 			_refresh()
 			_show_toast("Party fully healed!", Color(0.20, 0.72, 0.35))
+		"event":
+			_show_event_popup()
 		_:
 			_refresh()
 
@@ -470,6 +475,44 @@ func _show_unit_select_popup() -> void:
 		btn.add_theme_stylebox_override("pressed", _circle_style(udata["color"].darkened(0.30), 8))
 		btn.pressed.connect(_on_unit_chosen.bind(utype))
 		_popup.add_child(btn)
+
+# ---------------------------------------------------------------------------
+# Random event popup
+# ---------------------------------------------------------------------------
+func _show_event_popup() -> void:
+	var ev: Dictionary = GameManager.random_event()
+	_popup = UITheme.panel(self, Vector2(300.0, 200.0), Vector2(680.0, 320.0),
+		Color(0.08, 0.13, 0.14, 0.98), Color(0.30, 0.72, 0.72))
+	_popup.add_child(UITheme.label(String(ev["title"]), 26, Color(0.70, 0.95, 0.95), Vector2(28.0, 18.0), Vector2(624.0, 34.0)))
+	_popup.add_child(UITheme.label(String(ev["text"]), 16, UITheme.TEXT, Vector2(28.0, 64.0), Vector2(624.0, 70.0)))
+	var choices: Array = ev["choices"]
+	var n: int = choices.size()
+	var bw: float = 624.0 / float(n) - 12.0
+	for i in range(n):
+		var ch: Dictionary = choices[i]
+		var cost: int = int(ch.get("cost", 0))
+		var enabled: bool = GameManager.gold >= cost
+		var btn := Button.new()
+		btn.text = String(ch["label"])
+		btn.position = Vector2(28.0 + i * (bw + 16.0), 180.0)
+		btn.size = Vector2(bw, 110.0)
+		btn.disabled = not enabled
+		btn.add_theme_font_size_override("font_size", 15)
+		var col := Color(0.22, 0.40, 0.42) if enabled else Color(0.18, 0.20, 0.22)
+		btn.add_theme_stylebox_override("normal",   _circle_style(col, 8))
+		btn.add_theme_stylebox_override("hover",    _circle_style(col.lightened(0.15), 8))
+		btn.add_theme_stylebox_override("pressed",  _circle_style(col.darkened(0.25), 8))
+		btn.add_theme_stylebox_override("disabled", _circle_style(col.darkened(0.4), 8))
+		btn.pressed.connect(_on_event_choice.bind(ch))
+		_popup.add_child(btn)
+
+func _on_event_choice(choice: Dictionary) -> void:
+	var msg: String = GameManager.apply_event_choice(choice)
+	Sfx.play("gold")
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	_show_toast(msg, Color(0.55, 0.90, 0.90))
 
 func _on_unit_chosen(unit_type: String) -> void:
 	GameManager.add_unit(unit_type)

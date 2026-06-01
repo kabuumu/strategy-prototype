@@ -473,7 +473,7 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 		return "elite_battle"
 	# Tier 0 is overwritten by _starting_node_types after generation; the value
 	# returned here is just a placeholder.
-	var roll := rng.randi() % 10
+	var roll := rng.randi() % 12
 	if roll < 4:
 		return "battle"
 	elif roll < 6:
@@ -482,6 +482,8 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 		return "gain_unit"
 	elif roll < 9:
 		return "shop"
+	elif roll < 11:
+		return "event"
 	else:
 		return "heal"
 
@@ -590,6 +592,170 @@ func random_upgrade_choices(count: int) -> Array[String]:
 	for i in range(n):
 		out.append(pool[i])
 	return out
+
+# ---------------------------------------------------------------------------
+# Random events (the "event" map node)
+# ---------------------------------------------------------------------------
+# Each event has flavour text and 2-3 choices. A choice may cost gold ("cost",
+# gated in the UI) and applies an "effect" dict — any of: gold (+/-), heal_all,
+# damage_all (each unit, never lethal), add_unit "random", add_relic "random",
+# add_upgrade "random" (random survivor), lose_unit true (weakest perishes).
+const EVENTS: Array = [
+	{
+		"title": "Wandering Mercenary",
+		"text": "A scarred sellsword offers his blade — for the right price.",
+		"choices": [
+			{"label": "Hire him (40g)", "cost": 40, "effect": {"add_unit": "random"}},
+			{"label": "Send him away", "effect": {}},
+		],
+	},
+	{
+		"title": "Ancient Shrine",
+		"text": "A moss-covered shrine hums with old power. Do you honour it, or pry loose its gilding?",
+		"choices": [
+			{"label": "Pray (heal the party)", "effect": {"heal_all": 30}},
+			{"label": "Strip the gold (+60g, party bruised)", "effect": {"gold": 60, "damage_all": 12}},
+		],
+	},
+	{
+		"title": "Abandoned Cache",
+		"text": "Supplies left by a fallen company. You can only carry one prize.",
+		"choices": [
+			{"label": "Take the coin (+70g)", "effect": {"gold": 70}},
+			{"label": "Take the relic", "effect": {"add_relic": "random"}},
+		],
+	},
+	{
+		"title": "Blood Altar",
+		"text": "The altar promises power for a life freely given.",
+		"choices": [
+			{"label": "Make the sacrifice (lose a unit, gain a relic)", "effect": {"lose_unit": true, "add_relic": "random"}},
+			{"label": "Refuse the bargain", "effect": {}},
+		],
+	},
+	{
+		"title": "Veteran Drillmaster",
+		"text": "An old campaigner offers to drill one of your regiments.",
+		"choices": [
+			{"label": "Pay for training (40g)", "cost": 40, "effect": {"add_upgrade": "random"}},
+			{"label": "March on", "effect": {}},
+		],
+	},
+	{
+		"title": "Cursed Idol",
+		"text": "A leering idol of gold. It would fetch a fortune — but it feels wrong.",
+		"choices": [
+			{"label": "Smash it for gold (+90g, a unit is slain)", "effect": {"gold": 90, "lose_unit": true}},
+			{"label": "Leave it be", "effect": {}},
+		],
+	},
+	{
+		"title": "Field Hospital",
+		"text": "A camp of healers tends the wounded of both armies.",
+		"choices": [
+			{"label": "Rest the party (heal fully)", "effect": {"heal_all": 9999}},
+			{"label": "Donate for a blessing (30g, +relic)", "cost": 30, "effect": {"add_relic": "random"}},
+		],
+	},
+	{
+		"title": "Gambler's Wager",
+		"text": "A grinning dicer rattles his cup. Care to test your luck?",
+		"choices": [
+			{"label": "Small bet — 30g (50%: +80g)", "cost": 30, "effect": {"gamble_gold": 80}},
+			{"label": "Big bet — 60g (50%: +160g)", "cost": 60, "effect": {"gamble_gold": 160}},
+			{"label": "Keep your coin", "effect": {}},
+		],
+	},
+	{
+		"title": "Crossroads Camp",
+		"text": "A waystation at the fork. Travellers offer rest, trade, or a quiet shrine.",
+		"choices": [
+			{"label": "Rest (heal party)", "effect": {"heal_all": 9999}},
+			{"label": "Trade goods (+50g)", "effect": {"gold": 50}},
+			{"label": "Pray at the shrine (25g, +relic)", "cost": 25, "effect": {"add_relic": "random"}},
+		],
+	},
+	{
+		"title": "Press-Ganged Recruits",
+		"text": "A gang of brawlers — you could conscript them by force, or pay them honestly.",
+		"choices": [
+			{"label": "Conscript (free unit, party worn −8 HP)", "effect": {"add_unit": "random", "damage_all": 8}},
+			{"label": "Pay them fairly (50g, free unit)", "cost": 50, "effect": {"add_unit": "random"}},
+			{"label": "Move on", "effect": {}},
+		],
+	},
+]
+
+func random_event() -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	return EVENTS[rng.randi() % EVENTS.size()]
+
+func _random_recruitable() -> String:
+	var pool := recruitable_types()
+	if pool.is_empty():
+		return "soldier"
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	return pool[rng.randi() % pool.size()]
+
+# Apply an event choice (after the UI has confirmed affordability). Returns a
+# short result message for a toast.
+func apply_event_choice(choice: Dictionary) -> String:
+	var cost: int = int(choice.get("cost", 0))
+	if cost > 0:
+		spend_gold(cost)
+	var eff: Dictionary = choice.get("effect", {})
+	var parts: Array[String] = []
+	if eff.has("gold"):
+		var g: int = int(eff["gold"])
+		gold = maxi(0, gold + g)
+		parts.append(("+%d gold" % g) if g >= 0 else ("%d gold" % g))
+	if eff.has("gamble_gold"):
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		if rng.randf() < 0.5:
+			var payout: int = int(eff["gamble_gold"])
+			gold += payout
+			parts.append("the bet pays off — +%d gold!" % payout)
+		else:
+			parts.append("the bet is lost")
+	if eff.has("heal_all"):
+		var amt: int = int(eff["heal_all"])
+		for entry: Dictionary in player_roster:
+			entry["hp"] = mini(unit_effective_max_hp(entry), int(entry["hp"]) + amt)
+		parts.append("party healed")
+	if eff.has("damage_all"):
+		var dmg: int = int(eff["damage_all"])
+		for entry: Dictionary in player_roster:
+			entry["hp"] = maxi(1, int(entry["hp"]) - dmg)   # never lethal
+		parts.append("party bruised")
+	if eff.has("add_unit"):
+		var t: String = _random_recruitable()
+		add_unit(t)
+		parts.append("recruited %s" % String(UNIT_TYPES[t]["name"]))
+	if eff.has("add_relic"):
+		var rid: String = grant_random_relic()
+		parts.append(("found %s" % String(RELICS[rid]["name"])) if rid != "" else "no relic to find")
+	if eff.has("add_upgrade") and not player_roster.is_empty():
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		var idx: int = rng.randi() % player_roster.size()
+		var ups := random_upgrade_choices(1)
+		if not ups.is_empty():
+			apply_upgrade(idx, ups[0])
+			parts.append("%s trained" % String(UNIT_TYPES[player_roster[idx]["type"]]["name"]))
+	if eff.has("lose_unit") and bool(eff["lose_unit"]) and not player_roster.is_empty():
+		var worst: int = 0
+		for i in range(player_roster.size()):
+			if int(player_roster[i]["hp"]) < int(player_roster[worst]["hp"]):
+				worst = i
+		var lost_name: String = String(UNIT_TYPES[player_roster[worst]["type"]]["name"])
+		player_roster.remove_at(worst)
+		parts.append("lost %s" % lost_name)
+	if parts.is_empty():
+		return "You move on."
+	return ", ".join(parts).capitalize()
 
 # ---------------------------------------------------------------------------
 # Economy
