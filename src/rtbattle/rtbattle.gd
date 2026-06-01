@@ -402,6 +402,13 @@ func _draw() -> void:
 		draw_arc(wp["pos"], rad, 0.0, TAU, 24, c, 1.5, true)
 		draw_circle(wp["pos"], 2.0, c)
 
+	# Attack-range preview: faint ring showing each selected regiment's reach.
+	for u: RTUnit in selected_units:
+		if not is_instance_valid(u) or not u.is_alive():
+			continue
+		var rc: Color = Color(0.45, 0.75, 1.0, 0.22) if u.is_ranged else Color(1.0, 0.80, 0.40, 0.22)
+		draw_arc(u.position, u.attack_range_px + u.radius, 0.0, TAU, 48, rc, 2.0, true)
+
 	# Attack target indicator: a red ring around any enemy currently being
 	# attacked by one of the player's selected units.
 	for u: RTUnit in selected_units:
