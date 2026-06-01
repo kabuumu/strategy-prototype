@@ -10,7 +10,7 @@ Godot 4.4 turn-based strategy game in GDScript. Renderer: Forward Plus. Viewport
 
 ## Assets
 
-Sprites (`assets/units/`) and SFX (`assets/sfx/`) are committed. SFX come from `tools/gen_sfx.py`. Unit sprites (32×32, `<class>_<team>.png`, loaded by `unit.gd`) are sliced from the CC0 **Kenney Tiny Dungeon** tilemap by `tools/import_pixel_units.py` (per-class tile index + enemy red-tint documented in that file's header); `tools/gen_sprites.py` is the older procedural generator, kept as a fallback. After regenerating, run `godot --headless --import`.
+Sprites (`assets/units/`), SFX (`assets/sfx/`) and music (`assets/music/`) are committed. SFX come from `tools/gen_sfx.py`; chiptune music loops from `tools/gen_music.py` (pure-stdlib WAV synthesis, played by the `Music` autoload — `src/music.gd` — which loops a track per scene and rides the Master bus). Unit sprites (32×32, `<class>_<team>.png`, loaded by `unit.gd`) are sliced from the CC0 **Kenney Tiny Dungeon** tilemap by `tools/import_pixel_units.py` (per-class tile index + enemy crimson blend + grounding shadow in that file's header); `tools/gen_sprites.py` is the older procedural generator, kept as a fallback. After regenerating any of these, run `godot --headless --import`. Boot-test everything with `tools/smoke_test.sh`.
 
 **Raw downloaded asset packs are NOT committed.** Source art (tilemaps, model packs) lives in the gitignored `assets/incoming/` staging area — re-download per the sources in `tools/import_pixel_units.py` / `assets/models/README.md` if absent. Only the processed outputs (`assets/units/*.png`, renamed `.glb`s) are kept.
 
