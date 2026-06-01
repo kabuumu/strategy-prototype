@@ -133,6 +133,12 @@ func _ready() -> void:
 		_spawn_armies()
 	_refresh_ui()
 
+# Apply the run's relic/curse/synergy multipliers to a player regiment.
+func _buff_campaign_unit(u: RTUnit) -> void:
+	u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+	u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+	u.hp = u.max_hp
+
 # Campaign armies: your roster (left) vs the tier's enemy roster (right).
 func _spawn_campaign_armies() -> void:
 	var tier: int = GameManager.pending_battle_tier
@@ -145,6 +151,7 @@ func _spawn_campaign_armies() -> void:
 		var y: float = 180.0 + float(i) * (380.0 / float(n))
 		var u := _spawn_regiment(rtype, 0, Vector2(230.0 + float(i % 2) * 56.0, y))
 		u.set_meta("roster_entry", entry)
+		_buff_campaign_unit(u)
 		player_units.append(u)
 	var etypes: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var mult: float = GameManager.get_hp_multiplier(tier, elite)

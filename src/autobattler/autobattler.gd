@@ -922,6 +922,9 @@ func _start_campaign_fight() -> void:
 	for i in range(p_cards.size()):
 		var u := _spawn_unit(p_cards[i], 0, p_pos[i], 1.0, p_counts)
 		_unit_state[u.get_instance_id()]["roster_entry"] = p_entries[i]
+		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+		u.hp = u.max_hp
 		player_units.append(u)
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):

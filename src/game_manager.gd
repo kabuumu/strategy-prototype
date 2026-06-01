@@ -1055,6 +1055,28 @@ func relic_ap_bonus() -> int:
 func relic_crit_bonus() -> float:
 	return (0.12 if has_relic("keen_edge") else 0.0) + (0.25 if has_relic("divine_favor") else 0.0)
 
+# Real-time-engine player buffs. The flat relic/curse values are tuned for the
+# hex battle's stat scale; for the RTUnit modes (auto / TD / base / 2D Total War)
+# we express the same boons/banes as multipliers applied to spawned player units.
+func rt_player_damage_mult() -> float:
+	var m: float = 1.0
+	if has_relic("whetstone"): m += 0.15
+	if has_relic("divine_favor"): m += 0.5
+	if has_synergy("horde"): m += 0.12
+	if has_curse("dullness"): m -= 0.12
+	if has_curse("damnation"): m -= 0.40
+	return maxf(0.4, m)
+
+func rt_player_hp_mult() -> float:
+	var m: float = 1.0
+	if has_relic("plating"): m += 0.15
+	if has_relic("aegis"): m += 0.18         # damage reduction ~ effective HP
+	if has_relic("divine_favor"): m += 0.5
+	if has_synergy("phalanx"): m += 0.10
+	if has_curse("frailty"): m -= 0.12
+	if has_curse("damnation"): m -= 0.40
+	return maxf(0.4, m)
+
 # Multiplier on damage the player's units take (Aegis / Divine Favour). 1.0 = none.
 func relic_damage_taken_mult() -> float:
 	var m: float = 1.0

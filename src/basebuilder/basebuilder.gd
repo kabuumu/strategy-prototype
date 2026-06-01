@@ -246,6 +246,10 @@ func _spawn_unit(unit_id: String, team: int, pos: Vector2) -> void:
 	var u := RTUnit.new()
 	add_child(u)
 	u.setup(unit_id, team, pos + Vector2(_rng.randf_range(-14.0, 14.0), _rng.randf_range(-44.0, 44.0)), UNIT_STATS[unit_id])
+	if team == 0 and _campaign:
+		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+		u.hp = u.max_hp
 	u.died.connect(_on_unit_died)
 	pool.append(u)
 

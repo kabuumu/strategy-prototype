@@ -152,6 +152,9 @@ func _setup_campaign() -> void:
 		u.setup(dtype, 0, Vector2(x, y), DEFENDER_TYPES[dtype])
 		u.clear_order()
 		u.set_meta("roster_entry", entry)
+		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+		u.hp = u.max_hp
 		_defenders.append(u)
 
 func _build_campaign_waves(tier: int, elite: bool) -> Array:
