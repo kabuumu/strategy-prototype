@@ -434,18 +434,22 @@ func _show_unit_select_popup() -> void:
 	title.position = Vector2(330.0, 16.0)
 	_popup.add_child(title)
 
+	# 4-column grid so the roster of recruitable types wraps cleanly.
 	var keys := GameManager.recruitable_types()
+	var cols := 4
 	for i in range(keys.size()):
 		var utype: String = keys[i]
 		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+		var col := i % cols
+		var row := i / cols
 		var btn := Button.new()
-		btn.position = Vector2(20.0 + i * 245.0, 60.0)
-		btn.size = Vector2(230.0, 250.0)
-		btn.text = "%s\n\nHP:    %d\nMove:  %d\nRange: %d\nDmg:   %d\n\n%s" % [
+		btn.position = Vector2(20.0 + col * 248.0, 60.0 + row * 145.0)
+		btn.size = Vector2(235.0, 132.0)
+		btn.text = "%s\nHP %d   Mv %d\nRng %d   Dmg %d\n%s" % [
 			udata["name"], udata["max_hp"], udata["move_range"],
 			udata["attack_range"], udata["damage"], udata["ability"]["name"]
 		]
-		btn.add_theme_font_size_override("font_size", 15)
+		btn.add_theme_font_size_override("font_size", 14)
 		var bs := _circle_style(udata["color"].darkened(0.15), 8)
 		btn.add_theme_stylebox_override("normal",  bs)
 		btn.add_theme_stylebox_override("hover",   _circle_style(udata["color"].lightened(0.15), 8))
@@ -523,17 +527,20 @@ func _populate_shop() -> void:
 	relic_btn.pressed.connect(_on_shop_relic)
 	_popup.add_child(relic_btn)
 
-	# Buy a unit (one button per class)
+	# Buy a unit (one button per class) — 4-column grid so it wraps cleanly.
 	var keys := GameManager.recruitable_types()
+	var cols := 4
 	for i in range(keys.size()):
 		var utype: String = keys[i]
 		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+		var col := i % cols
+		var row := i / cols
 		var can_afford := GameManager.gold >= GameManager.SHOP_UNIT_COST
 		var btn := _make_shop_button(
-			"Buy %s\n\nHP:%d Mv:%d\nRng:%d Dmg:%d\n\n%d gold" % [
+			"Buy %s\nHP %d  Mv %d\nRng %d  Dmg %d\n%d gold" % [
 				udata["name"], udata["max_hp"], udata["move_range"],
 				udata["attack_range"], udata["damage"], GameManager.SHOP_UNIT_COST],
-			Vector2(20.0 + i * 248.0, 140.0), Vector2(235.0, 230.0),
+			Vector2(20.0 + col * 248.0, 140.0 + row * 124.0), Vector2(235.0, 116.0),
 			udata["color"].darkened(0.1), can_afford)
 		btn.pressed.connect(_on_shop_buy_unit.bind(utype))
 		_popup.add_child(btn)
