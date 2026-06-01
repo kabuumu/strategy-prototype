@@ -15,16 +15,16 @@ Source pack (NOT committed — download once into assets/incoming/):
 
 The class -> tile mapping below was chosen by eye from the pack's character
 tiles (run this file's --contact-sheet to regenerate the labelled picker). Each
-16x16 tile is scaled x2 to 32x32. The player team uses the art as-is; the enemy
-team gets a red multiply tint so the two sides read at a glance (matching the
-old blue/crimson convention).
+16x16 tile is scaled x2 to 32x32, composited over a soft grounding shadow. The
+player team uses the art as-is; the enemy team is blended toward crimson (a
+detail-preserving lerp, not a flat multiply) so the two sides read at a glance.
 
 Usage:
     python3 tools/import_pixel_units.py
     godot --headless --import        # re-import the regenerated PNGs
 """
 import os
-from PIL import Image
+from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(__file__)
 TILEMAP = os.path.join(HERE, "..", "assets", "incoming", "2d",
@@ -46,8 +46,10 @@ CLASS_TILE = {
     "juggernaut": 110,   # red heavy-armoured brute — tank
 }
 
-# Enemy tint: multiply the sprite toward crimson so the two teams are distinct.
-ENEMY_TINT = (255, 110, 110)
+# Enemy recolour: blend toward crimson while preserving the sprite's detail
+# (a luminance-keeping lerp reads far cleaner than a flat multiply).
+ENEMY_CRIMSON = (196, 44, 44)
+ENEMY_BLEND = 0.36
 
 
 def _tile(tilemap: Image.Image, idx: int) -> Image.Image:
@@ -55,22 +57,36 @@ def _tile(tilemap: Image.Image, idx: int) -> Image.Image:
     return tilemap.crop((c * TILE, r * TILE, c * TILE + TILE, r * TILE + TILE))
 
 
-def _tinted(tile: Image.Image, rgb) -> Image.Image:
+def _blend_enemy(tile: Image.Image) -> Image.Image:
     out = tile.copy()
     px = out.load()
-    tr, tg, tb = rgb
+    cr, cg, cb = ENEMY_CRIMSON
+    f = ENEMY_BLEND
     for y in range(out.height):
         for x in range(out.width):
             r, g, b, a = px[x, y]
             if a == 0:
                 continue
-            px[x, y] = (r * tr // 255, g * tg // 255, b * tb // 255, a)
+            px[x, y] = (
+                int(r * (1 - f) + cr * f),
+                int(g * (1 - f) + cg * f),
+                int(b * (1 - f) + cb * f),
+                a,
+            )
     return out
 
 
 def _emit(tile: Image.Image, path: str) -> None:
     big = tile.resize((TILE * SCALE, TILE * SCALE), Image.NEAREST)
-    big.save(path)
+    size = TILE * SCALE
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # Soft grounding shadow under the feet so the unit sits on the tile.
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.ellipse([size * 0.22, size * 0.80, size * 0.78, size * 0.96], fill=(0, 0, 0, 90))
+    canvas.alpha_composite(shadow)
+    canvas.alpha_composite(big)
+    canvas.save(path)
 
 
 def contact_sheet(tilemap: Image.Image, path: str = "/tmp/td_charsheet.png") -> None:
@@ -101,7 +117,7 @@ def main() -> None:
     for cls, idx in CLASS_TILE.items():
         tile = _tile(tilemap, idx)
         _emit(tile, os.path.join(OUT, f"{cls}_player.png"))
-        _emit(_tinted(tile, ENEMY_TINT), os.path.join(OUT, f"{cls}_enemy.png"))
+        _emit(_blend_enemy(tile), os.path.join(OUT, f"{cls}_enemy.png"))
         print(f"  {cls:<11} <- tile {idx}")
     print(f"wrote {len(CLASS_TILE) * 2} sprites to assets/units/")
 
