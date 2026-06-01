@@ -1317,6 +1317,15 @@ func _do_attack(attacker: Unit, defender: Unit) -> void:
 	_lunge(attacker, defender)
 	_spawn_attack_vfx(attacker, defender)
 	defender.take_damage(dmg)
+	# Triggered relics (player team only).
+	if attacker.team == 0:
+		if GameManager.has_relic("vampiric") and attacker.get_attack_range() <= 1 and attacker.is_alive():
+			var healed: int = maxi(1, int(round(dmg * 0.30)))
+			attacker.hp = mini(attacker.max_hp, attacker.hp + healed)
+			attacker._refresh_hp_bar()
+			attacker.float_text("+%d" % healed, Color(0.45, 0.95, 0.55), 13, true)
+		if GameManager.has_relic("rally") and not defender.is_alive():
+			attacker.ap = mini(attacker.max_ap, attacker.ap + 1)
 	# Stat tracking — bucket by attacker identity so we can pick an MVP later
 	var aid: int = attacker.get_instance_id()
 	if attacker.team == 0:

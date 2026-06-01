@@ -258,6 +258,8 @@ const RELICS: Dictionary = {
 	"war_banner":{"name": "War Banner",    "desc": "+1 action point to all your units"},
 	"keen_edge": {"name": "Keen Edge",     "desc": "+12% crit chance to all your units"},
 	"aegis":     {"name": "Aegis",         "desc": "Your units take 15% less damage"},
+	"vampiric":  {"name": "Vampiric Edge",  "desc": "Melee hits heal the attacker for 30% of damage dealt"},
+	"rally":     {"name": "Rally Banner",   "desc": "Killing an enemy refunds 1 action point"},
 	# Mythic — only ever granted by the (extremely rare) god encounter.
 	"divine_favor": {"name": "Divine Favour", "desc": "+25 dmg, +60 HP, +2 move, +1 range, +1 AP, +25% crit, −40% damage taken"},
 }
