@@ -239,6 +239,9 @@ var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-mem
 var last_run_tier_reached: int = 0
 var last_run_won: bool = false
 
+# Settings (persisted in meta).
+var master_volume: float = 0.8
+
 const META_PATH: String = "user://meta.cfg"
 
 # Shop prices
@@ -294,7 +297,18 @@ var pending_upgrade_reward: bool = false
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	_load_meta()
+	apply_audio()
 	reset()
+
+# --- Settings -------------------------------------------------------------
+func set_master_volume(v: float) -> void:
+	master_volume = clampf(v, 0.0, 1.0)
+	apply_audio()
+	_save_meta()
+
+func apply_audio() -> void:
+	var db: float = -60.0 if master_volume <= 0.001 else linear_to_db(master_volume)
+	AudioServer.set_bus_volume_db(0, db)
 
 func reset() -> void:
 	# Capture the just-ended run's stats so the title screen can show a recap.
@@ -345,6 +359,7 @@ func _load_meta() -> void:
 	best_tier_reached = int(cfg.get_value("meta", "best_tier_reached", 0))
 	total_runs        = int(cfg.get_value("meta", "total_runs",        0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
+	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
 
 func _save_meta() -> void:
 	var cfg := ConfigFile.new()
@@ -352,6 +367,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "best_tier_reached", best_tier_reached)
 	cfg.set_value("meta", "total_runs",        total_runs)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
+	cfg.set_value("meta", "master_volume",     master_volume)
 	cfg.save(META_PATH)
 
 # Mark the first-battle help as seen (persists so it won't auto-open again).

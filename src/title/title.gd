@@ -51,8 +51,61 @@ func _build_ui() -> void:
 	_add_centered_label("Left-click act · Right-click / Esc cancel · Tab cycle · Enter end turn · Q ability · H help",
 		13, Color(0.40, 0.40, 0.45), 692.0)
 
+	_add_menu_button("Settings", Vector2(1120.0, 24.0), Vector2(140.0, 40.0),
+		Color(0.26, 0.28, 0.38), _show_settings, 16)
+
 	if not has_save:
 		_build_meta_panel()
+
+var _settings_overlay: Control = null
+
+func _show_settings() -> void:
+	if _settings_overlay != null:
+		return
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.z_index = 100
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.65)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	var panel := ColorRect.new()
+	panel.color = Color(0.10, 0.12, 0.18, 0.99)
+	panel.position = Vector2(440.0, 250.0)
+	panel.size = Vector2(400.0, 220.0)
+	root.add_child(panel)
+	var title := Label.new()
+	title.text = "Settings"
+	title.add_theme_font_size_override("font_size", 28)
+	title.modulate = Color(0.95, 0.90, 0.60)
+	title.position = Vector2(466.0, 268.0)
+	root.add_child(title)
+	var vol_lbl := Label.new()
+	vol_lbl.add_theme_font_size_override("font_size", 16)
+	vol_lbl.modulate = Color(0.82, 0.86, 0.92)
+	vol_lbl.position = Vector2(466.0, 322.0)
+	vol_lbl.text = "Master Volume: %d%%" % int(round(GameManager.master_volume * 100.0))
+	root.add_child(vol_lbl)
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.05
+	slider.value = GameManager.master_volume
+	slider.position = Vector2(466.0, 352.0)
+	slider.size = Vector2(348.0, 24.0)
+	slider.value_changed.connect(func(v: float) -> void:
+		GameManager.set_master_volume(v)
+		vol_lbl.text = "Master Volume: %d%%" % int(round(v * 100.0)))
+	root.add_child(slider)
+	root.add_child(UITheme.button("Close", Vector2(530.0, 410.0), Vector2(220.0, 44.0),
+		Color(0.30, 0.32, 0.44), _close_settings))
+	add_child(root)
+	_settings_overlay = root
+
+func _close_settings() -> void:
+	if _settings_overlay != null:
+		_settings_overlay.queue_free()
+		_settings_overlay = null
 
 # Centred full-width label helper.
 func _add_centered_label(text: String, font_size: int, color: Color, y: float) -> void:
