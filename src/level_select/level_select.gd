@@ -63,11 +63,24 @@ var _popup: Control = null
 var _settings_overlay: Control = null
 var _inventory_popup: Control = null
 var _shop_relic_offer: String = ""
+var _pending_recruit_toast: Dictionary = {}
 
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	Music.play("map")
+	# Consume a pending duel result before the save block so a recruit won in the
+	# auto-battler is persisted with this map visit. The toast waits until the UI
+	# is built (below, after _refresh).
+	if GameManager.duel_outcome != -1:
+		var dwin := GameManager.duel_outcome == 1
+		var dtype := GameManager.duel_recruit_type
+		if dwin and dtype != "" and GameManager.UNIT_TYPES.has(dtype):
+			GameManager.add_unit(dtype)
+		GameManager.duel_outcome = -1
+		GameManager.pending_duel = false
+		GameManager.duel_recruit_type = ""
+		_pending_recruit_toast = {"win": dwin, "type": dtype}
 	_build_node_buttons()
 	_build_hud()
 	# Checkpoint the run between battles so it can be resumed. Once the run is
@@ -79,6 +92,17 @@ func _ready() -> void:
 	# Small hint that Esc opens the menu
 	add_child(UITheme.label("Esc — Menu", 13, UITheme.TEXT_MUTED, Vector2(1150.0, 26.0), Vector2(110.0, 20.0)))
 	_refresh()
+	# Surface the duel result (recruited / declined) now that the HUD exists.
+	if not _pending_recruit_toast.is_empty():
+		var rt := _pending_recruit_toast
+		_pending_recruit_toast = {}
+		var rtype: String = String(rt.get("type", ""))
+		if rtype != "" and GameManager.UNIT_TYPES.has(rtype):
+			var rname: String = GameManager.UNIT_TYPES[rtype]["name"]
+			if bool(rt.get("win", false)):
+				_show_toast("%s joined your army!" % rname, GameManager.UNIT_TYPES[rtype]["color"])
+			else:
+				_show_toast("%s bested you and walked away." % rname, Color(0.7, 0.6, 0.5))
 	# Offer the post-battle upgrade pick if a non-hex mode flagged a win reward.
 	if GameManager.pending_upgrade_reward and not GameManager.player_roster.is_empty() \
 			and GameManager.current_tier < GameManager.MAP_TIERS:
@@ -600,7 +624,7 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			else:
 				_show_prebattle_popup(tier, elite)
 		"gain_unit":
-			_show_unit_select_popup()
+			_show_recruit_popup(tier, index)
 		"shop":
 			_show_shop_popup()
 		"heal":
@@ -690,57 +714,191 @@ func _on_prebattle_buff(tier: int, elite: bool, buff_id: String, cost: int) -> v
 	_launch_autobattle(tier, elite)
 
 # ---------------------------------------------------------------------------
-# Unit selection popup
+# Recruitment popup (Phase 2) — "meet & sway". A gain_unit node offers 2-3
+# candidates, each with its own sway type (dialogue / persuasion / duel). The
+# player approaches one to win them over; that commits the node either way.
 # ---------------------------------------------------------------------------
-func _show_unit_select_popup() -> void:
-	_popup = Panel.new()
-	_popup.position = Vector2(130.0, 180.0)
-	_popup.size = Vector2(1020.0, 360.0)
+const _SWAY_BADGE: Dictionary = {
+	"dialogue":   {"label": "Talk",     "color": Color(0.36, 0.66, 0.92)},
+	"persuasion": {"label": "Persuade", "color": Color(0.85, 0.70, 0.24)},
+	"duel":       {"label": "Duel",     "color": Color(0.82, 0.32, 0.32)},
+}
+# Flavour responses for the dialogue resolver. The "correct" index from the
+# candidate selects which of these actually wins them over.
+const _DIALOGUE_RESPONSES: Array[String] = [
+	"Appeal to their honor",
+	"Offer them coin",
+	"Share a drink and a story",
+]
 
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.09, 0.09, 0.16, 0.97)
-	for side in ["left", "right", "top", "bottom"]:
-		style.set("border_width_" + side, 2)
-	style.border_color = Color(0.50, 0.50, 0.75)
-	for corner in ["corner_radius_top_left", "corner_radius_top_right",
-			"corner_radius_bottom_left", "corner_radius_bottom_right"]:
-		style.set(corner, 8)
-	_popup.add_theme_stylebox_override("panel", style)
-	add_child(_popup)
+func _show_recruit_popup(tier: int, index: int) -> void:
+	if _popup != null:
+		return
+	var cands := GameManager.recruit_candidates(tier, index)
+	_popup = UITheme.panel(self, Vector2(130.0, 150.0), Vector2(1020.0, 420.0),
+		Color(0.09, 0.09, 0.16, 0.98), Color(0.50, 0.50, 0.75))
+	_popup.add_child(UITheme.label("Recruit — Win Them Over", 26, Color(0.95, 0.90, 1.0),
+		Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("Approach a recruit to win them over. Choosing one commits this node.",
+		14, UITheme.TEXT_MUTED, Vector2(28.0, 52.0), Vector2(964.0, 22.0)))
 
-	var title := Label.new()
-	title.text = "Choose a Unit to Add to Your Roster"
-	title.add_theme_font_size_override("font_size", 22)
-	title.modulate = Color(0.95, 0.90, 1.0)
-	title.position = Vector2(330.0, 16.0)
-	_popup.add_child(title)
+	var n: int = cands.size()
+	var card_w: float = (964.0 - float(n - 1) * 20.0) / float(n)
+	for i in range(n):
+		var cand: Dictionary = cands[i]
+		var cx: float = 28.0 + float(i) * (card_w + 20.0)
+		_build_recruit_card(tier, index, cand, Vector2(cx, 88.0), Vector2(card_w, 280.0))
 
-	# 5-column grid so the roster of recruitable types wraps cleanly.
-	var keys := GameManager.recruitable_types()
-	var cols := 5
-	for i in range(keys.size()):
-		var utype: String = keys[i]
-		var udata: Dictionary = GameManager.UNIT_TYPES[utype]
-		var col := i % cols
-		var row := i / cols
-		var btn := Button.new()
-		btn.position = Vector2(20.0 + col * 196.0, 60.0 + row * 145.0)
-		btn.size = Vector2(188.0, 132.0)
-		btn.text = "%s\nHP %d  Mv %d\nRng %d  Dmg %d\n%s" % [
-			udata["name"], udata["max_hp"], udata["move_range"],
-			udata["attack_range"], udata["damage"], udata["ability"]["name"]
-		]
-		btn.add_theme_font_size_override("font_size", 12)
-		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		var ab: Dictionary = udata.get("ability", {})
-		if not ab.is_empty():
-			btn.tooltip_text = "%s: %s" % [String(ab.get("name", "")), String(ab.get("desc", ""))]
-		var bs := _circle_style(udata["color"].darkened(0.15), 8)
-		btn.add_theme_stylebox_override("normal",  bs)
-		btn.add_theme_stylebox_override("hover",   _circle_style(udata["color"].lightened(0.15), 8))
-		btn.add_theme_stylebox_override("pressed", _circle_style(udata["color"].darkened(0.30), 8))
-		btn.pressed.connect(_on_unit_chosen.bind(utype))
+func _build_recruit_card(tier: int, index: int, cand: Dictionary, pos: Vector2, size: Vector2) -> void:
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var sway: String = String(cand["sway"])
+	var badge: Dictionary = _SWAY_BADGE.get(sway, {"label": sway, "color": Color.GRAY})
+
+	# Card backing panel
+	var card := UITheme.panel(_popup, pos, size, Color(0.12, 0.12, 0.20, 0.96),
+		udata["color"].lightened(0.1))
+	card.add_child(UITheme.label(String(udata["name"]), 20, Color(0.95, 0.93, 0.80),
+		Vector2(14.0, 10.0), Vector2(size.x - 28.0, 26.0)))
+	# Sway badge chip
+	UITheme.chip(card, String(badge["label"]), Vector2(14.0, 42.0), badge["color"],
+		size.x - 28.0)
+
+	var ability: Dictionary = udata.get("ability", {})
+	var stat_txt := "HP %d   Dmg %d   Rng %d\nMove %d\nAbility: %s" % [
+		int(udata["max_hp"]), int(udata["damage"]), int(udata["attack_range"]),
+		int(udata["move_range"]), String(ability.get("name", "—"))]
+	card.add_child(UITheme.label(stat_txt, 13, UITheme.TEXT,
+		Vector2(14.0, 74.0), Vector2(size.x - 28.0, 76.0)))
+
+	# Ask preview + the discounted cost for persuasion.
+	var ask: String
+	match sway:
+		"dialogue":
+			ask = "Win them over with words."
+		"persuasion":
+			var cost := GameManager.recruit_persuasion_cost(utype, tier)
+			if GameManager.hero_sway_aptitude("persuasion") > 0:
+				cost = int(round(cost * 0.6))
+			ask = "Hire for %d gold." % cost
+		"duel":
+			ask = "Fight a 1v1 duel."
+		_:
+			ask = ""
+	card.add_child(UITheme.label(ask, 13, Color(0.82, 0.86, 0.92),
+		Vector2(14.0, 152.0), Vector2(size.x - 28.0, 40.0)))
+
+	# Hero-excels marker when the hero is good at this sway type.
+	if GameManager.hero_sway_aptitude(sway) > 0:
+		card.add_child(UITheme.label("★ your hero excels here", 12, Color(0.98, 0.86, 0.40),
+			Vector2(14.0, 196.0), Vector2(size.x - 28.0, 18.0)))
+
+	var approach := UITheme.button("Approach", Vector2(14.0, size.y - 52.0),
+		Vector2(size.x - 28.0, 40.0), udata["color"].darkened(0.1),
+		_approach_candidate.bind(tier, index, cand), 16)
+	card.add_child(approach)
+
+func _approach_candidate(tier: int, index: int, cand: Dictionary) -> void:
+	match String(cand["sway"]):
+		"dialogue":
+			_show_dialogue_resolver(cand)
+		"persuasion":
+			_show_persuasion_resolver(tier, cand)
+		"duel":
+			GameManager.pending_duel = true
+			GameManager.duel_recruit_type = String(cand["type"])
+			GameManager.duel_outcome = -1
+			if _popup != null:
+				_popup.queue_free()
+				_popup = null
+			get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+
+# Swap the popup body for the dialogue sub-screen (keeps the same _popup panel).
+func _show_dialogue_resolver(cand: Dictionary) -> void:
+	if _popup == null:
+		return
+	for c in _popup.get_children():
+		c.queue_free()
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var correct: int = int(cand["correct"])
+	var hint: bool = GameManager.hero_sway_aptitude("dialogue") > 0
+
+	_popup.add_child(UITheme.label("Win Over %s" % String(udata["name"]), 26,
+		Color(0.95, 0.90, 1.0), Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("They size you up. What's your pitch?",
+		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(964.0, 24.0)))
+
+	for i in range(_DIALOGUE_RESPONSES.size()):
+		var is_hint: bool = hint and i == correct
+		var txt: String = _DIALOGUE_RESPONSES[i]
+		if is_hint:
+			txt = "★ " + txt
+		var col: Color = Color(0.30, 0.55, 0.40) if is_hint else Color(0.24, 0.28, 0.40)
+		var btn := UITheme.button(txt, Vector2(28.0, 100.0 + float(i) * 86.0),
+			Vector2(964.0, 72.0), col, _on_dialogue_response.bind(cand, i), 18)
 		_popup.add_child(btn)
+
+func _on_dialogue_response(cand: Dictionary, picked: int) -> void:
+	if picked == int(cand["correct"]):
+		_recruit_succeed(String(cand["type"]))
+	else:
+		_recruit_decline(String(cand["type"]))
+
+# Swap the popup body for the persuasion sub-screen.
+func _show_persuasion_resolver(tier: int, cand: Dictionary) -> void:
+	if _popup == null:
+		return
+	for c in _popup.get_children():
+		c.queue_free()
+	var utype: String = String(cand["type"])
+	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var cost := GameManager.recruit_persuasion_cost(utype, tier)
+	if GameManager.hero_sway_aptitude("persuasion") > 0:
+		cost = int(round(cost * 0.6))
+	var affordable: bool = GameManager.gold >= cost
+
+	_popup.add_child(UITheme.label("Persuade %s" % String(udata["name"]), 26,
+		UITheme.GOLD, Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("Costs %d gold (you have %d)." % [cost, GameManager.gold],
+		16, UITheme.TEXT, Vector2(28.0, 58.0), Vector2(964.0, 24.0)))
+	if not affordable:
+		_popup.add_child(UITheme.label("Not enough gold to make the offer.", 13, UITheme.RED,
+			Vector2(28.0, 88.0), Vector2(964.0, 20.0)))
+
+	var pay := UITheme.button("Pay %d" % cost, Vector2(28.0, 130.0), Vector2(964.0, 56.0),
+		UITheme.GREEN.darkened(0.1), _on_persuasion_pay.bind(cand, cost), 18)
+	pay.disabled = not affordable
+	if not affordable:
+		pay.add_theme_stylebox_override("disabled", UITheme.button_style(Color(0.20, 0.22, 0.30)))
+	_popup.add_child(pay)
+
+	_popup.add_child(UITheme.button("Walk away", Vector2(28.0, 200.0), Vector2(964.0, 56.0),
+		Color(0.30, 0.30, 0.34), _recruit_decline.bind(String(cand["type"])), 18))
+
+func _on_persuasion_pay(cand: Dictionary, cost: int) -> void:
+	if GameManager.spend_gold(cost):
+		_recruit_succeed(String(cand["type"]))
+	else:
+		_recruit_decline(String(cand["type"]))
+
+func _recruit_succeed(type: String) -> void:
+	GameManager.add_unit(type)
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	Sfx.play("heal")
+	_show_toast("%s joined your army!" % GameManager.UNIT_TYPES[type]["name"],
+		GameManager.UNIT_TYPES[type]["color"])
+	_refresh()
+
+func _recruit_decline(type: String) -> void:
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	_show_toast("%s decided not to join." % GameManager.UNIT_TYPES[type]["name"],
+		Color(0.7, 0.6, 0.5))
+	_refresh()
 
 # ---------------------------------------------------------------------------
 # Random event popup
@@ -792,14 +950,6 @@ func _on_event_choice(choice: Dictionary) -> void:
 		_popup.queue_free()
 		_popup = null
 	_show_toast(msg, Color(0.55, 0.90, 0.90))
-
-func _on_unit_chosen(unit_type: String) -> void:
-	GameManager.add_unit(unit_type)
-	_popup.queue_free()
-	_popup = null
-	var name_str: String = GameManager.UNIT_TYPES[unit_type]["name"]
-	var color: Color = GameManager.UNIT_TYPES[unit_type]["color"]
-	_show_toast("Added %s to your roster!" % name_str, color)
 
 # ---------------------------------------------------------------------------
 # Shop popup — spend gold; stays open for multiple purchases until "Leave"

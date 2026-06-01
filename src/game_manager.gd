@@ -250,6 +250,48 @@ func spend_valor(n: int) -> bool:
 	valor -= n
 	return true
 
+# Hero's aptitude for a sway type ("dialogue"/"persuasion"/"duel"); 0 if no hero.
+func hero_sway_aptitude(sway_type: String) -> int:
+	var apt: Dictionary = hero_data().get("sway_aptitudes", {})
+	return int(apt.get(sway_type, 0))
+
+# ---------------------------------------------------------------------------
+# Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
+# sway type the player must beat to recruit. Deterministic per node so the offer
+# is stable across popup rebuilds and run reloads.
+# ---------------------------------------------------------------------------
+const SWAY_TYPES: Array[String] = ["dialogue", "persuasion", "duel"]
+
+func recruit_candidates(tier: int, index: int) -> Array[Dictionary]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = tier * 100 + index + 1
+	var pool: Array[String] = recruitable_types()
+	# Shuffle the pool deterministically, then take the first N distinct types.
+	for i in range(pool.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: String = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+	var count: int = clampi(2 + rng.randi_range(0, 1), 2, min(3, pool.size()))
+	var out: Array[Dictionary] = []
+	for k in range(count):
+		var sway: String = SWAY_TYPES[rng.randi_range(0, SWAY_TYPES.size() - 1)]
+		out.append({
+			"type": pool[k],
+			"sway": sway,
+			"correct": rng.randi_range(0, 2),   # used by the dialogue resolver
+		})
+	return out
+
+# Gold cost to persuade a recruit. Below SHOP_UNIT_COST so swaying is the cheaper
+# (but riskier / hero-gated) path. Stronger units and deeper tiers cost more.
+func recruit_persuasion_cost(type: String, tier: int) -> int:
+	if not UNIT_TYPES.has(type):
+		return 40
+	var u: Dictionary = UNIT_TYPES[type]
+	var power: int = int(u["max_hp"]) + int(u["damage"]) * 2
+	return int(round(power * 0.18)) + tier * 4
+
 # ---------------------------------------------------------------------------
 # Persistent unit upgrades earned after battle wins
 # ---------------------------------------------------------------------------
@@ -311,6 +353,10 @@ var selected_hero: String = ""           # "" = no hero (standalone Quick Auto B
 var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
 var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
 var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
+# --- Recruitment duel handshake (Phase 2; resolves within one map visit) ----
+var pending_duel: bool = false            # level_select -> autobattler: run a 1v1 duel
+var duel_recruit_type: String = ""        # the unit being dueled for
+var duel_outcome: int = -1                # autobattler -> level_select: -1 none, 0 loss, 1 win
 var current_tier: int = 0
 var last_chosen_index: int = -1
 var map_data: Array = []
@@ -445,6 +491,9 @@ func reset() -> void:
 	valor = 0
 	hero_battle_mode = "fight"
 	pending_hero_buff = ""
+	pending_duel = false
+	duel_recruit_type = ""
+	duel_outcome = -1
 	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()

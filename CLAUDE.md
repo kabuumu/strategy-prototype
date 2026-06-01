@@ -31,7 +31,11 @@ Scene flow: `title.tscn → charselect.tscn → level_select.tscn ⇄ autobattle
 
 ### Hero (`charselect` + GameManager.HEROES)
 
-A run has one hero (chosen on `charselect`). `GameManager.HEROES` holds the stat blocks (`fight_archetype`/`fight_level`, `buff {id,name,desc,cost}`, `sway_aptitudes`, `start_bonus`); helpers: `select_hero`, `has_hero`, `hero_data`, `add_valor`/`spend_valor`. Per battle the player picks `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card built from its archetype/level — `_start_campaign_fight` appends it with a `null` roster entry so it's never persisted/permakilled) or **buff** (hero sits out; spend **Valor** to apply `pending_hero_buff` across the team via `_apply_hero_buff` — `aegis`/`march`/`warchest`). Valor is buff-only, earned +2/win (+1 elite). `sway_aptitudes` is stored now and consumed by the planned Phase-2 recruitment rework (see `docs/superpowers/specs/2026-06-01-hero-foundation-design.md`).
+A run has one hero (chosen on `charselect`). `GameManager.HEROES` holds the stat blocks (`fight_archetype`/`fight_level`, `buff {id,name,desc,cost}`, `sway_aptitudes`, `start_bonus`); helpers: `select_hero`, `has_hero`, `hero_data`, `add_valor`/`spend_valor`. Per battle the player picks `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card built from its archetype/level — `_start_campaign_fight` appends it with a `null` roster entry so it's never persisted/permakilled) or **buff** (hero sits out; spend **Valor** to apply `pending_hero_buff` across the team via `_apply_hero_buff` — `aegis`/`march`/`warchest`). Valor is buff-only, earned +2/win (+1 elite).
+
+### Recruiting / sway (`gain_unit` nodes)
+
+A `gain_unit` node offers 2–3 candidates (`GameManager.recruit_candidates(tier,index)`, deterministic — each `{type, sway, correct}`). Approaching one runs its `sway` resolver (`level_select`): **dialogue** (pick the right of 3 responses; hero `dialogue` aptitude hints it), **persuasion** (pay `recruit_persuasion_cost(type,tier)` gold, 40% off with `persuasion` aptitude), or **duel** (a 1v1 in the auto-battler — `pending_duel`/`duel_recruit_type`, `_start_duel_fight`/`_conclude_duel` set `duel_outcome`; `level_select._ready` recruits on a win). `hero_sway_aptitude(type)` gates the discounts/hints. The hero is buffed +25% in a duel when its `duel` aptitude is set. See `docs/superpowers/specs/2026-06-01-sway-recruiting-design.md`.
 
 ### GameManager (autoload singleton) — `src/game_manager.gd`
 

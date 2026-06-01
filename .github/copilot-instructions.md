@@ -20,7 +20,9 @@ title.tscn  →  charselect.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 
 `title` New Campaign → `charselect` (pick a hero; does `reset()` + `select_hero`) → `level_select` (overworld map). A battle node opens a pre-battle popup (hero **Fight** or **Buff**), sets `pending_autobattle = true`, and switches to `autobattler`, which auto-resolves one fight and returns to `level_select`. The auto-battler is also a standalone Quick Auto Battle from the title (no campaign/hero state).
 
-**Hero:** one per run (`GameManager.HEROES`, chosen on `charselect`). Each battle the player toggles `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card, never persisted) or **buff** (hero sits out; spend **Valor**, a buff-only resource earned on wins, to apply a team buff via `_apply_hero_buff`). `sway_aptitudes` is stored for the planned Phase-2 recruitment rework.
+**Hero:** one per run (`GameManager.HEROES`, chosen on `charselect`). Each battle the player toggles `hero_battle_mode`: **fight** (hero spawns as an extra auto-battler card, never persisted) or **buff** (hero sits out; spend **Valor**, a buff-only resource earned on wins, to apply a team buff via `_apply_hero_buff`).
+
+**Recruiting:** `gain_unit` nodes offer 2–3 candidates (`GameManager.recruit_candidates`), each with a `sway` type resolved in `level_select`: **dialogue** (pick the right response; hero `dialogue` aptitude hints it), **persuasion** (pay gold, discounted by `persuasion` aptitude), or **duel** (1v1 in the autobattler via `pending_duel`/`_start_duel_fight`/`duel_outcome`; recruited on a win). `hero_sway_aptitude(type)` gates the help.
 
 ### GameManager (autoload singleton)
 
