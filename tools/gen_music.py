@@ -6,8 +6,11 @@ is a short seamless loop built from real diatonic harmony so nothing drifts
 off-key:
 
   * a square-wave melody locked to the current chord's tones (+ passing tones),
+    cycling through several distinct phrases so the tune actually develops,
   * an arpeggiated square "pad" spelling out each chord,
-  * a soft triangle bass on the chord root.
+  * a soft triangle bass on the chord root,
+  * a noise channel for kick / snare / hi-hat (the classic NES 4th channel),
+    driven by a per-track 16-step drum grid.
 
 Everything is voiced from the key's scale via diatonic chord degrees, so the
 melody never clashes with the bass (the old generator shifted the whole melody
@@ -22,6 +25,7 @@ Run:  python3 tools/gen_music.py   then  godot --headless --import
 """
 import math
 import os
+import random
 import struct
 import wave
 
@@ -95,17 +99,46 @@ def _lowpass(samples: list, alpha: float = 0.30) -> list:
     return out
 
 
-def _build(progression, scale, root_semi, bpm, melody_pattern,
-           mel_oct=12, bass_oct=-24, arp_oct=0, arp_div=2,
+def _noise(dur: float, vol: float, decay: float) -> list:
+    """Decaying white-noise burst — the raw material for snare and hi-hat."""
+    n = int(RATE * dur)
+    return [(random.random() * 2.0 - 1.0) * vol * math.exp(-decay * (i / RATE))
+            for i in range(n)]
+
+
+def _kick(vol: float = 0.55, dur: float = 0.13) -> list:
+    """Sine with a fast downward pitch sweep — a punchy chip kick."""
+    n = int(RATE * dur)
+    out = [0.0] * n
+    phase = 0.0
+    for i in range(n):
+        t = i / RATE
+        f = 45.0 + 115.0 * math.exp(-18.0 * t)   # 160 Hz -> 45 Hz thump
+        phase += f / RATE
+        out[i] = math.sin(2.0 * math.pi * phase) * vol * math.exp(-20.0 * t)
+    return out
+
+
+def _drum_kit():
+    return {"K": _kick(), "S": _noise(0.13, 0.34, 32.0), "H": _noise(0.035, 0.16, 90.0)}
+
+
+def _build(progression, scale, root_semi, bpm, melody_phrases, drums=None,
+           drum_gain=1.0, mel_oct=12, bass_oct=-24, arp_oct=0, arp_div=2,
            duty=0.5, mel_vol=0.26, arp_vol=0.13):
     """progression: list of chord root *scale degrees* (0=I, 3=IV, 4=V, 5=vi).
-    melody_pattern: list of (chord-tone slot or None, beats) summing to 4 beats."""
+    melody_phrases: list of phrases; bar i plays phrase i % len, so the melody
+        develops instead of repeating. Each phrase is a list of (chord-tone slot
+        or None, beats) summing to 4 beats.
+    drums: optional {"K"/"S"/"H": 16-char grid} ('x' = hit) over the bar."""
     beat = 60.0 / bpm
+    kit = _drum_kit()
     samples = []
-    for root_deg in progression:
+    for bar_idx, root_deg in enumerate(progression):
+        phrase = melody_phrases[bar_idx % len(melody_phrases)]
         # Melody — chord-locked lead with a touch of vibrato.
         mel = []
-        for slot, beats in melody_pattern:
+        for slot, beats in phrase:
             dur = beat * beats
             if slot is None:
                 mel += _note(0.0, dur, 0.0, duty)
@@ -125,18 +158,32 @@ def _build(progression, scale, root_semi, bpm, melody_pattern,
         for s in range(steps):
             semi = root_semi + arp_oct + _chord_tone(scale, root_deg, slots[s % len(slots)])
             arp += _note(_freq(semi), sdur, arp_vol, 0.35, "square")
-        # Mix the three voices (pad to equal length).
+        # Mix the pitched voices into a fixed-length bar buffer.
         n = max(len(mel), len(bass), len(arp))
-        mel += [0.0] * (n - len(mel))
-        bass += [0.0] * (n - len(bass))
-        arp += [0.0] * (n - len(arp))
-        for i in range(n):
-            samples.append(mel[i] + bass[i] + arp[i])
+        bar = [0.0] * n
+        for buf in (mel, bass, arp):
+            for i, v in enumerate(buf):
+                bar[i] += v
+        # Drums — drop each one-shot at its 16th-note slot.
+        if drums:
+            step = int((beat / 4.0) * RATE)
+            for lane, grid in drums.items():
+                hit = kit[lane]
+                for s, ch in enumerate(grid):
+                    if ch != "." and ch != " ":
+                        off = s * step
+                        for j, hv in enumerate(hit):
+                            if off + j < n:
+                                bar[off + j] += hv * drum_gain
+        samples += bar
     samples = _lowpass(samples)
     # Remove DC offset (asymmetric duty cycles bias the mean) so it doesn't eat
-    # headroom, then normalise to avoid clipping.
+    # headroom.
     mean = sum(samples) / len(samples)
     samples = [s - mean for s in samples]
+    # Soft-clip (tanh) glues the mix and tames drum transients so peak-normalising
+    # doesn't duck the sustained music — keeps it loud and punchy without clipping.
+    samples = [math.tanh(1.6 * s) for s in samples]
     peak = max(0.001, max(abs(s) for s in samples))
     g = 0.80 / peak
     return [s * g for s in samples]
@@ -158,23 +205,51 @@ def _write(name: str, samples: list) -> None:
 
 
 def main() -> None:
+    # Deterministic noise so regenerated builds are byte-identical (CI-friendly).
+    random.seed(0xC0FFEE)
+
     # Title — stately major, hopeful. I V vi IV ... resolving V -> I at the loop.
+    # Four phrases (A B C D) develop the theme; light, soft percussion.
     _write("title", _build(
         progression=[0, 4, 5, 3, 0, 3, 5, 4],
         scale=MAJOR, root_semi=-9, bpm=92, arp_div=2, duty=0.5,
-        melody_pattern=[(0, 1), (2, 1), (1, 1), (3, 1)]))
-    # Map — calm minor wander, sparse melody, prominent pad.
+        melody_phrases=[
+            [(0, 1), (2, 1), (1, 1), (3, 1)],
+            [(2, 1), (1, 1), (3, 2)],
+            [(3, 0.5), (2, 0.5), (1, 1), (0, 1), (2, 1)],
+            [(1, 1), (3, 1), (2, 1), (5, 1)],
+        ],
+        drums={"K": "x.......x.......",
+               "H": "..x...x...x...x.",
+               "S": "........x......."},
+        drum_gain=0.55))
+    # Map — calm minor wander, sparse melody, prominent pad, whisper of rhythm.
     _write("map", _build(
         progression=[0, 5, 3, 4, 0, 5, 6, 4],
         scale=MINOR, root_semi=-9, bpm=80, arp_div=1, duty=0.375,
-        melody_pattern=[(0, 2), (2, 1), (1, 1)],
-        mel_vol=0.22, arp_vol=0.15))
-    # Battle — driving minor, busy arp + lead with a passing tone.
+        melody_phrases=[
+            [(0, 2), (2, 1), (1, 1)],
+            [(2, 2), (3, 1), (1, 1)],
+            [(0, 1), (1, 1), (2, 2)],
+            [(3, 2), (2, 1), (0, 1)],
+        ],
+        drums={"K": "x...............",
+               "H": "....x.......x..."},
+        drum_gain=0.4, mel_vol=0.22, arp_vol=0.15))
+    # Battle — driving minor, busy syncopated lead, full drum kit.
     _write("battle", _build(
         progression=[0, 0, 5, 3, 4, 4, 3, 4],
         scale=MINOR, root_semi=-12, bpm=140, arp_div=2, duty=0.5,
-        melody_pattern=[(0, 0.5), (1, 0.5), (2, 1), (3, 0.5), (4, 0.5), (2, 1)],
-        mel_vol=0.27))
+        melody_phrases=[
+            [(0, 0.5), (1, 0.5), (2, 1), (3, 0.5), (4, 0.5), (2, 1)],
+            [(3, 0.5), (2, 0.5), (1, 0.5), (2, 0.5), (0, 1), (4, 1)],
+            [(2, 0.5), (3, 0.5), (5, 1), (3, 0.5), (2, 0.5), (1, 1)],
+            [(0, 0.5), (2, 0.5), (4, 0.5), (2, 0.5), (3, 1), (0, 1)],
+        ],
+        drums={"K": "x..x..x.x..x....",
+               "S": "....x.......x...",
+               "H": "x.x.x.x.x.x.x.x."},
+        drum_gain=1.0, mel_vol=0.27))
 
 
 if __name__ == "__main__":
