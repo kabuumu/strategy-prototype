@@ -2012,7 +2012,14 @@ func _get_move_cells(unit: Unit) -> Array[Vector2i]:
 	var occupied  := _occupied_cells_except(unit)
 	var range_val := unit.get_move_range()
 
-	# BFS so mountains genuinely block paths, not just destination cells
+	# Get positions of alive enemy units to block movement path
+	var enemy_cells: Array[Vector2i] = []
+	var enemies := enemy_units if unit.team == 0 else player_units
+	for u: Unit in enemies:
+		if u.is_alive():
+			enemy_cells.append(u.grid_pos)
+
+	# BFS so mountains and enemy units genuinely block paths, not just destination cells
 	var visited: Dictionary = {}
 	var queue: Array  = [{"pos": unit.grid_pos, "steps": 0}]
 	var result: Array[Vector2i] = []
@@ -2031,19 +2038,30 @@ func _get_move_cells(unit: Unit) -> Array[Vector2i]:
 
 		for next: Vector2i in Hex.neighbors(pos):
 			if _valid_cell(next) and next not in visited and next not in mountains:
+				# Enemy units block movement path
+				if next in enemy_cells:
+					continue
 				visited[next] = true
 				queue.append({"pos": next, "steps": steps + 1})
 
 	return result
 
 # BFS path from `start` to `end` (orthogonal, mountain-aware, treating only
-# `excluded` as walkable among unit-occupied cells). Returns the list of
-# cells AFTER start, ending at `end` — i.e. the cells the unit walks through.
-# Returns empty if no path is found.
+# enemy units as blockers). Returns the list of cells AFTER start, ending
+# at `end` — i.e. the cells the unit walks through. Returns empty if no path is found.
 func _bfs_path(start: Vector2i, end: Vector2i, excluded: Unit) -> Array[Vector2i]:
 	if start == end:
 		return []
-	var blockers := _occupied_cells_except(excluded)
+
+	var blockers: Array[Vector2i] = []
+	if excluded != null:
+		var enemies := enemy_units if excluded.team == 0 else player_units
+		for u: Unit in enemies:
+			if u.is_alive():
+				blockers.append(u.grid_pos)
+	else:
+		blockers = _all_occupied_cells()
+
 	var came_from: Dictionary = {start: start}
 	var queue: Array[Vector2i] = [start]
 	var found := false
