@@ -247,6 +247,7 @@ func take_damage(amount: int) -> void:
 	hp = max(0, hp - amount)
 	_refresh_hp_bar()
 	_spawn_damage_number(amount)
+	_flash_hit()
 	# Cull soldier sprites down to the expected count so the regiment visibly
 	# shrinks as it loses HP — the Total War effect.
 	var target_alive := _expected_alive_count()
@@ -261,6 +262,16 @@ func take_damage(amount: int) -> void:
 		_kill_soldier(victim)
 	if hp <= 0:
 		emit_signal("died", self)
+
+# Brief white flash across the living soldiers when the regiment is hit — cheap
+# combat juice that reads even in a big melee.
+func _flash_hit() -> void:
+	for s: Soldier in _soldiers:
+		if not s.alive or s.sprite == null:
+			continue
+		s.sprite.modulate = Color(1.9, 1.9, 1.9)
+		var tw := create_tween()
+		tw.tween_property(s.sprite, "modulate", Color(1.0, 1.0, 1.0), 0.16)
 
 func _kill_soldier(s: Soldier) -> void:
 	s.alive = false
