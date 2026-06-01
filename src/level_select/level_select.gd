@@ -17,7 +17,8 @@ const TYPE_COLORS: Dictionary = {
 	"gain_unit":    Color(0.25, 0.55, 0.95),
 	"shop":         Color(0.85, 0.70, 0.20),
 	"heal":         Color(0.20, 0.72, 0.35),
-	"event":        Color(0.30, 0.72, 0.72)
+	"event":        Color(0.30, 0.72, 0.72),
+	"treasure":     Color(0.90, 0.78, 0.30)
 }
 const TYPE_LABELS: Dictionary = {
 	"battle":       "Battle",
@@ -25,7 +26,8 @@ const TYPE_LABELS: Dictionary = {
 	"gain_unit":    "+Unit",
 	"shop":         "Shop",
 	"heal":         "Heal",
-	"event":        "?"
+	"event":        "?",
+	"treasure":     "Loot"
 }
 const TYPE_DESC: Dictionary = {
 	"battle":       "Standard battle",
@@ -33,7 +35,8 @@ const TYPE_DESC: Dictionary = {
 	"gain_unit":    "Choose a new unit",
 	"shop":         "Spend gold on heals and units",
 	"heal":         "Heal all units to full",
-	"event":        "A random encounter — a choice to make"
+	"event":        "A random encounter — a choice to make",
+	"treasure":     "A free relic (or gold, if you own them all)"
 }
 
 # ---------------------------------------------------------------------------
@@ -567,6 +570,15 @@ func _on_node_pressed(tier: int, index: int) -> void:
 			_show_toast("Party fully healed!", Color(0.20, 0.72, 0.35))
 		"event":
 			_show_event_popup()
+		"treasure":
+			var rid := GameManager.grant_random_relic()
+			Sfx.play("gold")
+			if rid != "":
+				_show_toast("Treasure! Found %s" % String(GameManager.RELICS[rid]["name"]), Color(0.95, 0.82, 0.30))
+			else:
+				GameManager.add_gold(80)
+				_show_toast("Treasure! +80 gold", Color(0.95, 0.82, 0.30))
+			_refresh()
 		_:
 			_refresh()
 

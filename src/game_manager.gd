@@ -536,7 +536,7 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 		return "elite_battle"
 	# Tier 0 is overwritten by _starting_node_types after generation; the value
 	# returned here is just a placeholder.
-	var roll := rng.randi() % 12
+	var roll := rng.randi() % 13
 	if roll < 4:
 		return "battle"
 	elif roll < 6:
@@ -547,6 +547,8 @@ func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 		return "shop"
 	elif roll < 11:
 		return "event"
+	elif roll < 12:
+		return "treasure"
 	else:
 		return "heal"
 
