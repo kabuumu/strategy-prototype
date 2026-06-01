@@ -65,6 +65,9 @@ const ENEMY_TYPES: Dictionary = {
 	"warlord":  {"name": "Warlord's Host", "sprite_key": "warlord", "bounty": 40,
 		"soldier_count": 18, "hp_per_soldier": 26, "damage_per_attack": 16,
 		"attack_cooldown": 1.0, "attack_range_px": 58.0, "move_speed_px": 36.0},
+	"boss":     {"name": "The Warlord", "sprite_key": "warlord", "bounty": 120,
+		"soldier_count": 30, "hp_per_soldier": 44, "damage_per_attack": 26,
+		"attack_cooldown": 1.0, "attack_range_px": 60.0, "move_speed_px": 30.0},
 }
 
 # Wave script: each wave is a list of [enemy_id, count] spawned in sequence.
@@ -167,8 +170,11 @@ func _build_campaign_waves(tier: int, elite: bool) -> Array:
 		if tier >= 2 and w >= 2:
 			wave.append(["brute", 1 + w / 2])
 		waves.append(wave)
-	if (elite or tier >= GameManager.MAP_TIERS - 1) and not waves.is_empty():
-		waves[waves.size() - 1].append(["warlord", 1])
+	if not waves.is_empty():
+		if GameManager.is_final_battle(tier, elite):
+			waves[waves.size() - 1].append(["boss", 1])      # the run's final boss
+		elif elite or tier >= GameManager.MAP_TIERS - 1:
+			waves[waves.size() - 1].append(["warlord", 1])
 	return waves
 
 # ---------------------------------------------------------------------------
