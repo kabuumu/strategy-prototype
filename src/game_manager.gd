@@ -847,7 +847,31 @@ const EVENTS: Array = [
 			{"label": "Keep your distance", "effect": {}},
 		],
 	},
+	{
+		"title": "A Torn Map",
+		"text": "A dying scout presses a blood-stained map into your hand — it marks a hidden vault, deep off the road.",
+		"choices": [
+			{"label": "Follow the map", "effect": {"chain": "hidden_vault"}},
+			{"label": "Burn it and march on", "effect": {}},
+		],
+	},
 ]
+
+# Follow-up events reached only by chaining from another event's choice.
+const CHAIN_EVENTS: Dictionary = {
+	"hidden_vault": {
+		"title": "The Hidden Vault",
+		"text": "The map leads true: a sealed dwarven vault, trapped and heavy with treasure.",
+		"choices": [
+			{"label": "Force it open (a unit is slain, +130g and a relic)", "effect": {"lose_unit": true, "gold": 130, "add_relic": "random"}},
+			{"label": "Pick the locks carefully (60g, a relic)", "cost": 60, "effect": {"add_relic": "random"}},
+			{"label": "Too risky — leave it sealed", "effect": {}},
+		],
+	},
+}
+
+func get_chain_event(id: String) -> Dictionary:
+	return CHAIN_EVENTS.get(id, {})
 
 # The god encounter — astronomically rare (~1 in 100 runs given a couple of
 # event nodes per run). Hands out the mythic Divine Favour relic.

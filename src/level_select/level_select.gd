@@ -663,9 +663,15 @@ func _show_unit_select_popup() -> void:
 # Random event popup
 # ---------------------------------------------------------------------------
 func _show_event_popup() -> void:
-	var ev: Dictionary = GameManager.random_event()
-	_popup = UITheme.panel(self, Vector2(300.0, 200.0), Vector2(680.0, 320.0),
-		Color(0.08, 0.13, 0.14, 0.98), Color(0.30, 0.72, 0.72))
+	_build_event_popup(GameManager.random_event())
+
+func _build_event_popup(ev: Dictionary) -> void:
+	if _popup != null:
+		for c in _popup.get_children():
+			c.queue_free()
+	else:
+		_popup = UITheme.panel(self, Vector2(300.0, 200.0), Vector2(680.0, 320.0),
+			Color(0.08, 0.13, 0.14, 0.98), Color(0.30, 0.72, 0.72))
 	_popup.add_child(UITheme.label(String(ev["title"]), 26, Color(0.70, 0.95, 0.95), Vector2(28.0, 18.0), Vector2(624.0, 34.0)))
 	_popup.add_child(UITheme.label(String(ev["text"]), 16, UITheme.TEXT, Vector2(28.0, 64.0), Vector2(624.0, 70.0)))
 	var choices: Array = ev["choices"]
@@ -692,6 +698,13 @@ func _show_event_popup() -> void:
 func _on_event_choice(choice: Dictionary) -> void:
 	var msg: String = GameManager.apply_event_choice(choice)
 	Sfx.play("gold")
+	# A choice may chain into a follow-up event instead of closing.
+	var eff: Dictionary = choice.get("effect", {})
+	if eff.has("chain"):
+		var nxt: Dictionary = GameManager.get_chain_event(String(eff["chain"]))
+		if not nxt.is_empty():
+			_build_event_popup(nxt)
+			return
 	if _popup != null:
 		_popup.queue_free()
 		_popup = null
