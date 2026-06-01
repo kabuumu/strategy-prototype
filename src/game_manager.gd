@@ -364,12 +364,21 @@ func mark_tutorial_seen() -> void:
 # Deliberately NOT touched by reset(), so launching the game never wipes a save.
 # ---------------------------------------------------------------------------
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
+# Bump when the run-save schema changes incompatibly; older saves are discarded
+# on load instead of loading partial/garbage state.
+const SAVE_VERSION: int = 2
 
 func has_saved_run() -> bool:
-	return FileAccess.file_exists(RUN_SAVE_PATH)
+	if not FileAccess.file_exists(RUN_SAVE_PATH):
+		return false
+	var cfg := ConfigFile.new()
+	if cfg.load(RUN_SAVE_PATH) != OK:
+		return false
+	return int(cfg.get_value("run", "version", 1)) == SAVE_VERSION
 
 func save_run() -> void:
 	var cfg := ConfigFile.new()
+	cfg.set_value("run", "version", SAVE_VERSION)
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
 	cfg.set_value("run", "relics", relics)
@@ -386,6 +395,10 @@ func save_run() -> void:
 func load_run() -> bool:
 	var cfg := ConfigFile.new()
 	if cfg.load(RUN_SAVE_PATH) != OK:
+		return false
+	# Discard saves from an incompatible schema version.
+	if int(cfg.get_value("run", "version", 1)) != SAVE_VERSION:
+		clear_run()
 		return false
 	var raw_map: Array = cfg.get_value("run", "map_data", [])
 	if raw_map.is_empty():
