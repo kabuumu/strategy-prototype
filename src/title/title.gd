@@ -44,7 +44,8 @@ func _build_ui() -> void:
 		{"t": "2D Real-Time",  "c": Color(0.32, 0.40, 0.55), "cb": _on_skirmish_2d},
 		{"t": "Auto Battle",   "c": Color(0.30, 0.48, 0.36), "cb": _on_auto_battler},
 		{"t": "Tower Defence", "c": Color(0.45, 0.38, 0.20), "cb": _on_tower_defense},
-	], 356.0, 220.0, 52.0, 18)
+		{"t": "Base Building", "c": Color(0.50, 0.30, 0.26), "cb": _on_base_builder},
+	], 356.0, 214.0, 52.0, 17)
 
 	_add_centered_label("Left-click act · Right-click / Esc cancel · Tab cycle · Enter end turn · Q ability · H help",
 		13, Color(0.40, 0.40, 0.45), 692.0)
@@ -137,6 +138,9 @@ func _on_auto_battler() -> void:
 
 func _on_tower_defense() -> void:
 	get_tree().change_scene_to_file("res://src/towerdefense/towerdefense.tscn")
+
+func _on_base_builder() -> void:
+	get_tree().change_scene_to_file("res://src/basebuilder/basebuilder.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the
