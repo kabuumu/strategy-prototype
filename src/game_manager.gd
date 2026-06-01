@@ -259,6 +259,8 @@ var pending_autobattle: bool = false
 var pending_td: bool = false
 # When true, the campaign battle is a base-building RTS (set by level_select).
 var pending_base: bool = false
+# When true, the campaign battle is a 2D real-time (Total War) fight (set by level_select).
+var pending_rt: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:

@@ -11,6 +11,7 @@ func _draw() -> void:
 
 const CAMPAIGN_MODES: Array = [
 	{"t": "2D Tactics",    "m": "2d",   "c": Color(0.18, 0.36, 0.65)},
+	{"t": "2D Total War",  "m": "rt",   "c": Color(0.22, 0.44, 0.50)},
 	{"t": "3D Real-Time",  "m": "3d",   "c": Color(0.36, 0.26, 0.60)},
 	{"t": "Auto-Battler",  "m": "auto", "c": Color(0.30, 0.50, 0.38)},
 	{"t": "Tower Defence", "m": "td",   "c": Color(0.45, 0.38, 0.20)},
@@ -34,7 +35,7 @@ func _build_ui() -> void:
 		Color(0.72, 0.74, 0.52), 198.0)
 	_add_button_row(CAMPAIGN_MODES.map(func(md): return {
 			"t": md["t"], "c": md["c"], "cb": _start_new_game.bind(md["m"])
-		}), 226.0, 216.0, 64.0, 20)
+		}), 226.0, 192.0, 64.0, 17)
 
 	# Quick skirmishes — one-off battles, no campaign state touched.
 	_add_centered_label("QUICK SKIRMISH — one-off battles, no campaign", 15,

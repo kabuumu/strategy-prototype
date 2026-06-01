@@ -419,6 +419,9 @@ func _on_node_pressed(tier: int, index: int) -> void:
 				"base":
 					GameManager.pending_base = true
 					get_tree().change_scene_to_file("res://src/basebuilder/basebuilder.tscn")
+				"rt":
+					GameManager.pending_rt = true
+					get_tree().change_scene_to_file("res://src/rtbattle/rtbattle.tscn")
 				_:
 					get_tree().change_scene_to_file("res://src/battle/battle.tscn")
 		"gain_unit":

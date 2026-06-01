@@ -77,6 +77,17 @@ var _battle_started: bool = false
 var _player_has_issued_order: bool = false
 var _ended: bool = false
 
+# --- Campaign integration (battle_mode "rt") -------------------------------
+const CAMPAIGN_RT_MAP: Dictionary = {
+	"soldier": "soldier", "archer": "archer", "scout": "scout", "healer": "healer",
+	"knight": "scout", "mage": "archer", "guardian": "healer",
+	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "healer",
+}
+var _campaign: bool = false
+var _campaign_lost: bool = false
+var _campaign_relic: String = ""
+var _campaign_reward_gold: int = 0
+
 # Drag-rectangle selection state
 var _drag_active: bool = false
 var _drag_origin: Vector2 = Vector2.ZERO
@@ -111,8 +122,37 @@ func _set_passthrough(node: Control) -> void:
 func _ready() -> void:
 	_build_field()
 	_build_ui()
-	_spawn_armies()
+	if GameManager.pending_rt:
+		GameManager.pending_rt = false
+		_campaign = true
+		_spawn_campaign_armies()
+	else:
+		_spawn_armies()
 	_refresh_ui()
+
+# Campaign armies: your roster (left) vs the tier's enemy roster (right).
+func _spawn_campaign_armies() -> void:
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	var roster: Array = GameManager.player_roster
+	var n: int = maxi(1, roster.size())
+	for i in range(roster.size()):
+		var entry: Dictionary = roster[i]
+		var rtype: String = String(CAMPAIGN_RT_MAP.get(String(entry["type"]), "soldier"))
+		var y: float = 180.0 + float(i) * (380.0 / float(n))
+		var u := _spawn_regiment(rtype, 0, Vector2(230.0 + float(i % 2) * 56.0, y))
+		u.set_meta("roster_entry", entry)
+		player_units.append(u)
+	var etypes: Array = GameManager.get_battle_enemy_roster(tier, elite)
+	var mult: float = GameManager.get_hp_multiplier(tier, elite)
+	var en: int = maxi(1, etypes.size())
+	for i in range(etypes.size()):
+		var rtype2: String = String(CAMPAIGN_RT_MAP.get(String(etypes[i]), "soldier"))
+		var y2: float = 180.0 + float(i) * (380.0 / float(en))
+		var u2 := _spawn_regiment(rtype2, 1, Vector2(1050.0 - float(i % 2) * 56.0, y2))
+		u2.max_hp = int(round(float(u2.max_hp) * mult))
+		u2.hp = u2.max_hp
+		enemy_units.append(u2)
 
 # ---------------------------------------------------------------------------
 # Field + UI scaffolding
@@ -745,8 +785,14 @@ func _check_end_condition() -> void:
 		return
 	_ended  = true
 	_paused = true
+	var won: bool = p_alive and not e_alive
+	if _campaign:
+		_conclude_campaign(won)
+		_show_campaign_result(won)
+		_refresh_ui()
+		return
 	if _result_label != null:
-		if p_alive and not e_alive:
+		if won:
 			_result_label.text = "VICTORY"
 			_result_label.modulate = Color(0.55, 0.95, 0.55)
 		elif e_alive and not p_alive:
@@ -759,3 +805,47 @@ func _check_end_condition() -> void:
 	if _restart_hint_label != null:
 		_restart_hint_label.visible = true
 	_refresh_ui()
+
+func _conclude_campaign(win: bool) -> void:
+	var tier: int = GameManager.pending_battle_tier
+	var elite: bool = GameManager.pending_battle_elite
+	_campaign_lost = not win
+	if win:
+		var survivors: Array[Dictionary] = []
+		for u: RTUnit in player_units:
+			if is_instance_valid(u) and u.is_alive() and u.has_meta("roster_entry"):
+				survivors.append(u.get_meta("roster_entry"))
+		if survivors.is_empty() and not GameManager.player_roster.is_empty():
+			survivors.append(GameManager.player_roster[0])
+		GameManager.set_roster(survivors)
+		_campaign_reward_gold = GameManager.battle_gold_reward(tier, elite)
+		GameManager.add_gold(_campaign_reward_gold)
+		GameManager.register_battle_won(elite)
+		if elite:
+			_campaign_relic = GameManager.grant_random_relic()
+		GameManager.save_run()
+	else:
+		GameManager.clear_run()
+
+func _show_campaign_result(win: bool) -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.z_index = 80
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	UITheme.panel(root, Vector2(480.0, 244.0), Vector2(320.0, 220.0))
+	root.add_child(UITheme.label("VICTORY" if win else "DEFEAT", 40,
+		UITheme.GOLD if win else UITheme.RED, Vector2(556.0, 266.0)))
+	var sub: String = ("+%d gold%s" % [_campaign_reward_gold,
+		"   ·   Relic: %s" % String(GameManager.RELICS[_campaign_relic]["name"]) if _campaign_relic != "" else ""]) if win \
+		else "Your army was wiped out — the run ends here."
+	root.add_child(UITheme.label(sub, 15, UITheme.TEXT_MUTED, Vector2(500.0, 322.0), Vector2(280.0, 40.0)))
+	if win:
+		root.add_child(UITheme.button("Continue", Vector2(512.0, 372.0), Vector2(256.0, 46.0),
+			UITheme.GREEN, func() -> void: get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")))
+	else:
+		root.add_child(UITheme.button("To Title", Vector2(512.0, 372.0), Vector2(256.0, 46.0),
+			Color(0.45, 0.30, 0.34), func() -> void: get_tree().change_scene_to_file("res://src/title/title.tscn")))
+	add_child(root)
