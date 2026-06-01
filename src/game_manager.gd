@@ -334,6 +334,27 @@ func hero_buff_cost(base: int) -> int:
 # ---------------------------------------------------------------------------
 const SWAY_TYPES: Array[String] = ["dialogue", "persuasion", "duel"]
 
+# Recruit flavour (Phase 2 depth). `personality` colours the recruit's intro and
+# tints the sway. `scene` picks one of these dialogue exchanges; the dialogue
+# resolver shows its prompt/options and treats `correct` as the winning line.
+const RECRUIT_PERSONALITIES: Array[Dictionary] = [
+	{"name": "Grizzled",  "line": "A scarred veteran who has seen too many battles."},
+	{"name": "Eager",     "line": "A green recruit itching to prove themselves."},
+	{"name": "Proud",     "line": "A haughty warrior who respects only strength."},
+	{"name": "Greedy",    "line": "A sellsword whose loyalty follows the coin."},
+	{"name": "Wary",      "line": "A cautious sort, slow to trust strangers."},
+]
+const DIALOGUE_SCENES: Array[Dictionary] = [
+	{"prompt": "They eye your banner. What's your pitch?",
+		"options": ["Promise them glory", "Offer a fair share of plunder", "Appeal to a common enemy"], "correct": 2},
+	{"prompt": "\"And why should I follow you?\"",
+		"options": ["\"For coin and conquest.\"", "\"Because the realm needs us.\"", "\"You'll die alone otherwise.\""], "correct": 1},
+	{"prompt": "They size you up in silence.",
+		"options": ["Stand tall and meet their eyes", "Crack a disarming joke", "Reel off your victories"], "correct": 0},
+	{"prompt": "\"What's in it for me?\"",
+		"options": ["\"Glory enough for songs.\"", "\"A warm fire and good company.\"", "\"Vengeance on those who wronged you.\""], "correct": 2},
+]
+
 func recruit_candidates(tier: int, index: int) -> Array[Dictionary]:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = tier * 100 + index + 1
@@ -351,9 +372,23 @@ func recruit_candidates(tier: int, index: int) -> Array[Dictionary]:
 		out.append({
 			"type": pool[k],
 			"sway": sway,
-			"correct": rng.randi_range(0, 2),   # used by the dialogue resolver
+			"scene": rng.randi_range(0, DIALOGUE_SCENES.size() - 1),
+			"personality": rng.randi_range(0, RECRUIT_PERSONALITIES.size() - 1),
 		})
 	return out
+
+# A single roadside-encounter recruit (Phase 3 paths). sway restricted to the
+# in-popup resolvers (dialogue/persuasion — never a duel mid-travel).
+func encounter_recruit(seed_val: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_val
+	var pool: Array[String] = recruitable_types()
+	return {
+		"type": pool[rng.randi_range(0, pool.size() - 1)],
+		"sway": "dialogue" if rng.randf() < 0.5 else "persuasion",
+		"scene": rng.randi_range(0, DIALOGUE_SCENES.size() - 1),
+		"personality": rng.randi_range(0, RECRUIT_PERSONALITIES.size() - 1),
+	}
 
 # Gold cost to persuade a recruit. Below SHOP_UNIT_COST so swaying is the cheaper
 # (but riskier / hero-gated) path. Stronger units and deeper tiers cost more.
@@ -363,6 +398,63 @@ func recruit_persuasion_cost(type: String, tier: int) -> int:
 	var u: Dictionary = UNIT_TYPES[type]
 	var power: int = int(u["max_hp"]) + int(u["damage"]) * 2
 	return int(round(power * 0.18)) + tier * 4
+
+# ---------------------------------------------------------------------------
+# Battle clarity (heuristic) — rough army-vs-enemy power so the player can read
+# a fight before committing. Not the actual combat sim; just guidance.
+# ---------------------------------------------------------------------------
+func _unit_power(max_hp: int, damage: int) -> float:
+	return float(max_hp) + float(damage) * 6.0
+
+func army_power_base() -> float:
+	var total: float = 0.0
+	for entry: Dictionary in player_roster:
+		var u: Dictionary = UNIT_TYPES[entry["type"]]
+		total += _unit_power(unit_effective_max_hp(entry), int(u["damage"]) * unit_level(entry))
+	return total
+
+func hero_fight_power() -> float:
+	if not has_hero():
+		return 0.0
+	var hd: Dictionary = hero_data()
+	var u: Dictionary = UNIT_TYPES.get(hd.get("fight_archetype", "soldier"), UNIT_TYPES["soldier"])
+	var lvl: int = int(hd.get("fight_level", 1)) + hero_fight_bonus_level()
+	return _unit_power(int(u["max_hp"]) * lvl, int(u["damage"]) * lvl) * hero_fight_mult()
+
+# Approximate army-power multiplier from a team buff.
+func buff_power_factor(buff_id: String) -> float:
+	var bonus: float = 0.15
+	if buff_id == "warchest":
+		bonus = 0.12
+	return 1.0 + bonus * hero_buff_mult()
+
+func enemy_power(tier: int, elite: bool) -> float:
+	var total: float = 0.0
+	for t in get_battle_enemy_roster(tier, elite):
+		var u: Dictionary = UNIT_TYPES[t]
+		total += _unit_power(int(u["max_hp"]), int(u["damage"]))
+	return total * get_hp_multiplier(tier, elite)
+
+# Army power under a given hero mode ("fight" adds the hero unit, "buff" scales).
+func army_power_for(mode: String) -> float:
+	var base: float = army_power_base()
+	if mode == "fight":
+		return base + hero_fight_power()
+	elif mode == "buff" and has_hero():
+		return base * buff_power_factor(String(hero_data().get("buff", {}).get("id", "")))
+	return base
+
+func odds_label(ratio: float) -> String:
+	if ratio >= 1.35:
+		return "Favorable"
+	elif ratio >= 1.0:
+		return "Even"
+	elif ratio >= 0.75:
+		return "Risky"
+	return "Dire"
+
+func battle_odds(tier: int, elite: bool, mode: String) -> String:
+	return odds_label(army_power_for(mode) / maxf(1.0, enemy_power(tier, elite)))
 
 # ---------------------------------------------------------------------------
 # Persistent unit upgrades earned after battle wins

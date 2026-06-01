@@ -660,15 +660,12 @@ func _trigger_encounter(rng: RandomNumberGenerator) -> void:
 	if rng.randf() < 0.5:
 		_build_event_popup(GameManager.random_event())
 		return
-	var pool: Array[String] = GameManager.recruitable_types()
-	var rtype: String = pool[rng.randi_range(0, pool.size() - 1)]
-	var sway: String = "dialogue" if rng.randf() < 0.5 else "persuasion"
-	var cand := {"type": rtype, "sway": sway, "correct": rng.randi_range(0, 2)}
+	var cand := GameManager.encounter_recruit(rng.randi())
 	_popup = UITheme.panel(self, Vector2(300.0, 180.0), Vector2(680.0, 360.0),
 		Color(0.10, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
 	_popup.add_child(UITheme.label("A traveller blocks the road...", 18, UITheme.TEXT_MUTED,
 		Vector2(28.0, 14.0), Vector2(624.0, 24.0)))
-	if sway == "dialogue":
+	if String(cand["sway"]) == "dialogue":
 		_show_dialogue_resolver(cand)
 	else:
 		_show_persuasion_resolver(_cur_tier if not _at_start else 0, cand)
@@ -692,6 +689,7 @@ func _node_detail_text(tier: int, index: int) -> String:
 		var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
 		if hp_mult > 1.001:
 			lines.append("HP scaling x%.2f" % hp_mult)
+		lines.append("Odds: %s" % GameManager.battle_odds(tier, elite, "fight"))
 	elif type_key == "gain_unit":
 		lines.append("")
 		lines.append("Adds one recruit of your choice.")
@@ -892,20 +890,34 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 		String(hero.get("name", "Hero")), String(hero.get("name", "your hero"))],
 		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(504.0, 24.0)))
 
+	# Active army synergies (composition bonuses) under the subtitle.
+	var syn_ids := GameManager.army_synergies()
+	var syn_text: String
+	if syn_ids.is_empty():
+		syn_text = "Synergies: none"
+	else:
+		var syn_names: Array[String] = []
+		for sid: String in syn_ids:
+			syn_names.append(String(GameManager.SYNERGIES[sid]["name"]))
+		syn_text = "Synergies: " + "  ·  ".join(syn_names)
+	_popup.add_child(UITheme.label(syn_text, 13, Color(0.70, 0.92, 0.88),
+		Vector2(28.0, 78.0), Vector2(504.0, 20.0)))
+
 	# Fight — hero joins the army as a unit.
-	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 92.0), Vector2(504.0, 24.0)))
-	_popup.add_child(UITheme.label("Your hero fights alongside your army this battle.",
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 116.0), Vector2(504.0, 20.0)))
-	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 140.0), Vector2(504.0, 44.0),
+	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 102.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("Fights alongside your army.  Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 126.0), Vector2(504.0, 20.0)))
+	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 148.0), Vector2(504.0, 42.0),
 		UITheme.GREEN.darkened(0.1), _on_prebattle_fight.bind(tier, elite)))
 
 	# Buff — spend Valor for a team-wide boon instead of fighting.
-	_popup.add_child(UITheme.label("Buff", 18, UITheme.TEXT, Vector2(28.0, 198.0), Vector2(504.0, 24.0)))
-	_popup.add_child(UITheme.label("%s: %s — costs %d Valor (you have %d)" % [
-		String(buff.get("name", "—")), String(buff.get("desc", "")), cost, valor],
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 222.0), Vector2(504.0, 36.0)))
+	_popup.add_child(UITheme.label("Buff", 18, UITheme.TEXT, Vector2(28.0, 204.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("%s: %s — costs %d Valor (you have %d)\nOdds: %s" % [
+		String(buff.get("name", "—")), String(buff.get("desc", "")), cost, valor,
+		GameManager.battle_odds(tier, elite, "buff")],
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 228.0), Vector2(504.0, 50.0)))
 	var can_afford: bool = valor >= cost
-	var buff_btn := UITheme.button("Buff", Vector2(28.0, 260.0), Vector2(504.0, 44.0),
+	var buff_btn := UITheme.button("Buff", Vector2(28.0, 282.0), Vector2(504.0, 42.0),
 		UITheme.BLUE, _on_prebattle_buff.bind(tier, elite, String(buff.get("id", "")), cost))
 	buff_btn.disabled = not can_afford
 	if not can_afford:
@@ -913,7 +925,7 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 	_popup.add_child(buff_btn)
 	if not can_afford:
 		_popup.add_child(UITheme.label("Not enough Valor.", 12, UITheme.RED,
-			Vector2(28.0, 306.0), Vector2(504.0, 18.0)))
+			Vector2(28.0, 328.0), Vector2(504.0, 18.0)))
 
 	# No Cancel: entering a battle node commits the visit (visit_node already
 	# advanced the tier), and Fight is always available — so the player can't
@@ -943,14 +955,6 @@ const _SWAY_BADGE: Dictionary = {
 	"persuasion": {"label": "Persuade", "color": Color(0.85, 0.70, 0.24)},
 	"duel":       {"label": "Duel",     "color": Color(0.82, 0.32, 0.32)},
 }
-# Flavour responses for the dialogue resolver. The "correct" index from the
-# candidate selects which of these actually wins them over.
-const _DIALOGUE_RESPONSES: Array[String] = [
-	"Appeal to their honor",
-	"Offer them coin",
-	"Share a drink and a story",
-]
-
 func _show_recruit_popup(tier: int, index: int) -> void:
 	if _popup != null:
 		return
@@ -974,22 +978,29 @@ func _build_recruit_card(tier: int, index: int, cand: Dictionary, pos: Vector2, 
 	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
 	var sway: String = String(cand["sway"])
 	var badge: Dictionary = _SWAY_BADGE.get(sway, {"label": sway, "color": Color.GRAY})
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
 
 	# Card backing panel
 	var card := UITheme.panel(_popup, pos, size, Color(0.12, 0.12, 0.20, 0.96),
 		udata["color"].lightened(0.1))
-	card.add_child(UITheme.label(String(udata["name"]), 20, Color(0.95, 0.93, 0.80),
-		Vector2(14.0, 10.0), Vector2(size.x - 28.0, 26.0)))
+	# Personality name leads; the unit class sits beneath it as a sub-label.
+	card.add_child(UITheme.label(String(pers["name"]), 20, Color(0.98, 0.92, 0.78),
+		Vector2(14.0, 8.0), Vector2(size.x - 28.0, 26.0)))
+	card.add_child(UITheme.label(String(udata["name"]), 13, Color(0.74, 0.80, 0.92),
+		Vector2(14.0, 34.0), Vector2(size.x - 28.0, 18.0)))
 	# Sway badge chip
-	UITheme.chip(card, String(badge["label"]), Vector2(14.0, 42.0), badge["color"],
+	UITheme.chip(card, String(badge["label"]), Vector2(14.0, 54.0), badge["color"],
 		size.x - 28.0)
+	# Personality flavour line.
+	card.add_child(UITheme.label("\"%s\"" % String(pers["line"]), 11, Color(0.78, 0.78, 0.70),
+		Vector2(14.0, 80.0), Vector2(size.x - 28.0, 30.0)))
 
 	var ability: Dictionary = udata.get("ability", {})
 	var stat_txt := "HP %d   Dmg %d   Rng %d\nMove %d\nAbility: %s" % [
 		int(udata["max_hp"]), int(udata["damage"]), int(udata["attack_range"]),
 		int(udata["move_range"]), String(ability.get("name", "—"))]
 	card.add_child(UITheme.label(stat_txt, 13, UITheme.TEXT,
-		Vector2(14.0, 74.0), Vector2(size.x - 28.0, 76.0)))
+		Vector2(14.0, 112.0), Vector2(size.x - 28.0, 70.0)))
 
 	# Ask preview + the discounted cost for persuasion.
 	var ask: String
@@ -1006,12 +1017,12 @@ func _build_recruit_card(tier: int, index: int, cand: Dictionary, pos: Vector2, 
 		_:
 			ask = ""
 	card.add_child(UITheme.label(ask, 13, Color(0.82, 0.86, 0.92),
-		Vector2(14.0, 152.0), Vector2(size.x - 28.0, 40.0)))
+		Vector2(14.0, 184.0), Vector2(size.x - 28.0, 22.0)))
 
 	# Hero-excels marker when the hero is good at this sway type.
 	if GameManager.hero_sway_aptitude(sway) > 0:
 		card.add_child(UITheme.label("★ your hero excels here", 12, Color(0.98, 0.86, 0.40),
-			Vector2(14.0, 196.0), Vector2(size.x - 28.0, 18.0)))
+			Vector2(14.0, 208.0), Vector2(size.x - 28.0, 18.0)))
 
 	var approach := UITheme.button("Approach", Vector2(14.0, size.y - 52.0),
 		Vector2(size.x - 28.0, 40.0), udata["color"].darkened(0.1),
@@ -1042,26 +1053,32 @@ func _show_dialogue_resolver(cand: Dictionary) -> void:
 		c.queue_free()
 	var utype: String = String(cand["type"])
 	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
-	var correct: int = int(cand["correct"])
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
+	var scene: Dictionary = GameManager.DIALOGUE_SCENES[int(cand["scene"])]
+	var options: Array = scene["options"]
+	var correct: int = int(scene["correct"])
 	var hint: bool = GameManager.hero_sway_aptitude("dialogue") > 0
 
-	_popup.add_child(UITheme.label("Win Over %s" % String(udata["name"]), 26,
+	_popup.add_child(UITheme.label("Win Over %s the %s" % [String(pers["name"]), String(udata["name"])], 26,
 		Color(0.95, 0.90, 1.0), Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
-	_popup.add_child(UITheme.label("They size you up. What's your pitch?",
-		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(964.0, 24.0)))
+	_popup.add_child(UITheme.label("\"%s\"" % String(pers["line"]),
+		14, Color(0.80, 0.82, 0.72), Vector2(28.0, 50.0), Vector2(964.0, 22.0)))
+	_popup.add_child(UITheme.label(String(scene["prompt"]),
+		16, UITheme.TEXT, Vector2(28.0, 76.0), Vector2(964.0, 24.0)))
 
-	for i in range(_DIALOGUE_RESPONSES.size()):
+	for i in range(options.size()):
 		var is_hint: bool = hint and i == correct
-		var txt: String = _DIALOGUE_RESPONSES[i]
+		var txt: String = String(options[i])
 		if is_hint:
 			txt = "★ " + txt
 		var col: Color = Color(0.30, 0.55, 0.40) if is_hint else Color(0.24, 0.28, 0.40)
-		var btn := UITheme.button(txt, Vector2(28.0, 100.0 + float(i) * 86.0),
-			Vector2(964.0, 72.0), col, _on_dialogue_response.bind(cand, i), 18)
+		var btn := UITheme.button(txt, Vector2(28.0, 112.0 + float(i) * 84.0),
+			Vector2(964.0, 70.0), col, _on_dialogue_response.bind(cand, i), 18)
 		_popup.add_child(btn)
 
 func _on_dialogue_response(cand: Dictionary, picked: int) -> void:
-	if picked == int(cand["correct"]):
+	var correct: int = int(GameManager.DIALOGUE_SCENES[int(cand["scene"])]["correct"])
+	if picked == correct:
 		_recruit_succeed(String(cand["type"]))
 	else:
 		_recruit_decline(String(cand["type"]))
@@ -1074,18 +1091,21 @@ func _show_persuasion_resolver(tier: int, cand: Dictionary) -> void:
 		c.queue_free()
 	var utype: String = String(cand["type"])
 	var udata: Dictionary = GameManager.UNIT_TYPES[utype]
+	var pers: Dictionary = GameManager.RECRUIT_PERSONALITIES[int(cand["personality"])]
 	var cost := GameManager.recruit_persuasion_cost(utype, tier)
 	if GameManager.hero_sway_aptitude("persuasion") > 0:
 		cost = int(round(cost * 0.6))
 	var affordable: bool = GameManager.gold >= cost
 
-	_popup.add_child(UITheme.label("Persuade %s" % String(udata["name"]), 26,
+	_popup.add_child(UITheme.label("Persuade %s the %s" % [String(pers["name"]), String(udata["name"])], 26,
 		UITheme.GOLD, Vector2(28.0, 16.0), Vector2(964.0, 32.0)))
+	_popup.add_child(UITheme.label("\"%s\"" % String(pers["line"]),
+		14, Color(0.80, 0.82, 0.72), Vector2(28.0, 50.0), Vector2(964.0, 22.0)))
 	_popup.add_child(UITheme.label("Costs %d gold (you have %d)." % [cost, GameManager.gold],
-		16, UITheme.TEXT, Vector2(28.0, 58.0), Vector2(964.0, 24.0)))
+		16, UITheme.TEXT, Vector2(28.0, 76.0), Vector2(964.0, 24.0)))
 	if not affordable:
 		_popup.add_child(UITheme.label("Not enough gold to make the offer.", 13, UITheme.RED,
-			Vector2(28.0, 88.0), Vector2(964.0, 20.0)))
+			Vector2(28.0, 102.0), Vector2(964.0, 20.0)))
 
 	var pay := UITheme.button("Pay %d" % cost, Vector2(28.0, 130.0), Vector2(964.0, 56.0),
 		UITheme.GREEN.darkened(0.1), _on_persuasion_pay.bind(cand, cost), 18)

@@ -215,8 +215,10 @@ func _rebuild_ui() -> void:
 	_add_label("AUTO BATTLER", 28, UITheme.GOLD, Vector2(28.0, 14.0), Vector2(250.0, 36.0))
 	if _campaign:
 		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
-		_add_label("Campaign Battle — Tier %d%s   ·   Your army vs the enemy host" % [
-				GameManager.pending_battle_tier + 1, et],
+		var odds: String = GameManager.battle_odds(
+			GameManager.pending_battle_tier, GameManager.pending_battle_elite, GameManager.hero_battle_mode)
+		_add_label("Campaign Battle — Tier %d%s   ·   Odds: %s" % [
+				GameManager.pending_battle_tier + 1, et, odds],
 				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(620.0, 26.0))
 	else:
 		_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
