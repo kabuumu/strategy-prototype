@@ -204,7 +204,19 @@ func _toggle_inventory() -> void:
 			root.add_child(UITheme.label("%s — %s" % [String(c["name"]), String(c["desc"])],
 				13, Color(0.98, 0.78, 0.78), Vector2(372.0, y), Vector2(548.0, 34.0)))
 			y += 32.0
-	root.add_child(UITheme.button("Close  [I / Esc]", Vector2(530.0, 552.0), Vector2(220.0, 42.0),
+	y += 12.0
+	root.add_child(UITheme.label("ARMY SYNERGIES (composition)", 14, Color(0.55, 0.85, 0.90), Vector2(360.0, y), Vector2(560.0, 22.0)))
+	y += 26.0
+	var syn := GameManager.army_synergies()
+	if syn.is_empty():
+		root.add_child(UITheme.label("  — none active —", 13, UITheme.TEXT_MUTED, Vector2(372.0, y), Vector2(548.0, 20.0)))
+	else:
+		for sid: String in syn:
+			var sd: Dictionary = GameManager.SYNERGIES[sid]
+			root.add_child(UITheme.label("%s — %s" % [String(sd["name"]), String(sd["desc"])],
+				13, Color(0.75, 0.92, 0.96), Vector2(372.0, y), Vector2(548.0, 32.0)))
+			y += 30.0
+	root.add_child(UITheme.button("Close  [I / Esc]", Vector2(530.0, 556.0), Vector2(220.0, 42.0),
 		Color(0.30, 0.32, 0.44), _toggle_inventory))
 	add_child(root)
 	_inventory_popup = root

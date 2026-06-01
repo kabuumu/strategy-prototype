@@ -267,6 +267,35 @@ const RELICS: Dictionary = {
 	"divine_favor": {"name": "Divine Favour", "desc": "+25 dmg, +60 HP, +2 move, +1 range, +1 AP, +25% crit, −40% damage taken"},
 }
 
+# Army synergies — passive bonuses earned by roster composition, rewarding
+# deliberate army-building. Computed live from player_roster; applied (player
+# team) in unit.gd and shown on the map.
+const SYNERGIES: Dictionary = {
+	"phalanx": {"name": "Phalanx",  "desc": "3+ melee units → all units take 10% less damage"},
+	"volley":  {"name": "Volley",   "desc": "3+ ranged units → +1 attack range for all"},
+	"horde":   {"name": "Horde",    "desc": "6+ units → +4 damage for all"},
+}
+
+func army_synergies() -> Array[String]:
+	var melee: int = 0
+	var ranged: int = 0
+	for e: Dictionary in player_roster:
+		if int(UNIT_TYPES[e["type"]]["attack_range"]) <= 1:
+			melee += 1
+		else:
+			ranged += 1
+	var out: Array[String] = []
+	if melee >= 3:
+		out.append("phalanx")
+	if ranged >= 3:
+		out.append("volley")
+	if player_roster.size() >= 6:
+		out.append("horde")
+	return out
+
+func has_synergy(id: String) -> bool:
+	return id in army_synergies()
+
 # Curses — run-long afflictions (the dark side of risky events). Applied to the
 # player team in unit.gd, mirroring relics but negative.
 const CURSES: Dictionary = {

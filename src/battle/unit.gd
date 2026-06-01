@@ -306,6 +306,8 @@ func get_attack_range() -> int:
 		if u == "eagle_eye":
 			v += 1
 	v += GameManager.relic_range_bonus()
+	if team == 0 and GameManager.has_synergy("volley"):
+		v += 1   # Volley synergy
 	if enraged:
 		v += int(udata.get("enrage_range_bonus", 0))
 	return mini(v, 4)
@@ -328,6 +330,8 @@ func get_damage() -> int:
 	v += (vet_level - 1) * 2   # veterancy
 	if team == 0:
 		v += GameManager.relic_damage_bonus()
+		if GameManager.has_synergy("horde"):
+			v += 4   # Horde synergy
 		v = maxi(1, v - GameManager.curse_damage_penalty())
 	return v
 
@@ -341,6 +345,8 @@ func get_damage_taken_mult() -> float:
 	var mult: float = maxf(0.40, 1.0 - 0.20 * float(stacks))
 	if team == 0:
 		mult *= GameManager.relic_damage_taken_mult()   # Aegis relic
+		if GameManager.has_synergy("phalanx"):
+			mult *= 0.90   # Phalanx synergy
 	return mult
 
 # Bonus crit chance contributed by Lucky upgrades (+15% per stack).
