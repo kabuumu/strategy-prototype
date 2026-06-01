@@ -807,19 +807,6 @@ func _is_empty_card(card: Dictionary) -> bool:
 func _card_id(card: Dictionary) -> String:
 	return String(card.get("id", "soldier"))
 
-func _card_button_text(card: Dictionary, compact: bool) -> String:
-	if _is_empty_card(card):
-		return "Empty"
-	var unit_id := _card_id(card)
-	var stats := _card_stats(card)
-	var base := "%s\nLv %d" % [
-		_unit_name(unit_id),
-		int(card.get("level", 1))
-	]
-	if compact:
-		return "%s\n%d dmg / %d hp" % [base, stats["damage"], stats["hp"]]
-	return "%s\n%d dmg\n%d hp" % [base, stats["damage"], stats["hp"]]
-
 func _card_stats(card: Dictionary, synergy_counts: Dictionary = {}) -> Dictionary:
 	var unit_id := _card_id(card)
 	var stats: Dictionary = UNIT_TYPES[unit_id]
@@ -1252,11 +1239,6 @@ func _on_unit_died(u: RTUnit) -> void:
 	t.timeout.connect(func():
 		_free_node(u)
 	)
-
-func _clear_ui() -> void:
-	for n: Node in _ui_nodes:
-		_free_node(n)
-	_ui_nodes.clear()
 
 func _clear_units() -> void:
 	for u: RTUnit in player_units:

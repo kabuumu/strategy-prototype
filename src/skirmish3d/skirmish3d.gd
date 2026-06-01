@@ -527,19 +527,6 @@ func _make_mat(color: Color, unshaded: bool = false, emission: Color = Color(0.0
 		mat.emission_energy_multiplier = 0.55
 	return mat
 
-func _add_hex_patch(pos: Vector3, color: Color) -> void:
-	var tile := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = TERRAIN_HEX_RADIUS
-	mesh.bottom_radius = TERRAIN_HEX_RADIUS
-	mesh.height = 0.08
-	mesh.radial_segments = 6
-	tile.mesh = mesh
-	tile.position = pos
-	tile.rotation_degrees.y = 30.0
-	tile.material_override = _make_mat(color.lightened(0.02), false)
-	_terrain_node.add_child(tile)
-
 func _add_mountain_cluster(pos: Vector3, seed: int) -> void:
 	for i in range(3):
 		var rock := MeshInstance3D.new()

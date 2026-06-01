@@ -2198,27 +2198,6 @@ func _chebyshev(a: Vector2i, b: Vector2i) -> int:
 	return Hex.distance(a, b)
 
 # ---------------------------------------------------------------------------
-# Round helpers
-# ---------------------------------------------------------------------------
-func _mark_all_acted(units: Array[Unit]) -> void:
-	for u: Unit in units:
-		if u.is_alive() and not u.has_acted:
-			u.has_acted = true
-			u.modulate  = ACTED_TINT
-
-func _reset_acted_flags(units: Array[Unit]) -> void:
-	for u: Unit in units:
-		if not u.is_alive():
-			continue
-		# Damage-over-time ticks at the start of the unit's round (may kill)
-		_tick_statuses(u)
-		if not u.is_alive():
-			continue
-		u.has_acted = false
-		u.modulate  = Color(1.0, 1.0, 1.0, 1.0)
-		# A unit that began the round stunned loses it
-		_consume_stun(u)
-
 # Apply poison/burn damage-over-time and lava terrain burn to a unit.
 func _tick_statuses(u: Unit) -> void:
 	# Standing in lava refreshes burn
@@ -2234,17 +2213,6 @@ func _tick_statuses(u: Unit) -> void:
 		u.burn_turns -= 1
 	if not u.is_alive():
 		u.modulate = DEATH_TINT
-
-# If the unit is stunned, clear it and mark it as having spent its turn.
-# Returns true when the activation was consumed by the stun.
-func _consume_stun(u: Unit) -> bool:
-	if not u.stunned:
-		return false
-	u.stunned   = false
-	u.has_acted = true
-	u.modulate  = ACTED_TINT
-	u.show_status_popup("STUNNED!", STUN_COLOR)
-	return true
 
 func _all_dead(units: Array[Unit]) -> bool:
 	return units.all(func(u: Unit) -> bool: return not u.is_alive())

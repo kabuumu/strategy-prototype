@@ -369,12 +369,6 @@ func _assign_orders(side: Array, foe_units: Array, foe_team: int) -> void:
 		if ts != null:
 			u.order_attack(ts)
 
-func _enemy_hq_alive() -> bool:
-	for s in _structures:
-		if s["team"] == 1 and s["type"] == "tc" and is_instance_valid(s["rt"]) and s["rt"].is_alive():
-			return true
-	return false
-
 func _clean_dead() -> void:
 	_player_units = _player_units.filter(func(u): return is_instance_valid(u) and u.is_alive())
 	_enemy_units = _enemy_units.filter(func(u): return is_instance_valid(u) and u.is_alive())

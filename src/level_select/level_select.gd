@@ -51,10 +51,6 @@ var _settings_overlay: Control = null
 var _inventory_popup: Control = null
 var _shop_relic_offer: String = ""
 
-# Hover preview — built once, shown when the cursor enters a battle node so
-# the player can see what they're walking into before committing.
-var _preview_panel: Panel = null
-var _preview_label: Label = null
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
@@ -314,73 +310,6 @@ func _add_node_button(tier: int, index: int) -> void:
 	btn.mouse_entered.connect(_show_node_detail.bind(tier, index))
 	add_child(btn)
 	_node_buttons.append({"button": btn, "tier": tier, "index": index})
-
-# ---------------------------------------------------------------------------
-# Battle preview tooltip
-# ---------------------------------------------------------------------------
-func _ensure_preview_panel() -> void:
-	if _preview_panel != null:
-		return
-	_preview_panel = Panel.new()
-	_preview_panel.z_index = 100
-	_preview_panel.visible = false
-	var s := StyleBoxFlat.new()
-	s.bg_color        = Color(0.08, 0.08, 0.12, 0.96)
-	s.border_color    = Color(0.85, 0.30, 0.25, 0.95)
-	s.border_width_left = 2; s.border_width_right = 2
-	s.border_width_top = 2;  s.border_width_bottom = 2
-	s.corner_radius_top_left = 4; s.corner_radius_top_right = 4
-	s.corner_radius_bottom_left = 4; s.corner_radius_bottom_right = 4
-	s.content_margin_left = 10; s.content_margin_right = 10
-	s.content_margin_top  = 8;  s.content_margin_bottom = 8
-	_preview_panel.add_theme_stylebox_override("panel", s)
-	add_child(_preview_panel)
-	_preview_label = Label.new()
-	_preview_label.add_theme_font_size_override("font_size", 12)
-	_preview_label.modulate = Color(0.95, 0.92, 0.85)
-	_preview_panel.add_child(_preview_label)
-
-func _on_battle_node_hover(tier: int, _index: int, node_pos: Vector2) -> void:
-	_ensure_preview_panel()
-	var nd: Dictionary = GameManager.map_data[tier][_index]
-	var elite: bool = nd["type"] == "elite_battle"
-	var roster: Array[String] = GameManager.get_battle_enemy_roster(tier, elite)
-	# Count occurrences per unit type
-	var counts: Dictionary = {}
-	for k in roster:
-		counts[k] = counts.get(k, 0) + 1
-	var lines: Array[String] = []
-	if GameManager.is_final_battle(tier, elite):
-		lines.append("⚔  FINAL BATTLE  ⚔")
-	else:
-		lines.append("Enemy forces" + ("  (ELITE)" if elite else ""))
-	for k: String in counts.keys():
-		var udata: Dictionary = GameManager.UNIT_TYPES[k]
-		var line := "  %d× %s  (%dHP · %ddmg · rng %d)" % [
-			counts[k], udata["name"], udata["max_hp"], udata["damage"], udata["attack_range"]
-		]
-		lines.append(line)
-	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
-	if hp_mult > 1.001:
-		lines.append("  HP ×%.2f scaling" % hp_mult)
-	_preview_label.text = "\n".join(lines)
-	_preview_label.position = Vector2.ZERO
-	# Force a layout pass so size reflects the text, then place it
-	_preview_label.reset_size()
-	var ts := _preview_label.size + Vector2(20.0, 16.0)
-	_preview_panel.size = ts
-	# Place to the right of the node (or left if there's no room)
-	var px: float = node_pos.x + NODE_R + 14.0
-	if px + ts.x > 1280.0 - 8.0:
-		px = node_pos.x - NODE_R - 14.0 - ts.x
-	var py: float = node_pos.y - ts.y * 0.5
-	py = clampf(py, 8.0, 660.0 - ts.y)
-	_preview_panel.position = Vector2(px, py)
-	_preview_panel.visible = true
-
-func _hide_battle_preview() -> void:
-	if _preview_panel:
-		_preview_panel.visible = false
 
 func _show_node_detail(tier: int, index: int) -> void:
 	if _node_detail_label == null:

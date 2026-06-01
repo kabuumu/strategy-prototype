@@ -164,15 +164,6 @@ func _start_new_game(mode: String) -> void:
 	GameManager.battle_mode = mode   # "2d" hex turn-based / "3d" real-time / "auto" auto-battler
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
-func _on_new_game_2d() -> void:
-	_start_new_game("2d")
-
-func _on_new_game_3d() -> void:
-	_start_new_game("3d")
-
-func _on_new_game_auto() -> void:
-	_start_new_game("auto")
-
 func _on_continue() -> void:
 	if GameManager.load_run():
 		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
