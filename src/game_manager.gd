@@ -210,7 +210,11 @@ const BOSS_IDS: Array[String] = ["warlord", "pyromancer", "juggernaut"]
 # ---------------------------------------------------------------------------
 # Map constants
 # ---------------------------------------------------------------------------
-const MAP_TIERS: int = 5
+# Number of tiers in the run's map. Randomized per run in reset() to a value in
+# MAP_TIERS_RANGE — kept as a var (not const) so the rest of the code can read
+# GameManager.MAP_TIERS the same way regardless of this run's length.
+var MAP_TIERS: int = 13
+const MAP_TIERS_RANGE := Vector2i(12, 15)
 # Tier sizes are generated per-run (see _generate_map).
 # Tier 0 is 2-3 varied starting nodes; middle tiers vary 2–5; last tier = 1 (boss).
 
@@ -361,10 +365,11 @@ func reset() -> void:
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	battles_won = 0
-	# Pick this run's final boss
+	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()
 	boss_id = BOSS_IDS[brng.randi() % BOSS_IDS.size()]
+	MAP_TIERS = brng.randi_range(MAP_TIERS_RANGE.x, MAP_TIERS_RANGE.y)
 	_generate_map()
 
 # Called by battle on victory. Updates streak counters.
@@ -646,7 +651,10 @@ func is_final_battle(tier: int, elite: bool) -> bool:
 	return elite and tier == MAP_TIERS - 1
 
 func get_hp_multiplier(tier: int, elite: bool) -> float:
-	return 1.0 + tier * 0.2 + (0.25 if elite else 0.0)
+	# Slope scales with map length so the final tier lands at ~1.85x no matter how
+	# many tiers the run has — a longer map ramps gentler, not brutally harder.
+	var slope: float = 0.85 / float(max(1, MAP_TIERS - 1))
+	return 1.0 + tier * slope + (0.25 if elite else 0.0)
 
 # ---------------------------------------------------------------------------
 # Roster management

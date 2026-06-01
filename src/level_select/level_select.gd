@@ -5,11 +5,23 @@ const UITheme := preload("res://src/ui/ui_theme.gd")
 # ---------------------------------------------------------------------------
 # Layout constants
 # ---------------------------------------------------------------------------
-const TIER_Y: Array[float] = [630.0, 510.0, 390.0, 270.0, 150.0]
 const NODE_R: float = 32.0
 const MAP_LEFT: float = 72.0
 const MAP_RIGHT: float = 820.0
 const SIDE_X: float = 880.0
+# Maps now span 12-15 tiers — too many to fit at once, so the map scrolls
+# vertically (tier 0 at the bottom, the boss up top) and auto-centres on the
+# current tier. These bound the on-screen map band; tiers sit TIER_GAP apart on
+# a taller virtual canvas that we slide by _scroll_y.
+const MAP_TOP: float = 104.0
+const MAP_BOTTOM: float = 704.0
+const TIER_GAP: float = 120.0
+const CONTENT_PAD: float = 56.0
+const VIEW_CENTER: float = (MAP_TOP + MAP_BOTTOM) * 0.5
+
+var _scroll_y: float = 0.0
+var _scroll_min: float = 0.0
+var _scroll_max: float = 0.0
 
 const TYPE_COLORS: Dictionary = {
 	"battle":       Color(0.80, 0.28, 0.28),
@@ -145,8 +157,26 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Mouse wheel scrolls the map (only matters when there's off-screen map).
+	if event is InputEventMouseButton and event.pressed and _popup == null \
+			and _inventory_popup == null and _settings_overlay == null:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_scroll_by(-TIER_GAP * 0.5)
+			return
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_scroll_by(TIER_GAP * 0.5)
+			return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
+	# Arrow / page keys also scroll the map.
+	if event.keycode == KEY_UP:
+		_scroll_by(-TIER_GAP * 0.5); return
+	elif event.keycode == KEY_DOWN:
+		_scroll_by(TIER_GAP * 0.5); return
+	elif event.keycode == KEY_PAGEUP:
+		_scroll_by(-(MAP_BOTTOM - MAP_TOP) * 0.8); return
+	elif event.keycode == KEY_PAGEDOWN:
+		_scroll_by((MAP_BOTTOM - MAP_TOP) * 0.8); return
 	if event.keycode == KEY_I:
 		if _popup == null:
 			_toggle_inventory()
@@ -258,43 +288,105 @@ func _draw() -> void:
 	for tier in range(GameManager.MAP_TIERS - 1):
 		var from_count: int = GameManager.map_data[tier].size()
 		var to_count:   int = GameManager.map_data[tier + 1].size()
+		var ya := _tier_screen_y(tier)
+		var yb := _tier_screen_y(tier + 1)
+		# Skip pairs entirely outside the band (both ends off-screen on same side).
+		if (ya < MAP_TOP and yb < MAP_TOP) or (ya > MAP_BOTTOM and yb > MAP_BOTTOM):
+			continue
 		for i in range(from_count):
-			var from := Vector2(_node_x(i, from_count), TIER_Y[tier])
+			var from := Vector2(_node_x(i, from_count), ya)
 			for j in GameManager.map_data[tier][i]["connections"]:
-				var to := Vector2(_node_x(j, to_count), TIER_Y[tier + 1])
+				var to := Vector2(_node_x(j, to_count), yb)
 				draw_line(from, to, Color(0.36, 0.37, 0.50, 0.62), 2.0)
 	# Pulsing ring around the nodes you can move to next, so the choice pops.
 	var ct: int = GameManager.current_tier
 	if ct < GameManager.MAP_TIERS:
 		var count: int = GameManager.map_data[ct].size()
-		var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
-		for idx in GameManager.get_reachable_indices():
-			var c := Vector2(_node_x(int(idx), count), TIER_Y[ct])
-			draw_arc(c, NODE_R + 6.0 + pulse * 4.0, 0.0, TAU, 40,
-				Color(0.95, 0.85, 0.35, 0.30 + pulse * 0.40), 3.0, true)
+		var cy := _tier_screen_y(ct)
+		if cy >= MAP_TOP and cy <= MAP_BOTTOM:
+			var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
+			for idx in GameManager.get_reachable_indices():
+				var c := Vector2(_node_x(int(idx), count), cy)
+				draw_arc(c, NODE_R + 6.0 + pulse * 4.0, 0.0, TAU, 40,
+					Color(0.95, 0.85, 0.35, 0.30 + pulse * 0.40), 3.0, true)
+	# Mask any line/ring overflow above and below the scrolling band (the title
+	# and hint labels are child nodes, so they still render on top of this).
+	draw_rect(Rect2(0.0, 0.0, SIDE_X - 22.0, MAP_TOP), UITheme.BG)
+	draw_rect(Rect2(0.0, MAP_BOTTOM, SIDE_X - 22.0, 720.0 - MAP_BOTTOM), UITheme.BG)
+	# Scrollbar — shows how much map lies above/below the view.
+	if _scroll_max > _scroll_min:
+		var band := MAP_BOTTOM - MAP_TOP
+		var bx := MAP_RIGHT + 18.0
+		draw_rect(Rect2(bx, MAP_TOP, 5.0, band), Color(0.20, 0.22, 0.30, 0.55))
+		var view_frac: float = band / (band + (_scroll_max - _scroll_min))
+		var thumb_h: float = maxf(28.0, band * view_frac)
+		var t: float = (_scroll_y - _scroll_min) / (_scroll_max - _scroll_min)
+		draw_rect(Rect2(bx, MAP_TOP + t * (band - thumb_h), 5.0, thumb_h),
+			Color(0.70, 0.72, 0.82, 0.85))
 
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
 func _build_node_buttons() -> void:
 	add_child(UITheme.label("Choose Your Path", 38, Color(0.95, 0.90, 0.65), Vector2(72.0, 24.0)))
-	add_child(UITheme.label("Only highlighted nodes are reachable. Hover a node to preview the commitment.", 14, UITheme.TEXT_MUTED, Vector2(76.0, 70.0), Vector2(720.0, 28.0)))
+	add_child(UITheme.label("Only highlighted nodes are reachable. Hover to preview · scroll / ↑↓ to see the whole path.", 14, UITheme.TEXT_MUTED, Vector2(76.0, 70.0), Vector2(760.0, 28.0)))
 
 	# Node buttons
 	for tier in range(GameManager.MAP_TIERS):
 		for i in range(GameManager.map_data[tier].size()):
 			_add_node_button(tier, i)
 
+	# Position everything and slide the view to the tier the player is on.
+	_update_scroll_bounds()
+	_center_on_tier(GameManager.current_tier)
+
 func _node_x(index: int, count: int) -> float:
 	if count == 1:
 		return (MAP_LEFT + MAP_RIGHT) * 0.5
 	return MAP_LEFT + float(index) * (MAP_RIGHT - MAP_LEFT) / float(count - 1)
 
+# Screen Y for a tier at the current scroll. Tier 0 sits at the bottom of the
+# virtual canvas, the final (boss) tier at the top.
+func _tier_screen_y(tier: int) -> float:
+	var last: int = GameManager.MAP_TIERS - 1
+	return MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - _scroll_y
+
+func _update_scroll_bounds() -> void:
+	var last: int = GameManager.MAP_TIERS - 1
+	# _scroll_y = 0 shows the top (boss) tier; max shows tier 0 at the bottom.
+	_scroll_min = 0.0
+	_scroll_max = maxf(0.0, CONTENT_PAD + float(last) * TIER_GAP - (MAP_BOTTOM - CONTENT_PAD - MAP_TOP))
+
+func _center_on_tier(tier: int) -> void:
+	var last: int = GameManager.MAP_TIERS - 1
+	var desired: float = MAP_TOP + CONTENT_PAD + float(last - tier) * TIER_GAP - VIEW_CENTER
+	_scroll_y = clampf(desired, _scroll_min, _scroll_max)
+	_reposition_nodes()
+
+func _scroll_by(dy: float) -> void:
+	var prev := _scroll_y
+	_scroll_y = clampf(_scroll_y + dy, _scroll_min, _scroll_max)
+	if _scroll_y != prev:
+		_reposition_nodes()
+
+# Re-place every node button for the current scroll, hiding those outside the
+# visible band so they don't bleed into the header or footer.
+func _reposition_nodes() -> void:
+	for bd: Dictionary in _node_buttons:
+		var btn: Button = bd["button"]
+		var tier: int = bd["tier"]
+		var index: int = bd["index"]
+		var count: int = GameManager.map_data[tier].size()
+		var y := _tier_screen_y(tier)
+		btn.position = Vector2(_node_x(index, count), y) - Vector2(NODE_R, NODE_R)
+		btn.visible = y >= MAP_TOP + NODE_R and y <= MAP_BOTTOM - NODE_R
+	queue_redraw()
+
 func _add_node_button(tier: int, index: int) -> void:
 	var node_data: Dictionary = GameManager.map_data[tier][index]
 	var base_color: Color = TYPE_COLORS.get(node_data["type"], Color.GRAY)
 	var count: int = GameManager.map_data[tier].size()
-	var pos := Vector2(_node_x(index, count), TIER_Y[tier])
+	var pos := Vector2(_node_x(index, count), _tier_screen_y(tier))
 
 	var btn := Button.new()
 	btn.size = Vector2(NODE_R * 2.0, NODE_R * 2.0)
