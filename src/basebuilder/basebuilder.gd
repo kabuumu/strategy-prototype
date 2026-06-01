@@ -326,12 +326,16 @@ func _assign_orders(side: Array, foe_units: Array, foe_team: int) -> void:
 		if not is_instance_valid(u) or not u.is_alive():
 			continue
 		var nearest: RTUnit = null
-		var best: float = 240.0
+		var best: float = INF
 		for f: RTUnit in foe_units:
 			if is_instance_valid(f) and f.is_alive():
 				var d: float = u.position.distance_to(f.position)
-				if d < best:
-					best = d
+				if d > 240.0:
+					continue   # only engage foes within reach
+				var wounded: float = 1.0 - float(f.hp) / float(maxi(1, f.max_hp))
+				var score: float = d - wounded * 120.0   # concentrate fire on the hurt
+				if score < best:
+					best = score
 					nearest = f
 		if nearest != null:
 			u.order_attack(nearest)

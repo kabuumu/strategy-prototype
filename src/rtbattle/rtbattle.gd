@@ -426,17 +426,22 @@ func _ai_tick(delta: float) -> void:
 		)
 		if not needs_target:
 			continue
-		var nearest: RTUnit = null
-		var best_d: float = INF
+		# Smarter target pick: mostly the nearest, but heavily favour wounded
+		# regiments so the AI concentrates fire and secures kills instead of
+		# spreading damage. A near-dead target is worth ~180px of extra reach.
+		var best: RTUnit = null
+		var best_score: float = INF
 		for p: RTUnit in player_units:
 			if not p.is_alive():
 				continue
 			var d: float = u.position.distance_to(p.position)
-			if d < best_d:
-				nearest = p
-				best_d  = d
-		if nearest != null:
-			u.order_attack(nearest)
+			var wounded: float = 1.0 - float(p.hp) / float(maxi(1, p.max_hp))
+			var score: float = d - wounded * 180.0
+			if score < best_score:
+				best_score = score
+				best = p
+		if best != null:
+			u.order_attack(best)
 
 # ---------------------------------------------------------------------------
 # Input
