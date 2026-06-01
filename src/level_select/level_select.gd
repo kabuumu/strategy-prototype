@@ -303,6 +303,7 @@ func _add_node_button(tier: int, index: int) -> void:
 	btn.size = Vector2(NODE_R * 2.0, NODE_R * 2.0)
 	btn.position = pos - Vector2(NODE_R, NODE_R)
 	btn.text = TYPE_LABELS.get(node_data["type"], "?")
+	btn.tooltip_text = String(TYPE_DESC.get(node_data["type"], ""))
 	btn.add_theme_font_size_override("font_size", 11)
 	btn.add_theme_stylebox_override("normal",   _circle_style(base_color, NODE_R))
 	btn.add_theme_stylebox_override("hover",    _circle_style(base_color.lightened(0.25), NODE_R))
@@ -652,6 +653,9 @@ func _show_unit_select_popup() -> void:
 		]
 		btn.add_theme_font_size_override("font_size", 12)
 		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var ab: Dictionary = udata.get("ability", {})
+		if not ab.is_empty():
+			btn.tooltip_text = "%s: %s" % [String(ab.get("name", "")), String(ab.get("desc", ""))]
 		var bs := _circle_style(udata["color"].darkened(0.15), 8)
 		btn.add_theme_stylebox_override("normal",  bs)
 		btn.add_theme_stylebox_override("hover",   _circle_style(udata["color"].lightened(0.15), 8))
@@ -795,6 +799,9 @@ func _populate_shop() -> void:
 				udata["attack_range"], udata["damage"], GameManager.SHOP_UNIT_COST],
 			Vector2(20.0 + col * 196.0, 140.0 + row * 124.0), Vector2(188.0, 116.0),
 			udata["color"].darkened(0.1), can_afford)
+		var ab2: Dictionary = udata.get("ability", {})
+		if not ab2.is_empty():
+			btn.tooltip_text = "%s: %s" % [String(ab2.get("name", "")), String(ab2.get("desc", ""))]
 		btn.pressed.connect(_on_shop_buy_unit.bind(utype))
 		_popup.add_child(btn)
 

@@ -188,9 +188,20 @@ func _build_ui() -> void:
 	var x := 470.0
 	for id: String in BUILDABLE:
 		var b: Dictionary = STRUCTURES[id]
+		var role: String
+		if b.has("income"):
+			role = "+%d gold/sec" % int(b["income"])
+		elif b.has("produces"):
+			role = "produces %s every %.0fs" % [String(b["produces"]), float(b.get("interval", 0.0))]
+		elif int(b.get("dmg", 0)) > 0:
+			role = "defensive tower (%d dmg, range %d)" % [int(b["dmg"]), int(b["range"])]
+		else:
+			role = "structure"
+		var tip: String = "%s — %dg. %s. HP %d. Build on your half." % [
+			String(b["name"]), int(b["cost"]), role, int(b["count"]) * int(b["per"])]
 		_ui.add_child(UITheme.button("%s\n%dg" % [String(b["name"]), int(b["cost"])],
 			Vector2(x, 6.0), Vector2(118.0, 48.0), Color(b["color"]).darkened(0.05),
-			_on_pick.bind(id), 12))
+			_on_pick.bind(id), 12, tip))
 		x += 124.0
 
 	_ui.add_child(UITheme.button("Menu", Vector2(1158.0, 8.0), Vector2(100.0, 40.0), UITheme.RED, _toggle_settings_menu))

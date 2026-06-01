@@ -62,7 +62,7 @@ static func color_band(parent: Node, pos: Vector2, size: Vector2, color: Color) 
 	parent.add_child(rect)
 	return rect
 
-static func button(text: String, pos: Vector2, size: Vector2, color: Color, cb: Callable, font_size: int = 18) -> Button:
+static func button(text: String, pos: Vector2, size: Vector2, color: Color, cb: Callable, font_size: int = 18, tooltip: String = "") -> Button:
 	var btn := Button.new()
 	btn.text = text
 	btn.position = pos
@@ -72,6 +72,8 @@ static func button(text: String, pos: Vector2, size: Vector2, color: Color, cb: 
 	btn.add_theme_stylebox_override("hover", button_style(color.lightened(0.14)))
 	btn.add_theme_stylebox_override("pressed", button_style(color.darkened(0.22)))
 	btn.add_theme_stylebox_override("focus", button_style(color.lightened(0.08)))
+	if tooltip != "":
+		btn.tooltip_text = tooltip
 	btn.pressed.connect(cb)
 	return btn
 

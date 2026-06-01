@@ -202,9 +202,13 @@ func _build_ui() -> void:
 	var x := 470.0
 	for id: String in DEFENDER_TYPES:
 		var d: Dictionary = DEFENDER_TYPES[id]
+		var rng_txt: String = "ranged" if float(d["attack_range_px"]) > 80.0 else "melee"
+		var tip: String = "%s — %dg. %d dmg, %s (range %d), %d HP. Stationary, auto-fires in range." % [
+			String(d["name"]), int(d["cost"]), int(d["damage_per_attack"]), rng_txt,
+			int(d["attack_range_px"]), int(d["soldier_count"]) * int(d["hp_per_soldier"])]
 		_ui.add_child(UITheme.button("%s\n%dg" % [String(d["name"]), int(d["cost"])],
 			Vector2(x, 8.0), Vector2(104.0, 46.0), Color(0.22, 0.30, 0.42),
-			_on_pick_type.bind(id), 13))
+			_on_pick_type.bind(id), 13, tip))
 		x += 110.0
 
 	_ui.add_child(UITheme.button("Start Wave", Vector2(x + 6.0, 8.0), Vector2(120.0, 46.0), UITheme.GREEN, _on_start_wave, 15))

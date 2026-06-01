@@ -10,12 +10,12 @@ func _draw() -> void:
 	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
 
 const CAMPAIGN_MODES: Array = [
-	{"t": "2D Tactics",    "m": "2d",   "c": Color(0.18, 0.36, 0.65)},
-	{"t": "2D Total War",  "m": "rt",   "c": Color(0.22, 0.44, 0.50)},
-	{"t": "3D Real-Time",  "m": "3d",   "c": Color(0.36, 0.26, 0.60)},
-	{"t": "Auto-Battler",  "m": "auto", "c": Color(0.30, 0.50, 0.38)},
-	{"t": "Tower Defence", "m": "td",   "c": Color(0.45, 0.38, 0.20)},
-	{"t": "Base Building", "m": "base", "c": Color(0.50, 0.30, 0.26)},
+	{"t": "2D Tactics",    "m": "2d",   "c": Color(0.18, 0.36, 0.65), "tip": "Turn-based hex tactics. Move + act with action points; flanking, terrain and abilities matter."},
+	{"t": "2D Total War",  "m": "rt",   "c": Color(0.22, 0.44, 0.50), "tip": "Real-time-with-pause: command regiments, drag-select and order them across the field."},
+	{"t": "3D Real-Time",  "m": "3d",   "c": Color(0.36, 0.26, 0.60), "tip": "Total-War-style 3D battles with morale, facing, formations and a deployment phase."},
+	{"t": "Auto-Battler",  "m": "auto", "c": Color(0.30, 0.50, 0.38), "tip": "Your roster auto-resolves each fight. Hands-off — strength comes from the army you've built."},
+	{"t": "Tower Defence", "m": "td",   "c": Color(0.45, 0.38, 0.20), "tip": "Your roster deploys as defenders; hold the keep against scaling waves, build reinforcements."},
+	{"t": "Base Building", "m": "base", "c": Color(0.50, 0.30, 0.26), "tip": "AoE-style RTS: build economy + production, raze the entire enemy base to win."},
 ]
 
 func _build_ui() -> void:
@@ -34,7 +34,7 @@ func _build_ui() -> void:
 	_add_centered_label("NEW CAMPAIGN — choose your battle style", 15,
 		Color(0.72, 0.74, 0.52), 198.0)
 	_add_button_row(CAMPAIGN_MODES.map(func(md): return {
-			"t": md["t"], "c": md["c"], "cb": _start_new_game.bind(md["m"])
+			"t": md["t"], "c": md["c"], "cb": _start_new_game.bind(md["m"]), "tip": md["tip"]
 		}), 226.0, 192.0, 64.0, 17)
 
 	# Quick skirmishes — one-off battles, no campaign state touched.
@@ -126,13 +126,15 @@ func _add_button_row(items: Array, y: float, bw: float, bh: float, fs: int) -> v
 	for i in range(items.size()):
 		var it: Dictionary = items[i]
 		_add_menu_button(String(it["t"]), Vector2(sx + i * (bw + gap), y),
-			Vector2(bw, bh), it["c"], it["cb"], fs)
+			Vector2(bw, bh), it["c"], it["cb"], fs, String(it.get("tip", "")))
 
-func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable, fs: int = -1) -> void:
+func _add_menu_button(text: String, pos: Vector2, sz: Vector2, color: Color, cb: Callable, fs: int = -1, tip: String = "") -> void:
 	var btn := Button.new()
 	btn.text     = text
 	btn.position = pos
 	btn.size     = sz
+	if tip != "":
+		btn.tooltip_text = tip
 	btn.add_theme_font_size_override("font_size", fs if fs > 0 else (19 if sz.x < 180.0 else 26))
 	btn.add_theme_stylebox_override("normal",  _btn_style(color))
 	btn.add_theme_stylebox_override("hover",   _btn_style(color.lightened(0.18)))
