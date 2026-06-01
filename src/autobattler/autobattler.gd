@@ -936,6 +936,7 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
+		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
 		GameManager.save_run()

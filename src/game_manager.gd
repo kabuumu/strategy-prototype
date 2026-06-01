@@ -285,6 +285,9 @@ var pending_td: bool = false
 var pending_base: bool = false
 # When true, the campaign battle is a 2D real-time (Total War) fight (set by level_select).
 var pending_rt: bool = false
+# Set by the non-hex campaign modes on a win so level_select offers an upgrade
+# pick (the hex battle has its own inline upgrade picker). Consumed on the map.
+var pending_upgrade_reward: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
