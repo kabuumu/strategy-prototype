@@ -123,6 +123,25 @@ def _drum_kit():
     return {"K": _kick(), "S": _noise(0.13, 0.34, 32.0), "H": _noise(0.035, 0.16, 90.0)}
 
 
+def _seamless(samples: list, fade_ms: float = 45.0) -> list:
+    """Crossfade the loop's tail into its head so the wrap is click-free.
+
+    The last `w` samples are equal-power blended over the first `w` and then
+    dropped. That leaves result[0] == old[-w] and result[-1] == old[-w-1] —
+    adjacent samples in the original, so the loop point is continuous, and the
+    blend smooths the phase/amplitude jump between busy end and busy start.
+    """
+    w = int(RATE * fade_ms / 1000.0)
+    if w < 1 or 2 * w >= len(samples):
+        return samples
+    tail = samples[-w:]
+    out = samples[:-w]
+    for i in range(w):
+        a = (i + 0.5) / w
+        out[i] = out[i] * math.sin(a * math.pi / 2.0) + tail[i] * math.cos(a * math.pi / 2.0)
+    return out
+
+
 def _build(progression, scale, root_semi, bpm, melody_phrases, drums=None,
            drum_gain=1.0, mel_oct=12, bass_oct=-24, arp_oct=0, arp_div=2,
            duty=0.5, mel_vol=0.26, arp_vol=0.13):
@@ -184,6 +203,8 @@ def _build(progression, scale, root_semi, bpm, melody_phrases, drums=None,
     # Soft-clip (tanh) glues the mix and tames drum transients so peak-normalising
     # doesn't duck the sustained music — keeps it loud and punchy without clipping.
     samples = [math.tanh(1.6 * s) for s in samples]
+    # Seamless loop, then normalise (after the crossfade, so its overlap can't clip).
+    samples = _seamless(samples)
     peak = max(0.001, max(abs(s) for s in samples))
     g = 0.80 / peak
     return [s * g for s in samples]
