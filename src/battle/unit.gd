@@ -65,6 +65,7 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 			max_hp += 20
 	if team == 0:
 		max_hp += GameManager.relic_max_hp_bonus()
+		max_hp = maxi(10, max_hp - GameManager.curse_max_hp_penalty())
 	hp     = max_hp
 
 	_build_visuals(udata)
@@ -292,6 +293,7 @@ func get_move_range() -> int:
 		v += int(udata.get("enrage_move_bonus", 0))
 	if team == 0:
 		v += GameManager.relic_move_bonus()
+		v = maxi(1, v - GameManager.curse_move_penalty())
 	return v
 
 func get_attack_range() -> int:
@@ -322,6 +324,7 @@ func get_damage() -> int:
 		v += int(udata.get("enrage_damage_bonus", 0))
 	if team == 0:
 		v += GameManager.relic_damage_bonus()
+		v = maxi(1, v - GameManager.curse_damage_penalty())
 	return v
 
 # Multiplier applied to damage this unit RECEIVES. Used by combat resolution

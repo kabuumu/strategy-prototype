@@ -360,12 +360,20 @@ func _refresh() -> void:
 	queue_redraw()
 
 func _relics_text() -> String:
+	var lines: Array[String] = []
 	if GameManager.relics.is_empty():
-		return "(none)"
-	var names: Array[String] = []
-	for id: String in GameManager.relics:
-		names.append(GameManager.RELICS[id]["name"])
-	return "  ·  ".join(names)
+		lines.append("(no relics)")
+	else:
+		var names: Array[String] = []
+		for id: String in GameManager.relics:
+			names.append(GameManager.RELICS[id]["name"])
+		lines.append("  ·  ".join(names))
+	if not GameManager.curses.is_empty():
+		var cnames: Array[String] = []
+		for cid: String in GameManager.curses:
+			cnames.append(GameManager.CURSES[cid]["name"])
+		lines.append("Curses: " + "  ·  ".join(cnames))
+	return "\n".join(lines)
 
 func _roster_text() -> String:
 	if GameManager.player_roster.is_empty():

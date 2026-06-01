@@ -200,6 +200,7 @@ const MAP_TIERS: int = 5
 var player_roster: Array[Dictionary] = []
 var gold: int = 0
 var relics: Array[String] = []   # owned relic ids (run-long passives)
+var curses: Array[String] = []   # afflictions (run-long negative passives)
 var battle_mode: String = "2d"   # how campaign battles play: "2d" hex turn-based / "3d" real-time / "auto" auto-battler
 var current_tier: int = 0
 var last_chosen_index: int = -1
@@ -235,6 +236,16 @@ const RELICS: Dictionary = {
 	"war_banner":{"name": "War Banner",    "desc": "+1 action point to all your units"},
 	"keen_edge": {"name": "Keen Edge",     "desc": "+12% crit chance to all your units"},
 	"aegis":     {"name": "Aegis",         "desc": "Your units take 15% less damage"},
+	# Mythic — only ever granted by the (extremely rare) god encounter.
+	"divine_favor": {"name": "Divine Favour", "desc": "+25 dmg, +60 HP, +2 move, +1 range, +1 AP, +25% crit, −40% damage taken"},
+}
+
+# Curses — run-long afflictions (the dark side of risky events). Applied to the
+# player team in unit.gd, mirroring relics but negative.
+const CURSES: Dictionary = {
+	"frailty":  {"name": "Curse of Frailty",  "desc": "−15 max HP to all your units"},
+	"dullness": {"name": "Curse of Dullness",  "desc": "−5 damage to all your units"},
+	"sloth":    {"name": "Curse of Sloth",     "desc": "−1 move range to all your units"},
 }
 
 # Set before switching to the battle scene
@@ -270,6 +281,7 @@ func reset() -> void:
 		add_unit(t)
 	gold = 0
 	relics = []
+	curses = []
 	current_tier = 0
 	last_chosen_index = -1
 	pending_battle_tier = 0
@@ -329,6 +341,7 @@ func save_run() -> void:
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
 	cfg.set_value("run", "relics", relics)
+	cfg.set_value("run", "curses", curses)
 	cfg.set_value("run", "current_tier", current_tier)
 	cfg.set_value("run", "last_chosen_index", last_chosen_index)
 	cfg.set_value("run", "map_data", map_data)
@@ -352,6 +365,9 @@ func load_run() -> bool:
 	relics = []
 	for r in cfg.get_value("run", "relics", []):
 		relics.append(str(r))
+	curses = []
+	for c in cfg.get_value("run", "curses", []):
+		curses.append(str(c))
 	gold              = int(cfg.get_value("run", "gold", 0))
 	current_tier      = int(cfg.get_value("run", "current_tier", 0))
 	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
@@ -684,11 +700,69 @@ const EVENTS: Array = [
 			{"label": "Move on", "effect": {}},
 		],
 	},
+	{
+		"title": "Hooded Relic Trader",
+		"text": "A cloaked dealer spreads a velvet cloth of curious artifacts — rare, and not cheap.",
+		"choices": [
+			{"label": "Buy the artifact (85g)", "cost": 85, "effect": {"add_relic": "random"}},
+			{"label": "Haggle for two (130g, +relic, party tired −6 HP)", "cost": 130, "effect": {"add_relic": "random", "heal_all": 0, "damage_all": 6}},
+			{"label": "Browse and leave", "effect": {}},
+		],
+	},
+	{
+		"title": "Wandering Witch",
+		"text": "A hedge-witch stirs a kettle. 'A sip of my brew, dearie? Fortune favours the bold... usually.'",
+		"choices": [
+			{"label": "Drink the brew (55% bless / 45% curse)", "effect": {"witch_brew": true}},
+			{"label": "Cross her palm for a blessing (60g, +relic)", "cost": 60, "effect": {"add_relic": "random"}},
+			{"label": "Hurry past", "effect": {}},
+		],
+	},
+	{
+		"title": "Faustian Bargain",
+		"text": "A horned figure offers true power — at a price paid in your army's vitality.",
+		"choices": [
+			{"label": "Accept the pact (gain a relic AND a curse)", "effect": {"add_relic": "random", "add_curse": "random"}},
+			{"label": "Spurn the devil", "effect": {}},
+		],
+	},
+	{
+		"title": "Bandit Toll",
+		"text": "Bandits block the pass, hands on hilts. 'Pay the toll, or we take it in blood.'",
+		"choices": [
+			{"label": "Pay them off (60g)", "cost": 60, "effect": {}},
+			{"label": "Fight through (party takes −14 HP, loot +50g)", "effect": {"gold": 50, "damage_all": 14}},
+			{"label": "Bribe their captain (40g, he joins you)", "cost": 40, "effect": {"add_unit": "random"}},
+		],
+	},
+	{
+		"title": "Fey Shrine",
+		"text": "Will-o'-wisps drift around a fairy ring. Step inside and tempt fate — most leave changed, a rare few are truly blessed.",
+		"choices": [
+			{"label": "Enter the ring (rare great blessing possible)", "effect": {"fortune": true}},
+			{"label": "Leave an offering (40g, safe blessing)", "cost": 40, "effect": {"add_relic": "random"}},
+			{"label": "Keep your distance", "effect": {}},
+		],
+	},
 ]
+
+# The god encounter — astronomically rare (~1 in 100 runs given a couple of
+# event nodes per run). Hands out the mythic Divine Favour relic.
+const GOD_EVENT: Dictionary = {
+	"title": "An Audience with a God",
+	"text": "The air turns to gold. A vast, serene presence regards your warband with something like fondness. 'You amuse me, little general. Take this, and make legends.'",
+	"choices": [
+		{"label": "Accept the Divine Favour", "effect": {"add_relic_id": "divine_favor"}},
+		{"label": "Bow and decline (you fool)", "effect": {}},
+	],
+}
 
 func random_event() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
+	# ~0.6% per event node => roughly 1 in 100 runs you meet the god.
+	if not has_relic("divine_favor") and rng.randf() < 0.006:
+		return GOD_EVENT
 	return EVENTS[rng.randi() % EVENTS.size()]
 
 func _random_recruitable() -> String:
@@ -737,6 +811,45 @@ func apply_event_choice(choice: Dictionary) -> String:
 	if eff.has("add_relic"):
 		var rid: String = grant_random_relic()
 		parts.append(("found %s" % String(RELICS[rid]["name"])) if rid != "" else "no relic to find")
+	if eff.has("add_relic_id"):
+		var fixed: String = String(eff["add_relic_id"])
+		if RELICS.has(fixed):
+			add_relic(fixed)
+			for entry: Dictionary in player_roster:
+				entry["hp"] = unit_effective_max_hp(entry)
+			parts.append("RECEIVED %s" % String(RELICS[fixed]["name"]))
+	if eff.has("add_curse"):
+		var cid: String = grant_random_curse()
+		parts.append(("afflicted by %s" % String(CURSES[cid]["name"])) if cid != "" else "the hex fizzles")
+	if eff.has("witch_brew"):
+		var rng2 := RandomNumberGenerator.new()
+		rng2.randomize()
+		if rng2.randf() < 0.55:
+			var brid: String = grant_random_relic()
+			parts.append(("blessed with %s" % String(RELICS[brid]["name"])) if brid != "" else "a warm glow, nothing more")
+		else:
+			var bcid: String = grant_random_curse()
+			parts.append(("cursed with %s" % String(CURSES[bcid]["name"])) if bcid != "" else "a bitter taste, nothing more")
+	if eff.has("fortune"):
+		# Mostly modest, but a RARE great blessing (two relics + full heal) is possible.
+		var rng3 := RandomNumberGenerator.new()
+		rng3.randomize()
+		var r: float = rng3.randf()
+		if r < 0.12:
+			var b1: String = grant_random_relic()
+			var b2: String = grant_random_relic()
+			for entry: Dictionary in player_roster:
+				entry["hp"] = unit_effective_max_hp(entry)
+			var names: Array[String] = []
+			if b1 != "": names.append(String(RELICS[b1]["name"]))
+			if b2 != "": names.append(String(RELICS[b2]["name"]))
+			parts.append("a GREAT BLESSING! " + (", ".join(names) if not names.is_empty() else "the party is restored"))
+		elif r < 0.6:
+			var rb: String = grant_random_relic()
+			parts.append(("blessed with %s" % String(RELICS[rb]["name"])) if rb != "" else "a faint blessing")
+		else:
+			var rc: String = grant_random_curse()
+			parts.append(("cursed with %s" % String(CURSES[rc]["name"])) if rc != "" else "the omen passes")
 	if eff.has("add_upgrade") and not player_roster.is_empty():
 		var rng := RandomNumberGenerator.new()
 		rng.randomize()
@@ -802,23 +915,58 @@ func grant_random_relic() -> String:
 	return id
 
 func relic_damage_bonus() -> int:
-	return 8 if has_relic("whetstone") else 0
+	return (8 if has_relic("whetstone") else 0) + (25 if has_relic("divine_favor") else 0)
 
 func relic_move_bonus() -> int:
-	return 1 if has_relic("boots") else 0
+	return (1 if has_relic("boots") else 0) + (2 if has_relic("divine_favor") else 0)
 
 func relic_max_hp_bonus() -> int:
-	return 20 if has_relic("plating") else 0
+	return (20 if has_relic("plating") else 0) + (60 if has_relic("divine_favor") else 0)
 
 func relic_range_bonus() -> int:
-	return 1 if has_relic("longbow") else 0
+	return (1 if has_relic("longbow") else 0) + (1 if has_relic("divine_favor") else 0)
 
 func relic_ap_bonus() -> int:
-	return 1 if has_relic("war_banner") else 0
+	return (1 if has_relic("war_banner") else 0) + (1 if has_relic("divine_favor") else 0)
 
 func relic_crit_bonus() -> float:
-	return 0.12 if has_relic("keen_edge") else 0.0
+	return (0.12 if has_relic("keen_edge") else 0.0) + (0.25 if has_relic("divine_favor") else 0.0)
 
-# Multiplier on damage the player's units take (Aegis relic). 1.0 = no relic.
+# Multiplier on damage the player's units take (Aegis / Divine Favour). 1.0 = none.
 func relic_damage_taken_mult() -> float:
-	return 0.85 if has_relic("aegis") else 1.0
+	var m: float = 1.0
+	if has_relic("aegis"):
+		m *= 0.85
+	if has_relic("divine_favor"):
+		m *= 0.60
+	return m
+
+# --- Curses ---------------------------------------------------------------
+func has_curse(id: String) -> bool:
+	return id in curses
+
+func add_curse(id: String) -> void:
+	if id not in curses and CURSES.has(id):
+		curses.append(id)
+
+func grant_random_curse() -> String:
+	var pool: Array[String] = []
+	for id: String in CURSES:
+		if id not in curses:
+			pool.append(id)
+	if pool.is_empty():
+		return ""
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var cid: String = pool[rng.randi() % pool.size()]
+	add_curse(cid)
+	return cid
+
+func curse_max_hp_penalty() -> int:
+	return 15 if has_curse("frailty") else 0
+
+func curse_damage_penalty() -> int:
+	return 5 if has_curse("dullness") else 0
+
+func curse_move_penalty() -> int:
+	return 1 if has_curse("sloth") else 0
