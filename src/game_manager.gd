@@ -268,6 +268,8 @@ const CURSES: Dictionary = {
 	"frailty":  {"name": "Curse of Frailty",  "desc": "−15 max HP to all your units"},
 	"dullness": {"name": "Curse of Dullness",  "desc": "−5 damage to all your units"},
 	"sloth":    {"name": "Curse of Sloth",     "desc": "−1 move range to all your units"},
+	# Mythic — the dark mirror of Divine Favour, only from the demon encounter.
+	"damnation": {"name": "Damnation", "desc": "−50 max HP, −20 damage, −2 move range to all your units"},
 }
 
 # Set before switching to the battle scene
@@ -783,12 +785,27 @@ const GOD_EVENT: Dictionary = {
 	],
 }
 
+# The demon encounter — the dark mirror of the god. Equally rare; inflicts the
+# mythic Damnation curse unless you buy your way out.
+const DEMON_EVENT: Dictionary = {
+	"title": "The Devil's Due",
+	"text": "The shadows congeal into a horned thing with a banker's smile. 'A toll, general — in gold, in blood, or in suffering. Choose.'",
+	"choices": [
+		{"label": "Pay tribute to be spared (80g)", "cost": 80, "effect": {}},
+		{"label": "Offer a soul (lose a unit, walk free)", "effect": {"lose_unit": true}},
+		{"label": "Defy it (suffer Damnation)", "effect": {"add_curse_id": "damnation"}},
+	],
+}
+
 func random_event() -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	# ~0.6% per event node => roughly 1 in 100 runs you meet the god.
-	if not has_relic("divine_favor") and rng.randf() < 0.006:
+	# ~0.6% each per event node => roughly 1 in 100 runs you meet the god or demon.
+	var roll: float = rng.randf()
+	if not has_relic("divine_favor") and roll < 0.006:
 		return GOD_EVENT
+	if not has_curse("damnation") and roll < 0.012:
+		return DEMON_EVENT
 	return EVENTS[rng.randi() % EVENTS.size()]
 
 func _random_recruitable() -> String:
@@ -847,6 +864,11 @@ func apply_event_choice(choice: Dictionary) -> String:
 	if eff.has("add_curse"):
 		var cid: String = grant_random_curse()
 		parts.append(("afflicted by %s" % String(CURSES[cid]["name"])) if cid != "" else "the hex fizzles")
+	if eff.has("add_curse_id"):
+		var fc: String = String(eff["add_curse_id"])
+		if CURSES.has(fc):
+			add_curse(fc)
+			parts.append("AFFLICTED: %s" % String(CURSES[fc]["name"]))
 	if eff.has("witch_brew"):
 		var rng2 := RandomNumberGenerator.new()
 		rng2.randomize()
@@ -989,10 +1011,10 @@ func grant_random_curse() -> String:
 	return cid
 
 func curse_max_hp_penalty() -> int:
-	return 15 if has_curse("frailty") else 0
+	return (15 if has_curse("frailty") else 0) + (50 if has_curse("damnation") else 0)
 
 func curse_damage_penalty() -> int:
-	return 5 if has_curse("dullness") else 0
+	return (5 if has_curse("dullness") else 0) + (20 if has_curse("damnation") else 0)
 
 func curse_move_penalty() -> int:
-	return 1 if has_curse("sloth") else 0
+	return (1 if has_curse("sloth") else 0) + (2 if has_curse("damnation") else 0)
