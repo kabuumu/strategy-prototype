@@ -715,7 +715,8 @@ func _spawn_units() -> void:
 	var p_rows := _distribute_rows(roster.size())
 	for i in range(roster.size()):
 		var entry: Dictionary = roster[i]
-		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]), entry.get("upgrades", []))
+		var u := _create_unit(entry["type"], 0, Vector2i(0, p_rows[i]), entry.get("upgrades", []), GameManager.unit_level(entry))
+		u.src_xp = int(entry.get("xp", 0))
 		# Carry persisted HP forward (clamped to current max — VETERAN may have raised it)
 		u.hp = clampi(int(entry["hp"]), 1, u.max_hp)
 		# Field Kit relic: start each battle a little healed
@@ -802,11 +803,12 @@ func _distribute_rows(count: int) -> Array[int]:
 		rows.append(int(step * (i + 1)))
 	return rows
 
-func _create_unit(unit_type: String, team: int, pos: Vector2i, ups: Array = []) -> Unit:
+func _create_unit(unit_type: String, team: int, pos: Vector2i, ups: Array = [], vet: int = 1) -> Unit:
 	var scene: PackedScene = load("res://src/battle/unit.tscn")
 	var u := scene.instantiate() as Unit
 	_grid_node.add_child(u)
 	u.upgrades = ups.duplicate()
+	u.vet_level = vet
 	u.setup(unit_type, team, pos)
 	return u
 
@@ -2369,6 +2371,7 @@ func _persist_roster() -> void:
 				"type": u.unit_type,
 				"hp":   u.hp,
 				"upgrades": u.upgrades.duplicate(),
+				"xp": u.src_xp,
 			})
 	GameManager.set_roster(survivors)
 

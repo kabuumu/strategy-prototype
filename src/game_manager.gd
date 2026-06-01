@@ -325,6 +325,9 @@ func reset() -> void:
 # Called by battle on victory. Updates streak counters.
 func register_battle_won(_elite: bool) -> void:
 	battles_won += 1
+	# Surviving regiments gain battle experience (toward veterancy).
+	for entry: Dictionary in player_roster:
+		entry["xp"] = int(entry.get("xp", 0)) + 1
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
 		_save_meta()
@@ -591,7 +594,13 @@ func add_unit(unit_type: String) -> void:
 		"type": unit_type,
 		"hp":   int(UNIT_TYPES[unit_type]["max_hp"]),
 		"upgrades": [] as Array,
+		"xp": 0,
 	})
+
+# Veterancy: a regiment levels every 3 battles it survives (max level 4). Each
+# level past 1 grants +8 max HP and +2 damage (applied for the player team).
+func unit_level(entry: Dictionary) -> int:
+	return clampi(1 + int(entry.get("xp", 0)) / 3, 1, 4)
 
 # Restore every roster unit to full HP (heal node). Honours VETERAN HP boosts.
 func heal_roster() -> void:
@@ -627,6 +636,7 @@ func unit_effective_max_hp(entry: Dictionary) -> int:
 	for u: String in entry.get("upgrades", []):
 		if u == "veteran":
 			bonus += 20
+	bonus += (unit_level(entry) - 1) * 8   # veterancy
 	return base + bonus
 
 # Pick `count` distinct random upgrades from the pool. If pool is smaller,

@@ -29,6 +29,8 @@ var stunned: bool = false:       # skips its next activation
 		_refresh_status_badge()
 var ability_used: bool = false  # special ability is once per battle
 var upgrades: Array = []        # roguelike upgrades (see GameManager.UPGRADE_TYPES)
+var vet_level: int = 1          # veterancy level (1-4); +8 HP / +2 dmg per level past 1
+var src_xp: int = 0             # the roster entry's XP, carried so it persists across battles
 var enraged: bool = false       # boss state: gives stat bonuses
 var poison_turns: int = 0:       # damage-over-time at round start
 	set(v):
@@ -63,6 +65,7 @@ func setup(type: String, p_team: int, pos: Vector2i) -> void:
 	for u in upgrades:
 		if u == "veteran":
 			max_hp += 20
+	max_hp += (vet_level - 1) * 8   # veterancy
 	if team == 0:
 		max_hp += GameManager.relic_max_hp_bonus()
 		max_hp = maxi(10, max_hp - GameManager.curse_max_hp_penalty())
@@ -322,6 +325,7 @@ func get_damage() -> int:
 		v += 5 * berserker_stacks * missing_q
 	if enraged:
 		v += int(udata.get("enrage_damage_bonus", 0))
+	v += (vet_level - 1) * 2   # veterancy
 	if team == 0:
 		v += GameManager.relic_damage_bonus()
 		v = maxi(1, v - GameManager.curse_damage_penalty())

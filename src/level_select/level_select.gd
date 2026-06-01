@@ -519,7 +519,9 @@ func _roster_text() -> String:
 			hp_str += "⚠"
 		var ups: Array = entry.get("upgrades", [])
 		var up_str: String = (" ✦%d" % ups.size()) if ups.size() > 0 else ""
-		parts.append("%s %s%s" % [udata["name"], hp_str, up_str])
+		var lvl: int = GameManager.unit_level(entry)
+		var lvl_str: String = (" Lv%d" % lvl) if lvl > 1 else ""
+		parts.append("%s%s %s%s" % [udata["name"], lvl_str, hp_str, up_str])
 	return "   ".join(parts)
 
 # ---------------------------------------------------------------------------
