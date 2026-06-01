@@ -407,6 +407,8 @@ func _draw() -> void:
 	else:
 		draw_circle(ascr, 16.0, Color(0.9, 0.85, 0.5))
 
+	_draw_minimap()
+
 	# Mask the world bleeding under the right-hand HUD, then the panel backdrop.
 	draw_rect(Rect2(PLAY_W, 0.0, 1280.0 - PLAY_W, 720.0), UITheme.BG)
 	draw_rect(Rect2(SIDE_X - 22.0, 0.0, 422.0, 720.0), Color(0.035, 0.040, 0.060, 0.74))
@@ -414,6 +416,62 @@ func _draw() -> void:
 
 func _w2s(world: Vector2) -> Vector2:
 	return world - Vector2(_cam_x, 0.0)
+
+# Bottom-left overview of the whole run: every node + connection scaled to fit,
+# with visited/current/reachable/selected markers and a box showing where the
+# camera (the slice you can see) sits along the path. Restores the route-planning
+# the side-scroll view loses.
+func _draw_minimap() -> void:
+	var font := ThemeDB.fallback_font
+	var rect := Rect2(14.0, 498.0, 300.0, 184.0)
+	draw_rect(rect, Color(0.06, 0.07, 0.11, 0.88))
+	draw_rect(rect, Color(0.30, 0.32, 0.44, 0.9), false, 1.0)
+	draw_string(font, rect.position + Vector2(8.0, 16.0), "Map", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.60, 0.63, 0.72))
+
+	var last: int = maxi(1, GameManager.MAP_TIERS - 1)
+	var inner_x: float = rect.position.x + 20.0
+	var inner_w: float = rect.size.x - 32.0
+	var cy: float = rect.position.y + rect.size.y * 0.58
+	var lane: float = minf(16.0, (rect.size.y * 0.5 - 14.0) / 2.5)
+	var mm := func(tier: int, idx: int) -> Vector2:
+		var count: int = GameManager.map_data[tier].size()
+		return Vector2(
+			inner_x + (float(tier) / float(last)) * inner_w,
+			cy + (float(idx) - float(count - 1) * 0.5) * lane)
+
+	# Connections.
+	for tier in range(GameManager.MAP_TIERS - 1):
+		for i in range(GameManager.map_data[tier].size()):
+			var a: Vector2 = mm.call(tier, i)
+			for j in GameManager.map_data[tier][i]["connections"]:
+				draw_line(a, mm.call(tier + 1, int(j)), Color(0.32, 0.34, 0.46, 0.5), 1.0)
+
+	# Camera viewport indicator (which slice of the world is on screen).
+	var vx0: float = inner_x + (_cam_x / maxf(1.0, _world_w)) * inner_w
+	var vx1: float = inner_x + ((_cam_x + PLAY_W) / maxf(1.0, _world_w)) * inner_w
+	draw_rect(Rect2(vx0, rect.position.y + 22.0, maxf(3.0, vx1 - vx0), rect.size.y - 34.0),
+		Color(0.90, 0.92, 1.0, 0.07))
+
+	# Nodes.
+	var reach: Array = GameManager.get_reachable_indices()
+	var pulse: float = 0.5 + 0.5 * sin(_pulse_t * 4.0)
+	for tier in range(GameManager.MAP_TIERS):
+		for i in range(GameManager.map_data[tier].size()):
+			var nd: Dictionary = GameManager.map_data[tier][i]
+			var col: Color = TYPE_COLORS.get(nd["type"], Color.GRAY)
+			if bool(nd.get("visited", false)):
+				col = col.darkened(0.5)
+			var p: Vector2 = mm.call(tier, i)
+			draw_circle(p, 3.5, col)
+			if tier == GameManager.current_tier and i in reach:
+				draw_arc(p, 5.0 + pulse * 2.0, 0.0, TAU, 16, Color(0.95, 0.85, 0.35, 0.6), 1.5)
+
+	# Selected fork + current position.
+	if _nav == Nav.AT_NODE and _sel < _targets.size():
+		var t: Dictionary = _targets[_sel]
+		draw_arc(mm.call(int(t["tier"]), int(t["index"])), 6.0, 0.0, TAU, 16, Color(1.0, 1.0, 1.0, 0.9), 1.5)
+	if not _at_start:
+		draw_circle(mm.call(_cur_tier, _cur_index), 4.5, Color(0.95, 0.95, 1.0))
 
 # ---------------------------------------------------------------------------
 # World layout + navigation
