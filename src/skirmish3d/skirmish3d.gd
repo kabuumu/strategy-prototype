@@ -224,6 +224,9 @@ var _selection_label: Label
 var _command_label: Label
 var _begin_button: Button = null
 var _settings_overlay: Control = null
+var _help_overlay: Control = null
+
+const HELP_BODY: String = "Total-War style real-time tactics. Command regiments of soldiers; morale, facing and terrain all matter.\n\n- Left-drag: band-box select your regiments (Shift adds)\n- Right-click: move there, or attack an enemy regiment\n- Idle regiments hold ground and auto-engage anything in range\n\nCommand abilities (on the selection):\n- G: Shield Wall  ·  V: Volley  ·  F: cycle Formation (Line / Wedge)\n\nCamera: WASD / arrows / screen edge to pan, mouse wheel to zoom.\nSPACE pause  ·  Esc menu  ·  H help\n\nCampaign battles open in a DEPLOYMENT phase — reposition your regiments, then press Begin Battle (or Enter)."
 var _info_panel: Panel
 var _info_label: Label
 var _result_label: Label
@@ -734,6 +737,14 @@ func _toggle_settings_menu() -> void:
 	_settings_overlay = UITheme.pause_menu(_toggle_settings_menu, _on_menu_button, note)
 	_ui.add_child(_settings_overlay)
 
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = UITheme.help_overlay("3D Skirmish — Help", HELP_BODY, _toggle_help)
+	_ui.add_child(_help_overlay)
+
 func _spawn_armies() -> void:
 	if _campaign:
 		_spawn_campaign_armies()
@@ -888,6 +899,10 @@ func _process(delta: float) -> void:
 	_refresh_ui()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_H, KEY_ESCAPE]:
+			_toggle_help()
+		return
 	# Pause menu open: Esc closes it, swallow everything else.
 	if _settings_overlay != null:
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
@@ -902,6 +917,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_begin_battle()
 			return
 		match event.keycode:
+			KEY_H:
+				_toggle_help()
 			KEY_SPACE:
 				if not _deploying:
 					_set_paused(not _paused)

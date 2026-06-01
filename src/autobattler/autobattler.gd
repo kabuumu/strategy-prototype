@@ -102,6 +102,9 @@ var _start_abilities_applied: bool = false
 var _unit_state: Dictionary = {}
 var _feedback: Array = []
 var _last_recap: Dictionary = {}
+var _help_overlay: Control = null
+
+const HELP_BODY: String = "Auto-battler: build a team, then watch it fight on its own (Super-Auto-Pets style).\n\nSHOP phase:\n- Click a shop unit to buy it into your hotbar (costs gold)\n- Buy a duplicate onto a unit to level it up (stronger)\n- Move </ > to reorder — slot 1 deploys at the front\n- Sell, Freeze the shop, or Roll for new units\n- Press Fight when ready\n\nFIGHT phase: units auto-target and battle. Win to bank a win; lose a heart. Win enough to take the run; lose your hearts and it's over.\n\n(In a campaign battle the shop is skipped — your roster fights directly.)\n\nH help  ·  Esc / Menu to leave"
 
 # --- Campaign integration (battle_mode "auto") -----------------------------
 # Launched from the campaign map, the auto-battler runs a SINGLE fight — the
@@ -211,6 +214,7 @@ func _rebuild_ui() -> void:
 	else:
 		_add_label("Round %d   Gold %d   Wins %d/%d   Hearts %d" % [round_no, gold, wins, MAX_WINS, hearts],
 				17, UITheme.TEXT, Vector2(300.0, 20.0), Vector2(470.0, 26.0))
+	_add_button("Help", Vector2(1010.0, 16.0), Vector2(100.0, 38.0), Color(0.28, 0.30, 0.44), _toggle_help)
 	_add_button("Menu", Vector2(1120.0, 16.0), Vector2(104.0, 38.0), UITheme.RED, _on_menu)
 
 	if phase == Phase.SHOP:
@@ -618,6 +622,18 @@ func _on_restart() -> void:
 
 func _on_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		_toggle_help()
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = UITheme.help_overlay("Auto-Battler — Help", HELP_BODY, _toggle_help)
+	add_child(_help_overlay)
 
 func _roll_shop(_initial: bool) -> void:
 	var previous := shop.duplicate(true)

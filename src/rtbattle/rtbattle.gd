@@ -73,7 +73,10 @@ var _hovered_unit: RTUnit = null
 
 var _paused: bool = true
 var _settings_overlay: Control = null
+var _help_overlay: Control = null
 var _battle_started: bool = false
+
+const HELP_BODY: String = "Real-time-with-pause tactics — command regiments of soldiers.\n\n- Left-drag: band-box select (Shift adds to the selection)\n- Right-click: move there, or attack the enemy regiment under the cursor\n- Idle regiments hold ground and auto-engage anything that comes in range\n- Orders can be queued while paused, then play out when you resume\n\nSPACE start / pause  ·  R restart (when ended)  ·  Esc menu  ·  H help"
 var _player_has_issued_order: bool = false
 var _ended: bool = false
 
@@ -473,6 +476,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_H, KEY_ESCAPE]:
+			_toggle_help()
+		return
 	# Pause menu open: Esc closes it, swallow everything else.
 	if _settings_overlay != null:
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
@@ -485,9 +492,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_R:
 				if _ended:
 					get_tree().reload_current_scene()
+			KEY_H:
+				_toggle_help()
 			KEY_ESCAPE:
 				_toggle_settings_menu()
 		return
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = UITheme.help_overlay("2D Real-Time — Help", HELP_BODY, _toggle_help)
+	add_child(_help_overlay)
 
 # Left-click down: start a drag candidate. We don't know yet whether the
 # player will band-box or simply click a unit, so we record the origin and

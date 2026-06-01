@@ -71,7 +71,10 @@ var _gold_label: Label
 var _status_label: Label
 var _stat_label: Label
 var _settings_overlay: Control = null
+var _help_overlay: Control = null
 var _rng := RandomNumberGenerator.new()
+
+const HELP_BODY: String = "Destroy the ENTIRE enemy base — every building AND their Town Centre — to win. Lose your Town Centre and it's over.\n\nYour Town Centre earns gold over time. Spend it: pick a building from the top bar and click your half of the field (left).\n\n- Farm: more income\n- Barracks / Archery Range / Stable: auto-produce regiments that march right and assault the enemy base\n- Watchtower: stationary defender\n\nYour regiments fight what they meet, then grind through the enemy's buildings to the HQ. The enemy mirrors you with a scaling attack — defend!\n\nSPACE pause  ·  Esc menu  ·  H help"
 
 # Campaign integration
 var _campaign: bool = false
@@ -430,6 +433,10 @@ func _conclude_campaign(win: bool) -> void:
 # Input
 # ---------------------------------------------------------------------------
 func _unhandled_input(event: InputEvent) -> void:
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_H, KEY_ESCAPE]:
+			_toggle_help()
+		return
 	if _settings_overlay != null:
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 			_toggle_settings_menu()
@@ -441,10 +448,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				_status_label.text = "Paused." if _paused else "Resumed."
 			KEY_ESCAPE:
 				_toggle_settings_menu()
+			KEY_H:
+				_toggle_help()
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.position.y > FIELD_RECT.position.y:
 			_try_build(event.position)
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = UITheme.help_overlay("Base Building — Help", HELP_BODY, _toggle_help)
+	_ui.add_child(_help_overlay)
 
 func _toggle_settings_menu() -> void:
 	if _settings_overlay != null:

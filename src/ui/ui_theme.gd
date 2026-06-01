@@ -100,6 +100,24 @@ static func pause_menu(on_resume: Callable, on_exit: Callable, note: String = ""
 		root.add_child(label(note, 12, TEXT_MUTED, Vector2(516.0, 424.0), Vector2(250.0, 44.0)))
 	return root
 
+# Full-screen help overlay: dimmed background, a titled panel of body text, and
+# a Close button. Returns the root Control — add it as a child, free to dismiss.
+static func help_overlay(title: String, body: String, on_close: Callable) -> Control:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.z_index = 4096
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.72)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	root.add_child(dim)
+	panel(root, Vector2(240.0, 86.0), Vector2(800.0, 548.0))
+	root.add_child(label(title, 28, GOLD, Vector2(280.0, 104.0), Vector2(720.0, 36.0)))
+	root.add_child(label(body, 16, TEXT, Vector2(280.0, 156.0), Vector2(724.0, 360.0)))
+	root.add_child(button("Close   [H / Esc]", Vector2(520.0, 556.0), Vector2(240.0, 44.0),
+		Color(0.30, 0.32, 0.44), on_close))
+	return root
+
 static func chip(parent: Node, text: String, pos: Vector2, color: Color, width: float = 120.0) -> Label:
 	var bg := ColorRect.new()
 	bg.position = pos

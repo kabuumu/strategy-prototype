@@ -114,7 +114,10 @@ var _keep_label: Label
 var _wave_label: Label
 var _status_label: Label
 var _settings_overlay: Control = null
+var _help_overlay: Control = null
 var _rng := RandomNumberGenerator.new()
+
+const HELP_BODY: String = "Defend your keep (far left) from waves marching down the lane.\n\nPlace defenders: pick a type from the top bar, then click buildable ground (anywhere off the lane and clear of the keep). They hold position and auto-fire on anything in range.\n\nGold comes from kills and from clearing each wave — spend it on more defenders, then press Start Wave (or Enter) to send the next wave.\n\nEnemies that reach the keep damage it. Lose all keep HP and it's over. Survive every wave to win.\n\nSPACE pause  ·  Esc menu  ·  H help"
 
 func _ready() -> void:
 	_rng.randomize()
@@ -441,6 +444,10 @@ func _conclude_campaign(win: bool) -> void:
 # Input
 # ---------------------------------------------------------------------------
 func _unhandled_input(event: InputEvent) -> void:
+	if _help_overlay != null:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_H, KEY_ESCAPE]:
+			_toggle_help()
+		return
 	if _settings_overlay != null:
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 			_toggle_settings_menu()
@@ -452,12 +459,23 @@ func _unhandled_input(event: InputEvent) -> void:
 				_status_label.text = "Paused." if _paused else "Resumed."
 			KEY_ESCAPE:
 				_toggle_settings_menu()
+			KEY_H:
+				_toggle_help()
 			KEY_ENTER, KEY_KP_ENTER:
 				_on_start_wave()
 		return
+
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.position.y > FIELD_RECT.position.y:
 			_try_place(event.position)
+
+func _toggle_help() -> void:
+	if _help_overlay != null:
+		_help_overlay.queue_free()
+		_help_overlay = null
+		return
+	_help_overlay = UITheme.help_overlay("Tower Defence — Help", HELP_BODY, _toggle_help)
+	_ui.add_child(_help_overlay)
 
 func _toggle_settings_menu() -> void:
 	if _settings_overlay != null:
