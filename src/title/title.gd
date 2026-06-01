@@ -56,6 +56,8 @@ func _build_ui() -> void:
 		Color(0.32, 0.40, 0.55), _on_skirmish_2d)
 	_add_menu_button("Auto Battle", Vector2(730.0, y), Vector2(120.0, 54.0),
 		Color(0.30, 0.48, 0.36), _on_auto_battler)
+	_add_menu_button("Tower Defence", Vector2(580.0, y + 64.0), Vector2(270.0, 50.0),
+		Color(0.40, 0.34, 0.22), _on_tower_defense)
 
 	var hint := Label.new()
 	hint.text = "Left-click to act  ·  Right-click / Esc cancel  ·  Tab cycles units  ·  Enter ends turn  ·  Q ability  ·  T threat  ·  E enemy intent  ·  F fast-forward  ·  Press H for full help"
@@ -128,6 +130,9 @@ func _on_skirmish_2d() -> void:
 
 func _on_auto_battler() -> void:
 	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+
+func _on_tower_defense() -> void:
+	get_tree().change_scene_to_file("res://src/towerdefense/towerdefense.tscn")
 
 # ---------------------------------------------------------------------------
 # Meta-progression panel — shows previous run recap + lifetime bests so the
