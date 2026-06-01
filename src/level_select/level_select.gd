@@ -298,6 +298,15 @@ func _build_hud() -> void:
 # ---------------------------------------------------------------------------
 # Refresh state
 # ---------------------------------------------------------------------------
+# Friendly name for the run's battle style (shown in the Run panel).
+func _battle_mode_name() -> String:
+	match GameManager.battle_mode:
+		"3d":   return "3D Real-Time"
+		"auto": return "Auto-Battler"
+		"td":   return "Tower Defence"
+		"base": return "Base Building"
+		_:      return "2D Tactics"
+
 func _refresh() -> void:
 	var reachable := GameManager.get_reachable_indices()
 	var cur_tier := GameManager.current_tier
@@ -334,9 +343,8 @@ func _refresh() -> void:
 	_roster_label.text = _roster_text()
 	_gold_label.text   = "Gold: %d" % GameManager.gold
 	_relics_label.text = _relics_text()
-	_depth_label.text  = "Tier %d / %d   ·   Wins: %d   ·   Best: %d" % [
-		cur_tier, GameManager.MAP_TIERS,
-		GameManager.battles_won, GameManager.best_streak_ever
+	_depth_label.text  = "%s  ·  Tier %d / %d  ·  Wins %d" % [
+		_battle_mode_name(), cur_tier, GameManager.MAP_TIERS, GameManager.battles_won
 	]
 	if _node_detail_label != null and _node_detail_label.text == "":
 		var reach: Array = GameManager.get_reachable_indices()
