@@ -1264,7 +1264,7 @@ func _generate_map() -> void:
 	# Tier 0 has exactly 1 starting path; Tier 1 always branches into at least 2 different options (varying 2-5);
 	# remaining middle tiers vary 2-5; final tier is a single boss (1 node)
 	var sizes: Array = []
-	sizes.append(1)
+	sizes.append(rng.randi_range(2, 3))   # 2-3 starting nodes for early choice
 	sizes.append(rng.randi_range(2, 5))
 	for _t in range(MAP_TIERS - 3):
 		sizes.append(rng.randi_range(2, 5))
@@ -1294,21 +1294,15 @@ func _generate_map() -> void:
 
 # Types for starting nodes. If count is 1, always returns a single "battle" node.
 # Otherwise, falls back to the curated, varied spread.
-func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
+func _starting_node_types(count: int, rng: RandomNumberGenerator) -> Array:
 	if count == 1:
 		return ["battle"]
-	var out: Array = ["elite_battle"]
-	if count >= 3:
-		out.append("battle")
-	# Openers exclude "heal" (units start full) and "shop" (no gold yet) — both
-	# are pointless before the first battle. Gain-unit is the useful non-combat
-	# start.
-	var utility: Array = ["gain_unit"]
-	utility.shuffle()
-	var ui: int = 0
+	# Always offer a fight AND a recruit at the start so the player can build an
+	# army before fighting alone. Fill extra slots with more of either. No elite /
+	# heal / shop openers (pointless before the first battle).
+	var out: Array = ["battle", "gain_unit"]
 	while out.size() < count:
-		out.append(utility[ui % utility.size()])
-		ui += 1
+		out.append("battle" if rng.randf() < 0.5 else "gain_unit")
 	out.shuffle()
 	return out
 
