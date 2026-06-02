@@ -698,6 +698,15 @@ func card_take_reward(id: String) -> void:
 		return
 	card_deck.append(id)
 
+# Grant one reward Card into the deck on a battle win (auto-draft; a 3-card pick
+# popup replaces this in the prep-UI slice). No-op without a hero.
+func card_grant_battle_reward() -> String:
+	var ch: Array = card_reward_choices(1)
+	if ch.is_empty():
+		return ""
+	card_take_reward(String(ch[0]))
+	return String(ch[0])
+
 # ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
 # sway type the player must beat to recruit. Deterministic per node so the offer

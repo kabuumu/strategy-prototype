@@ -252,6 +252,33 @@ func clear_order() -> void:
 func is_alive() -> bool:
 	return hp > 0
 
+# Apply a Card effect dict (Spec B) to this unit. Covers the phase-1 effect
+# kinds (existing levers); damage/heal route through normal HP so combat juice
+# still plays. Pure stat kinds are headless-safe (no tween).
+func apply_effect(effect: Dictionary) -> void:
+	var kind := String(effect.get("kind", ""))
+	var v := float(effect.get("value", 0.0))
+	match kind:
+		"hp_pct":
+			max_hp = maxi(1, int(round(float(max_hp) * (1.0 + v))))
+			hp = max_hp
+			_refresh_hp_bar()
+		"damage_pct":
+			damage_per_attack = maxi(1, int(round(float(damage_per_attack) * (1.0 + v))))
+		"cooldown_pct":
+			attack_cooldown = maxf(0.2, attack_cooldown * (1.0 + v))
+		"ranged":
+			attack_range_px = maxf(attack_range_px, 200.0)
+			is_ranged = true
+		"heal_pct":
+			hp = mini(max_hp, hp + int(round(float(max_hp) * v)))
+			_refresh_hp_bar()
+		"heal_full":
+			hp = max_hp
+			_refresh_hp_bar()
+		"damage":
+			take_damage(int(v))
+
 func alive_soldier_count() -> int:
 	var n := 0
 	for s: Soldier in _soldiers:

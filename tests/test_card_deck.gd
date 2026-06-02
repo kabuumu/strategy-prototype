@@ -58,3 +58,10 @@ func test_deck_persists_through_save_load(t) -> void:
 	gm.load_run()
 	t.eq(gm.card_hand, hand_before, "hand restored from the run save")
 	gm.clear_run()
+
+func test_grant_battle_reward_grows_deck(t) -> void:
+	var gm := _deck_hero(88)
+	var before: int = gm.card_deck.size()
+	var id: String = gm.card_grant_battle_reward()
+	t.ne(id, "", "a reward card was granted on the win")
+	t.eq(gm.card_deck.size(), before + 1, "deck grew by one")

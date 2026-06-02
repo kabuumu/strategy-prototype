@@ -1038,6 +1038,7 @@ func _conclude_campaign(win: bool) -> void:
 		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
+		GameManager.card_grant_battle_reward()   # deck grows on a win (Spec B)
 		GameManager.save_run()
 		_result_text = "VICTORY"
 		Sfx.play("win", -7.0)
