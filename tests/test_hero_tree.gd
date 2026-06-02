@@ -126,3 +126,10 @@ func test_steadfast_keeps_auras_when_benched(t) -> void:
 	gm.hero_buy_node("drillmaster"); gm.hero_buy_node("quartermaster"); gm.hero_buy_node("thrifty")
 	t.eq(gm.hero_has_node("thrifty"), true, "Steadfast owned")
 	t.approx(gm.hero_aura_benched_factor(), 1.0, 0.0001, "Steadfast -> full auras when benched")
+
+func test_battle_xp_award_scales(t) -> void:
+	var gm := _gm_with_hero("bard")
+	gm.hero_award_battle_xp(3, false)
+	t.eq(gm.hero_banked_xp(), 14, "tier-3 win banks 8 + 2*3 = 14 XP")
+	gm.hero_award_battle_xp(3, true)
+	t.eq(gm.hero_banked_xp(), 14 + 21, "elite -> x1.5 of 14 = 21")

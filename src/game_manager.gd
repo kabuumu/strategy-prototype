@@ -984,15 +984,22 @@ func reset() -> void:
 	_generate_map()
 
 # Called by battle on victory. Updates streak counters.
-func register_battle_won(_elite: bool) -> void:
+# XP awarded for winning a battle: base + tier scaling, more for elite/boss.
+# Banked into the selected hero's permanent skill tree (Spec A). Tunable.
+func hero_award_battle_xp(tier: int, elite: bool) -> void:
+	var amount := int(round(float(8 + 2 * tier) * (1.5 if elite else 1.0)))
+	hero_award_xp(amount)
+
+func register_battle_won(elite: bool) -> void:
 	battles_won += 1
 	# Surviving regiments gain battle experience (toward veterancy).
 	for entry: Dictionary in player_roster:
 		entry["xp"] = int(entry.get("xp", 0)) + 1
-	hero_gain_xp()   # hero levels up off battle wins too
+	hero_gain_xp()   # legacy auto-level (removed in a later slice)
+	hero_award_battle_xp(pending_battle_tier, elite)   # bank permanent skill-tree XP
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
-		_save_meta()
+	_save_meta()   # flush meta (streak + banked hero XP) on every win
 
 # ---------------------------------------------------------------------------
 # Meta-progression persistence
