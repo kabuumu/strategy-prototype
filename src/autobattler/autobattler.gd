@@ -939,8 +939,8 @@ func _start_campaign_fight() -> void:
 	# survivors can be written back with permadeath after the fight).
 	var p_cards: Array = []
 	var p_entries: Array = []
-	# Prepend Hero if fighting (Fight mode) so they receive the front-most index (0)
-	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
+	# The hero always fights as the front-most (index 0) lineup unit (Spec D).
+	if GameManager.has_hero():
 		var hd := GameManager.hero_data()
 		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true})
 		p_entries.append(null)
@@ -970,13 +970,10 @@ func _start_campaign_fight() -> void:
 			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
 			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
 		player_units.append(u)
-	# Hero in the lineup grants its Command leader aura to the whole team at the
-	# start of battle (Spec A/D), scaled by the Command tree branch.
-	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
+	# The hero (always in the lineup) grants its Command leader aura to the whole
+	# team at the start of battle (Spec A/D), scaled by the Command tree branch.
+	if GameManager.has_hero():
 		_apply_hero_aura()
-	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
-	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
-		_apply_hero_buff(GameManager.pending_hero_buff)
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
@@ -1118,7 +1115,6 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
-		GameManager.add_valor(2 + (1 if elite else 0))
 		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
