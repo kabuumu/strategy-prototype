@@ -1065,9 +1065,9 @@ func _start_duel_fight() -> void:
 	var hero_card: Dictionary
 	if GameManager.has_hero():
 		var hd := GameManager.hero_data()
-		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
+		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true}
 	else:
-		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
+		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true}
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
@@ -1077,10 +1077,10 @@ func _start_duel_fight() -> void:
 		hero_unit.damage_per_attack = maxi(1, int(round(hero_unit.damage_per_attack * 1.25)))
 		if hero_unit.has_method("_refresh_hp_bar"):
 			hero_unit.call("_refresh_hp_bar")
-	var fm := GameManager.hero_fight_mult()
-	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * fm)))
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * GameManager.hero_hp_mult_tree())))
 	hero_unit.hp = hero_unit.max_hp
-	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * fm)))
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+	hero_unit.attack_cooldown = maxf(0.2, hero_unit.attack_cooldown * GameManager.hero_attack_cooldown_mult())
 	if hero_unit.has_method("_refresh_hp_bar"):
 		hero_unit.call("_refresh_hp_bar")
 	player_units.append(hero_unit)

@@ -995,8 +995,8 @@ func register_battle_won(elite: bool) -> void:
 	# Surviving regiments gain battle experience (toward veterancy).
 	for entry: Dictionary in player_roster:
 		entry["xp"] = int(entry.get("xp", 0)) + 1
-	hero_gain_xp()   # legacy auto-level (removed in a later slice)
-	hero_award_battle_xp(pending_battle_tier, elite)   # bank permanent skill-tree XP
+	hero_award_battle_xp(pending_battle_tier, elite)   # bank permanent skill-tree XP (Spec A)
+	# (Legacy per-run auto-level + perk pick removed — the permanent tree replaces it.)
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
 	_save_meta()   # flush meta (streak + banked hero XP) on every win
