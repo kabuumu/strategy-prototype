@@ -140,7 +140,9 @@ var _campaign_gold: int = 0
 var _duel: bool = false
 
 func _ready() -> void:
-	Music.play("battle")
+	# Music is set per phase: pre-fight phases (quick-battle SHOP, campaign PREP)
+	# loop the "Ceramic War Rite" intro; FIGHT swaps to the full battle track.
+	# Duels skip prep, so they go straight to the battle track.
 	_rng.randomize()
 	if GameManager.pending_duel:
 		GameManager.pending_duel = false
@@ -152,6 +154,7 @@ func _ready() -> void:
 		_campaign = true
 		_start_campaign_fight()
 		return
+	Music.play("prebattle")   # quick-battle shop is a pre-fight build phase
 	for _i in range(TEAM_SIZE):
 		team.append({})
 	_roll_shop(true)
@@ -649,6 +652,7 @@ func _on_fight() -> void:
 		_rebuild_ui()
 		return
 	phase = Phase.FIGHT
+	Music.play("battle")
 	selected_shop = -1
 	selected_slot = -1
 	_spawn_fight()
@@ -681,6 +685,7 @@ func _open_next_shop(message: String) -> void:
 	_roll_shop(false)
 	_refresh_enemy_preview()
 	phase = Phase.SHOP
+	Music.play("prebattle")   # back to the build phase between rounds
 	_shop_message = message
 	_rebuild_ui()
 
@@ -1050,6 +1055,7 @@ func _start_campaign_fight() -> void:
 	_prep_equip_id = ""
 	_prep_step = 0
 	phase = Phase.PREP
+	Music.play("prebattle")   # campaign pre-fight: loop the intro until fight starts
 	_rebuild_ui()
 
 # Spawn the chosen lineup, apply mults + aura, then draw 3 cards for the play step.
@@ -1095,6 +1101,7 @@ func _begin_fight() -> void:
 	_below50_triggered = false
 	_prep_equip_id = ""
 	phase = Phase.FIGHT
+	Music.play("battle")
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
@@ -1293,6 +1300,7 @@ func _start_duel_fight() -> void:
 	var recruit_pos := _formation_positions(1, 1)
 	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 1.0))
 	phase = Phase.FIGHT
+	Music.play("battle")   # duels skip prep — straight to combat track
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false

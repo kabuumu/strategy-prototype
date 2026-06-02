@@ -5,9 +5,10 @@ extends Node
 # restart). Volume rides the Master bus, so the title's volume slider controls it.
 
 const TRACKS: Dictionary = {
-	"title":  "res://assets/music/cathedral_rust_chant.mp3",
-	"map":    "res://assets/music/cathedral_rust_chant.mp3",
-	"battle": "res://assets/music/cathedral_rust_chant.mp3",
+	"title":     "res://assets/music/cathedral_rust_chant.mp3",
+	"map":       "res://assets/music/cathedral_rust_chant.mp3",
+	"prebattle": "res://assets/music/ceramic_war_rite_intro.mp3",   # pre-fight build/prep loop
+	"battle":    "res://assets/music/ceramic_war_rite.mp3",         # combat
 }
 
 var _player: AudioStreamPlayer
