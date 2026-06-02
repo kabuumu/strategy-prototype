@@ -17,7 +17,10 @@ const MAX_LEVEL: int = 3
 const FIGHT_INTRO_SECONDS: float = 0.75
 const FEEDBACK_LIFETIME: float = 0.55
 
-enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }
+enum Phase { SHOP, PREP, FIGHT, RESULT, REWARD, GAME_OVER }
+
+# Traps set during the campaign PREP phase, fired on combat events (Spec B).
+var _armed_traps: Array = []
 
 const UNIT_TYPES: Dictionary = {
 	"soldier": {
@@ -252,6 +255,26 @@ func _rebuild_ui() -> void:
 		_add_button("Freeze", Vector2(660.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.32, 0.42), _on_freeze)
 		_add_button("Roll -%d" % _current_roll_cost(), Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
 		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_fight)
+	elif phase == Phase.PREP:
+		_add_label("PREP — play cards on your army, then Fight", 18, UITheme.GOLD,
+				Vector2(300.0, 46.0), Vector2(700.0, 24.0))
+		_add_label("Your hand (one-use — Equip buffs the front unit, Spell hits the front enemy, Trap arms):",
+				13, UITheme.TEXT_MUTED, Vector2(40.0, 556.0), Vector2(880.0, 20.0))
+		var hand: Array = GameManager.card_hand
+		for i in range(hand.size()):
+			var cdef: Dictionary = GameManager.card_def(String(hand[i]))
+			var bx: float = 40.0 + float(i) * 150.0
+			if bx > 900.0:
+				break
+			var cat: String = String(cdef.get("category", ""))
+			var pc: Color = Color(0.30, 0.36, 0.28)
+			match cat:
+				"trap": pc = Color(0.42, 0.26, 0.26)
+				"spell": pc = Color(0.36, 0.30, 0.44)
+				"aftermath": pc = Color(0.22, 0.26, 0.34)
+			_add_button("%s\n[%s]" % [String(cdef.get("name", hand[i])), cat],
+					Vector2(bx, 582.0), Vector2(140.0, 68.0), pc, Callable(self, "_on_prep_card").bind(i), 12)
+		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _begin_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
 		if _fight_intro_timer > 0.0:
@@ -967,12 +990,73 @@ func _start_campaign_fight() -> void:
 			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
 			if u.has_method("_refresh_hp_bar"):
 				u.call("_refresh_hp_bar")
+	_armed_traps = []
+	# Campaign battles with cards in hand get a PREP step to play them first.
+	if GameManager.has_hero() and not GameManager.card_hand.is_empty():
+		phase = Phase.PREP
+		_rebuild_ui()
+	else:
+		_begin_fight()
+
+# Start the actual fight (after PREP, or directly when there's nothing to play).
+func _begin_fight() -> void:
+	# Fire combat-start traps set during prep.
+	var rest: Array = []
+	for trap in _armed_traps:
+		if String(trap.get("trigger", "")) == "combat_start":
+			_fire_trap(trap)
+		else:
+			rest.append(trap)
+	_armed_traps = rest
 	phase = Phase.FIGHT
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
 	_speed_scale = 1.0
 	_rebuild_ui()
+
+# Play the hand card at index `i` during PREP (Spec B). Equip buffs the front
+# unit, Spell hits the front enemy, Trap arms for a combat event. One-use.
+func _on_prep_card(i: int) -> void:
+	if phase != Phase.PREP or i < 0 or i >= GameManager.card_hand.size():
+		return
+	var cdef: Dictionary = GameManager.card_def(String(GameManager.card_hand[i]))
+	var cat := String(cdef.get("category", ""))
+	var effect: Dictionary = cdef.get("effect", {})
+	match cat:
+		"equip":
+			var u := _frontmost_alive(player_units)
+			if u == null:
+				return
+			u.apply_effect(effect)
+		"spell":
+			var e := _frontmost_alive(enemy_units)
+			if e != null:
+				e.apply_effect(effect)
+		"trap":
+			_armed_traps.append(cdef)
+		_:
+			return   # aftermath can't be played in prep
+	GameManager.card_play(i)
+	GameManager.save_run()
+	_rebuild_ui()
+
+# Resolve a trap's effect against the right target.
+func _fire_trap(trap: Dictionary) -> void:
+	var effect: Dictionary = trap.get("effect", {})
+	match String(effect.get("kind", "")):
+		"damage":
+			var e := _frontmost_alive(enemy_units)
+			if e != null:
+				e.apply_effect(effect)
+		"heal_pct", "heal_full":
+			var a := _frontmost_alive(player_units)
+			if a != null:
+				a.apply_effect(effect)
+		"team_damage_pct":
+			for u: RTUnit in player_units:
+				if is_instance_valid(u) and u.is_alive():
+					u.apply_effect({"kind": "damage_pct", "value": float(effect.get("value", 0.0))})
 
 func _apply_hero_buff(buff_id: String) -> void:
 	var bm := GameManager.hero_buff_mult()
@@ -1411,6 +1495,15 @@ func _on_unit_died(u: RTUnit) -> void:
 	if is_instance_valid(u):
 		_add_feedback(u.position, u.position, Color(0.95, 0.18, 0.14), "Down")
 		Sfx.play("death", -12.0)
+	# A player Troop falling fires armed ally_death traps once (Spec B).
+	if is_instance_valid(u) and u.team == 0 and not _armed_traps.is_empty():
+		var rest: Array = []
+		for trap in _armed_traps:
+			if String(trap.get("trigger", "")) == "ally_death":
+				_fire_trap(trap)
+			else:
+				rest.append(trap)
+		_armed_traps = rest
 	player_units.erase(u)
 	enemy_units.erase(u)
 	var t := get_tree().create_timer(1.0)
