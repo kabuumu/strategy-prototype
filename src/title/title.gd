@@ -2,11 +2,19 @@ extends Node2D
 
 func _ready() -> void:
 	Music.play("title")
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # crisp pixel-art preview
 	_build_ui()
 
 func _draw() -> void:
 	# Background gradient effect — two overlapping rects
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.05, 0.06, 0.09))
+	# Selected-hero preview — large and faint, flanking the menu.
+	var hid := GameManager.resolved_menu_hero()
+	var sk := String(GameManager.HEROES.get(hid, {}).get("sprite_key", "soldier"))
+	var tex := load("res://assets/units/%s_player.png" % sk) as Texture2D
+	if tex != null:
+		draw_texture_rect(tex, Rect2(Vector2(110.0, 250.0), Vector2(340.0, 340.0)), false, Color(1.0, 1.0, 1.0, 0.16))
+		draw_texture_rect(tex, Rect2(Vector2(830.0, 250.0), Vector2(340.0, 340.0)), false, Color(1.0, 1.0, 1.0, 0.16))
 	# Subtle decorative line under the title block
 	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
 
@@ -31,6 +39,12 @@ func _build_ui() -> void:
 	_add_menu_button("Quick Auto Battle", Vector2(490.0, 356.0), Vector2(300.0, 50.0),
 		Color(0.28, 0.44, 0.34), _on_auto_battler, 20,
 		"A single auto-resolved fight — no campaign state touched.")
+
+	# Choose which hero leads campaigns (previewed in the background).
+	_add_menu_button("Choose Hero", Vector2(490.0, 426.0), Vector2(300.0, 46.0),
+		Color(0.34, 0.30, 0.46), _on_choose_hero, 20, "Pick which hero leads your campaigns.")
+	var hname: String = String(GameManager.HEROES.get(GameManager.resolved_menu_hero(), {}).get("name", "—"))
+	_add_centered_label("Selected hero: %s" % hname, 18, Color(0.85, 0.80, 0.55), 486.0)
 
 	_add_centered_label("H help · Esc back",
 		13, Color(0.40, 0.40, 0.45), 692.0)
@@ -132,7 +146,14 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 	return s
 
 func _on_new_campaign() -> void:
-	# Route to character select; the chosen hero kicks off the auto-battler run.
+	# Start the run with the menu-selected hero (Choose Hero changes it).
+	GameManager.clear_run()
+	GameManager.reset()
+	GameManager.battle_mode = "auto"
+	GameManager.select_hero(GameManager.resolved_menu_hero())
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+func _on_choose_hero() -> void:
 	get_tree().change_scene_to_file("res://src/charselect/charselect.tscn")
 
 func _on_continue() -> void:

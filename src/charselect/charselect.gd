@@ -130,15 +130,11 @@ func _on_choose(hero_id: String) -> void:
 	# Guard: locked heroes are never selectable (button is disabled, but be safe).
 	if not GameManager.is_hero_unlocked(hero_id):
 		return
-	# Start the run immediately. The permanent skill tree is earned/spent
-	# in-game (press T on the overworld), not in this dialog.
-	# Order matters: reset() before select_hero() so the roster/gold exist for
-	# the hero's start_bonus. hero_meta (the tree) is NOT cleared by reset().
-	GameManager.clear_run()
-	GameManager.reset()
-	GameManager.battle_mode = "auto"
-	GameManager.select_hero(hero_id)
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	# Set this as the menu's chosen hero and return to the title; New Campaign on
+	# the title starts the run with it.
+	GameManager.menu_hero = hero_id
+	GameManager._save_meta()
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _on_back() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")

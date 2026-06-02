@@ -276,6 +276,16 @@ func is_hero_unlocked(id: String) -> bool:
 func hero_unlock_hint(id: String) -> String:
 	return String(HERO_UNLOCK.get(id, {}).get("hint", ""))
 
+# The hero a new campaign will start with (menu selection). Falls back to the
+# first unlocked hero if none is chosen or the chosen one is locked.
+func resolved_menu_hero() -> String:
+	if menu_hero != "" and HEROES.has(menu_hero) and is_hero_unlocked(menu_hero):
+		return menu_hero
+	for hid in HERO_IDS:
+		if is_hero_unlocked(hid):
+			return hid
+	return HERO_IDS[0]
+
 # Hero data for the active run ({} when no hero / standalone mode).
 func hero_data() -> Dictionary:
 	return HEROES.get(selected_hero, {})
@@ -927,6 +937,7 @@ var runs_won: int = 0           # persists across runs (boss cleared) — gates 
 # XP banks across runs and is spent between runs to buy levels (each level grants
 # one skill point) and place points on tree nodes. Survives reset()/select_hero().
 var hero_meta: Dictionary = {}
+var menu_hero: String = ""       # the hero chosen on the main menu for new campaigns
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -1103,6 +1114,7 @@ func _load_meta() -> void:
 	runs_won          = int(cfg.get_value("meta", "runs_won",          0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
+	menu_hero         = str(cfg.get_value("meta", "menu_hero", ""))
 	_load_hero_meta(cfg)
 
 # Sanitised load of the per-hero skill-tree records (Spec A). Coerces leaves to
@@ -1135,6 +1147,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "runs_won",          runs_won)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
+	cfg.set_value("meta", "menu_hero",         menu_hero)
 	cfg.set_value("meta", "hero_meta",         hero_meta)
 	cfg.save(META_PATH)
 
