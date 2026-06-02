@@ -58,6 +58,19 @@ func test_map_structure(t) -> void:
 	t.eq(gm.map_data[last].size(), 1, "final tier is a single boss")
 	t.eq(String(gm.map_data[last][0]["type"]), "elite_battle", "boss node is elite_battle")
 
+func test_node_balance_no_econ_clustering(t) -> void:
+	# No two consecutive middle tiers should both contain a shop/heal (#12).
+	var gm := _fresh()
+	var prev_econ := false
+	for tier in range(1, gm.map_data.size() - 1):
+		var econ := false
+		for nd in gm.map_data[tier]:
+			var ty := String(nd["type"])
+			if ty == "shop" or ty == "heal":
+				econ = true
+		t.ok(not (econ and prev_econ), "tier %d not back-to-back shop/rest" % tier)
+		prev_econ = econ
+
 # --- battle odds heuristic --------------------------------------------------
 
 func test_battle_odds_label(t) -> void:

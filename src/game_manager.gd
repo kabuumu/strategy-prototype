@@ -1270,12 +1270,12 @@ func _generate_map() -> void:
 		sizes.append(rng.randi_range(2, 5))
 	sizes.append(1)
 
-	# Create nodes (connections filled in next pass)
+	# Create nodes with placeholder types; _assign_node_types sets balanced types.
 	for tier in range(MAP_TIERS):
 		var nodes: Array = []
 		for i in range(sizes[tier]):
 			nodes.append({
-				"type": _pick_node_type(tier, rng),
+				"type": "elite_battle" if tier == MAP_TIERS - 1 else "battle",
 				"tier": tier,
 				"index": i,
 				"visited": false,
@@ -1283,7 +1283,9 @@ func _generate_map() -> void:
 			})
 		map_data.append(nodes)
 
-	# The single starting node must always be a regular battle
+	_assign_node_types(rng)
+
+	# Starting nodes offer a fight + a recruit (overrides tier 0).
 	var start_types: Array = _starting_node_types(map_data[0].size(), rng)
 	for i in range(map_data[0].size()):
 		map_data[0][i]["type"] = start_types[i]
@@ -1349,6 +1351,39 @@ func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
 			var c: Array = map_data[tier][best_i]["connections"]
 			c.append(j)
 			map_data[tier][best_i]["connections"] = c
+
+# Assign middle-tier node types with balance (#12): mostly battles, with a few
+# spread-out specials. Shops and heals are budgeted and never placed in two
+# consecutive tiers, so paths can't be a boring shop -> shop -> rest chain.
+func _assign_node_types(rng: RandomNumberGenerator) -> void:
+	var last := MAP_TIERS - 1
+	var shop_budget := maxi(1, int(MAP_TIERS / 4))
+	var heal_budget := maxi(1, int(MAP_TIERS / 5))
+	var prev_econ := false   # the previous tier placed a shop or heal
+	for tier in range(1, last):
+		var nodes: Array = map_data[tier]
+		for nd in nodes:
+			nd["type"] = "battle"
+		var options: Array = ["elite_battle", "gain_unit", "event", "treasure"]
+		if not prev_econ:
+			if shop_budget > 0:
+				options.append("shop")
+			if heal_budget > 0:
+				options.append("heal")
+		var econ_here := false
+		if nodes.size() > 0 and rng.randf() < 0.6:
+			var sp := String(options[rng.randi() % options.size()])
+			nodes[rng.randi() % nodes.size()]["type"] = sp
+			if sp == "shop":
+				shop_budget -= 1
+				econ_here = true
+			elif sp == "heal":
+				heal_budget -= 1
+				econ_here = true
+		# A bigger tier may add an elite as a second special.
+		if nodes.size() >= 4 and rng.randf() < 0.3:
+			nodes[rng.randi() % nodes.size()]["type"] = "elite_battle"
+		prev_econ = econ_here
 
 func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
 	if tier == MAP_TIERS - 1:
