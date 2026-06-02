@@ -1,5 +1,35 @@
 # Outstanding work — hero evolution / SAP / deck / overworld
 
+## ⟶ NEXT SESSION: brainstorm first
+
+- **Recruitment mechanics need rework.** Current: `gain_unit` nodes offer 2–3
+  candidates resolved by a sway minigame (dialogue / persuasion / duel). It
+  feels thin and needs a richer design — brainstorm (superpowers:brainstorming)
+  at the **start of the next session** before touching code. Consider: how the
+  pool of available allies is presented/chosen, how recruiting ties into the new
+  lineup/bench idea (#10 below), pacing of when allies appear, and cost/risk
+  tradeoffs. Tie it to the user's note: "we need to recruit units at the first
+  few node levels … a pool of available allies to choose from and add to my
+  hotbar."
+
+## Playtest feedback — queued (not yet done)
+
+- **#10 PREP redesign (big, gameplay):** don't auto-deploy the whole roster —
+  give a **pool of allies** to pick a **lineup/hotbar** from (cap ~5, hero
+  included), and change card play to **draw 3, play 1** (onto the field or a
+  troop). Restructure `autobattler.gd::_start_campaign_fight` + the PREP phase.
+  Overlaps the unimplemented SAP lineup/bench (gap #2 below) and the recruitment
+  rework above.
+- **Text wrapping on charselect** — reported; may already be resolved by removing
+  the old in-card tree overlay. Verify visually next session.
+
+### Playtest feedback — DONE this session
+click-travel auto-walk · removed prebattle popup · skill tree = in-game CK3
+screen (T) with level collapsed into points · deck view/prune screen (C) ·
+choose-hero from main menu + background preview · 2–3 starting nodes (fight +
+recruit) · balanced node generation (no shop/rest clustering) · map node icons.
+
+
 Status snapshot for the work landed from the five `2026-06-02-*` specs. The core
 of every spec is implemented and playable (front-vs-front combat + sprite army,
 permanent per-hero CK3 skill tree with the full earn→spend→fight loop, Card deck
