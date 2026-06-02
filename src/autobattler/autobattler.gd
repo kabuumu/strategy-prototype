@@ -21,6 +21,9 @@ enum Phase { SHOP, PREP, FIGHT, RESULT, REWARD, GAME_OVER }
 
 # Traps set during the campaign PREP phase, fired on combat events (Spec B).
 var _armed_traps: Array = []
+var _below50_triggered: bool = false   # troop_below_50 traps fire once per fight
+var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (Spec B)
+var _prep_equip_card: int = -1         # hand index of an Equip card awaiting a unit tap
 
 const UNIT_TYPES: Dictionary = {
 	"soldier": {
@@ -179,7 +182,24 @@ func _process(delta: float) -> void:
 				u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius, FIELD_RECT.end.y - u.radius)
 		if _check_fight_end():
 			break
+	_check_below50_traps()
 	queue_redraw()
+
+# Fire troop_below_50 traps once, when any player Troop first drops below half HP.
+func _check_below50_traps() -> void:
+	if _below50_triggered or _armed_traps.is_empty():
+		return
+	for u: RTUnit in player_units:
+		if is_instance_valid(u) and u.is_alive() and float(u.hp) / float(maxi(1, u.max_hp)) < 0.5:
+			var rest: Array = []
+			for trap in _armed_traps:
+				if String(trap.get("trigger", "")) == "troop_below_50":
+					_fire_trap(trap)
+				else:
+					rest.append(trap)
+			_armed_traps = rest
+			_below50_triggered = true
+			return
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.055, 0.065, 0.090))
@@ -258,8 +278,10 @@ func _rebuild_ui() -> void:
 	elif phase == Phase.PREP:
 		_add_label("PREP — play cards on your army, then Fight", 18, UITheme.GOLD,
 				Vector2(300.0, 46.0), Vector2(700.0, 24.0))
-		_add_label("Your hand (one-use — Equip buffs the front unit, Spell hits the front enemy, Trap arms):",
-				13, UITheme.TEXT_MUTED, Vector2(40.0, 556.0), Vector2(880.0, 20.0))
+		var prep_hint := "Tap a card — Equip then tap a unit · Spell hits the front enemy · Trap arms · one-use"
+		if _prep_equip_card >= 0:
+			prep_hint = "Now tap a unit on the field to equip it."
+		_add_label(prep_hint, 13, UITheme.TEXT_MUTED, Vector2(40.0, 556.0), Vector2(900.0, 20.0))
 		var hand: Array = GameManager.card_hand
 		for i in range(hand.size()):
 			var cdef: Dictionary = GameManager.card_def(String(hand[i]))
@@ -305,7 +327,15 @@ func _rebuild_ui() -> void:
 			if _campaign_lost:
 				_add_button("To Title", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
 			else:
-				_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue)
+				if not _card_reward_offer.is_empty():
+					_add_label("Add a card to your deck (or Continue to skip):", 14, UITheme.TEXT_MUTED,
+							Vector2(300.0, 604.0), Vector2(680.0, 20.0))
+					for ci in range(_card_reward_offer.size()):
+						var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
+						_add_button(String(cd.get("name", _card_reward_offer[ci])),
+								Vector2(300.0 + float(ci) * 200.0, 628.0), Vector2(188.0, 42.0),
+								Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
+				_add_button("Continue", Vector2(560.0, 678.0), Vector2(160.0, 40.0), UITheme.GREEN, _on_campaign_continue)
 		else:
 			_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
 	elif phase == Phase.REWARD:
@@ -671,6 +701,28 @@ func _on_menu() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		_toggle_help()
+	# PREP: after picking an Equip card, tap a unit on the field to equip it.
+	if phase == Phase.PREP and event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		_prep_click(event.position)
+
+# Apply a pending Equip card to the tapped player unit (Spec B single-target).
+func _prep_click(pos: Vector2) -> void:
+	if _prep_equip_card < 0 or _prep_equip_card >= GameManager.card_hand.size():
+		return
+	var hit: RTUnit = null
+	for u: RTUnit in player_units:
+		if is_instance_valid(u) and u.is_alive() and pos.distance_to(u.position) <= u.radius + 14.0:
+			hit = u
+			break
+	if hit == null:
+		return
+	var cdef: Dictionary = GameManager.card_def(String(GameManager.card_hand[_prep_equip_card]))
+	hit.apply_effect(cdef.get("effect", {}))
+	GameManager.card_play(_prep_equip_card)
+	GameManager.save_run()
+	_prep_equip_card = -1
+	_rebuild_ui()
 
 func _toggle_help() -> void:
 	if _help_overlay != null:
@@ -1005,6 +1057,8 @@ func _begin_fight() -> void:
 		else:
 			rest.append(trap)
 	_armed_traps = rest
+	_below50_triggered = false
+	_prep_equip_card = -1
 	phase = Phase.FIGHT
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
@@ -1022,10 +1076,9 @@ func _on_prep_card(i: int) -> void:
 	var effect: Dictionary = cdef.get("effect", {})
 	match cat:
 		"equip":
-			var u := _frontmost_alive(player_units)
-			if u == null:
-				return
-			u.apply_effect(effect)
+			_prep_equip_card = i   # wait for a unit tap (resolved in _prep_click)
+			_rebuild_ui()
+			return
 		"spell":
 			var e := _frontmost_alive(enemy_units)
 			if e != null:
@@ -1054,6 +1107,15 @@ func _fire_trap(trap: Dictionary) -> void:
 			for u: RTUnit in player_units:
 				if is_instance_valid(u) and u.is_alive():
 					u.apply_effect({"kind": "damage_pct", "value": float(effect.get("value", 0.0))})
+
+# Draft the chosen reward card into the deck (Spec B) on the result screen.
+func _on_pick_reward_card(i: int) -> void:
+	if i < 0 or i >= _card_reward_offer.size():
+		return
+	GameManager.card_take_reward(String(_card_reward_offer[i]))
+	GameManager.save_run()
+	_card_reward_offer = []
+	_rebuild_ui()
 
 func _apply_hero_buff(buff_id: String) -> void:
 	var bm := GameManager.hero_buff_mult()
@@ -1111,6 +1173,18 @@ func _conclude_campaign(win: bool) -> void:
 				var entry = st.get("roster_entry", null)
 				if entry != null:
 					survivors.append(entry)
+		# Aftermath cards in hand auto-resolve on the survivors (Spec B): a
+		# "level" card promotes a survivor's roster entry. (v1 auto; a chooser
+		# is a later refinement.)
+		if GameManager.has_hero():
+			for hi in range(GameManager.card_hand.size() - 1, -1, -1):
+				var acd: Dictionary = GameManager.card_def(String(GameManager.card_hand[hi]))
+				if String(acd.get("category", "")) != "aftermath" or survivors.is_empty():
+					continue
+				var eff: Dictionary = acd.get("effect", {})
+				if String(eff.get("kind", "")) == "level":
+					survivors[0]["level"] = int(survivors[0].get("level", 1)) + int(eff.get("value", 1))
+				GameManager.card_play(hi)
 		GameManager.set_roster(survivors)
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
@@ -1118,7 +1192,7 @@ func _conclude_campaign(win: bool) -> void:
 		GameManager.pending_upgrade_reward = true
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
-		GameManager.card_grant_battle_reward()   # deck grows on a win (Spec B)
+		_card_reward_offer = GameManager.card_reward_choices(3) if GameManager.has_hero() else []
 		GameManager.save_run()
 		_result_text = "VICTORY"
 		Sfx.play("win", -7.0)
