@@ -260,6 +260,11 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Point-and-click: tap/click a reachable node to travel to it (Spec C). Works
+	# on touch too via emulate_mouse_from_touch. Keyboard nav stays unchanged.
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_try_click_travel(event.position)
+		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	# ↑/↓ (W/S) choose which fork to take while standing at a node.
@@ -280,6 +285,20 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		else:
 			_toggle_settings_menu()
+
+# Click/tap a reachable node to travel to it (Spec C). Hit-tests the cursor
+# against each reachable target's on-screen position; on a hit, selects it and
+# begins travel down that edge (reusing the keyboard travel machinery).
+func _try_click_travel(screen_pos: Vector2) -> void:
+	if _input_blocked() or _nav != Nav.AT_NODE:
+		return
+	for k in range(_targets.size()):
+		var tgt: Dictionary = _targets[k]
+		var sp: Vector2 = _w2s(_node_world_pos(int(tgt["tier"]), int(tgt["index"])))
+		if screen_pos.distance_to(sp) <= NODE_R + 8.0:
+			_sel = k
+			_begin_travel()
+			return
 
 # Inventory & status overlay — explains every owned relic and affliction.
 func _toggle_inventory() -> void:
