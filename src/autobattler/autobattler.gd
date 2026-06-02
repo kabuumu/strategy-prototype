@@ -912,15 +912,14 @@ func _start_campaign_fight() -> void:
 	# survivors can be written back with permadeath after the fight).
 	var p_cards: Array = []
 	var p_entries: Array = []
-	for entry: Dictionary in GameManager.player_roster:
-		p_cards.append(_campaign_card(String(entry["type"])))
-		p_entries.append(entry)
-	# Hero fights as an extra card (Fight mode). The null roster entry keeps the
-	# zip aligned and signals the survivor write-back to skip it (never persisted).
+	# Prepend Hero if fighting (Fight mode) so they receive the front-most index (0)
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
 		var hd := GameManager.hero_data()
 		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true})
 		p_entries.append(null)
+	for entry: Dictionary in GameManager.player_roster:
+		p_cards.append(_campaign_card(String(entry["type"])))
+		p_entries.append(entry)
 	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
