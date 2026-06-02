@@ -1031,9 +1031,9 @@ func _start_duel_fight() -> void:
 	var hero_card: Dictionary
 	if GameManager.has_hero():
 		var hd := GameManager.hero_data()
-		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0}
+		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
 	else:
-		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0}
+		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
@@ -1081,6 +1081,7 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 18.0
 	if String(card.get("item", "")) == "drum":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
+	stats["is_hero"] = card.get("hero", false)
 	u.setup(unit_id, team_id, pos, stats)
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
 	u.hp = u.max_hp
