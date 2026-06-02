@@ -10,12 +10,12 @@ func _deck_hero(seed_val: int) -> Node:
 	gm.cards_init_run()
 	return gm
 
-func test_init_seeds_deck_and_draws_hand(t) -> void:
+func test_init_seeds_deck(t) -> void:
 	var gm := _deck_hero(999)
-	t.eq(gm.card_hand.size(), 5, "opening hand = base cap 5")
-	t.eq(gm.card_deck.size() + gm.card_hand.size(), 8, "8 cards seeded in total")
-	for id in gm.card_hand:
-		t.eq(gm.card_def(id).is_empty(), false, "hand card '%s' is a known pool card" % id)
+	t.eq(gm.card_hand.size(), 0, "no persistent opening hand (draw 3 per battle)")
+	t.eq(gm.card_deck.size(), 8, "8 cards seeded into the draw pile")
+	for id in gm.card_deck:
+		t.eq(gm.card_def(id).is_empty(), false, "deck card '%s' is a known pool card" % id)
 
 func test_init_deterministic(t) -> void:
 	var a := _deck_hero(4242)
@@ -29,12 +29,14 @@ func test_no_hero_means_empty_deck(t) -> void:
 	gm.cards_init_run()
 	t.eq(gm.card_hand.size(), 0, "no hero -> no deck (campaign-only)")
 
-func test_play_moves_card_to_graveyard(t) -> void:
+func test_cards_draw_and_return(t) -> void:
 	var gm := _deck_hero(7)
-	var id := String(gm.card_hand[0])
-	t.eq(gm.card_play(0), id, "play returns the front hand card id")
-	t.eq(gm.card_hand.size(), 4, "hand shrinks by one")
-	t.eq(gm.card_graveyard.has(id), true, "played card is in the graveyard")
+	var before: int = gm.card_deck.size()
+	var drawn: Array = gm.cards_draw(3)
+	t.eq(drawn.size(), 3, "draws 3 cards off the pile")
+	t.eq(gm.card_deck.size(), before - 3, "drawn cards leave the pile")
+	gm.cards_return(drawn)
+	t.eq(gm.card_deck.size(), before, "returned cards go back to the pile")
 
 func test_reward_draft_is_deterministic_and_addable(t) -> void:
 	var gm := _deck_hero(55)
@@ -51,12 +53,11 @@ func test_deck_persists_through_save_load(t) -> void:
 	gm.selected_hero = "bard"
 	gm.run_seed = 321
 	gm.cards_init_run()
-	var hand_before: Array = gm.card_hand.duplicate()
+	var deck_before: Array = gm.card_deck.duplicate()
 	gm.save_run()
-	gm.card_hand = []
 	gm.card_deck = []
 	gm.load_run()
-	t.eq(gm.card_hand, hand_before, "hand restored from the run save")
+	t.eq(gm.card_deck, deck_before, "draw pile restored from the run save")
 	gm.clear_run()
 
 func test_grant_battle_reward_grows_deck(t) -> void:

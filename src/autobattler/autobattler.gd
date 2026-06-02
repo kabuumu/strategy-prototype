@@ -23,7 +23,13 @@ enum Phase { SHOP, PREP, FIGHT, RESULT, REWARD, GAME_OVER }
 var _armed_traps: Array = []
 var _below50_triggered: bool = false   # troop_below_50 traps fire once per fight
 var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (Spec B)
-var _prep_equip_card: int = -1         # hand index of an Equip card awaiting a unit tap
+# Campaign PREP (#10): step 0 = pick a lineup from the pool; step 1 = draw 3, play 1.
+const LINEUP_CAP: int = 5
+var _prep_step: int = 0
+var _pool: Array = []                  # [{card, entry, hero}] — hero + roster candidates
+var _lineup_sel: Array = []            # bool per pool index (deployed?)
+var _prep_draw: Array = []             # up to 3 drawn card ids for the play step
+var _prep_equip_id: String = ""        # a drawn Equip card awaiting a unit tap
 
 const UNIT_TYPES: Dictionary = {
 	"soldier": {
@@ -276,27 +282,46 @@ func _rebuild_ui() -> void:
 		_add_button("Roll -%d" % _current_roll_cost(), Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
 		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_fight)
 	elif phase == Phase.PREP:
-		_add_label("PREP — play cards on your army, then Fight", 18, UITheme.GOLD,
-				Vector2(300.0, 46.0), Vector2(700.0, 24.0))
-		var prep_hint := "Tap a card — Equip then tap a unit · Spell hits the front enemy · Trap arms · one-use"
-		if _prep_equip_card >= 0:
-			prep_hint = "Now tap a unit on the field to equip it."
-		_add_label(prep_hint, 13, UITheme.TEXT_MUTED, Vector2(40.0, 556.0), Vector2(900.0, 20.0))
-		var hand: Array = GameManager.card_hand
-		for i in range(hand.size()):
-			var cdef: Dictionary = GameManager.card_def(String(hand[i]))
-			var bx: float = 40.0 + float(i) * 150.0
-			if bx > 900.0:
-				break
-			var cat: String = String(cdef.get("category", ""))
-			var pc: Color = Color(0.30, 0.36, 0.28)
-			match cat:
-				"trap": pc = Color(0.42, 0.26, 0.26)
-				"spell": pc = Color(0.36, 0.30, 0.44)
-				"aftermath": pc = Color(0.22, 0.26, 0.34)
-			_add_button("%s\n[%s]" % [String(cdef.get("name", hand[i])), cat],
-					Vector2(bx, 582.0), Vector2(140.0, 68.0), pc, Callable(self, "_on_prep_card").bind(i), 12)
-		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _begin_fight)
+		if _prep_step == 0:
+			var count := 0
+			for s in _lineup_sel:
+				if bool(s):
+					count += 1
+			_add_label("PREP — choose your lineup  (%d / %d)" % [count, LINEUP_CAP], 18, UITheme.GOLD,
+					Vector2(300.0, 46.0), Vector2(700.0, 24.0))
+			_add_label("Tap allies to add/remove them from the lineup. The hero always deploys. Then Deploy.",
+					13, UITheme.TEXT_MUTED, Vector2(40.0, 552.0), Vector2(900.0, 20.0))
+			for i in range(_pool.size()):
+				var bx: float = 40.0 + float(i) * 130.0
+				if bx > 900.0:
+					break
+				var pcard: Dictionary = _pool[i]["card"]
+				var is_hero: bool = bool(_pool[i].get("hero", false))
+				var inlineup: bool = bool(_lineup_sel[i])
+				var bc: Color = UITheme.GREEN.darkened(0.1) if inlineup else Color(0.20, 0.22, 0.28)
+				if is_hero:
+					bc = UITheme.GOLD.darkened(0.2)
+				_add_button("%s%s\nLv%d · %s" % ["* " if is_hero else "", _unit_name(_card_id(pcard)),
+						int(pcard.get("level", 1)), "in" if inlineup else "bench"],
+						Vector2(bx, 574.0), Vector2(120.0, 72.0), bc, Callable(self, "_on_lineup_toggle").bind(i), 12)
+			_add_button("Deploy", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_deploy)
+		else:
+			var hint := "Drew 3 — play one. Equip → tap a unit · Spell → front enemy · Trap arms. Or Fight to skip."
+			if _prep_equip_id != "":
+				hint = "Now tap a unit on the field to equip it."
+			_add_label("PREP — play a card, then Fight", 18, UITheme.GOLD, Vector2(300.0, 46.0), Vector2(700.0, 24.0))
+			_add_label(hint, 13, UITheme.TEXT_MUTED, Vector2(40.0, 552.0), Vector2(900.0, 20.0))
+			for j in range(_prep_draw.size()):
+				var cdef: Dictionary = GameManager.card_def(String(_prep_draw[j]))
+				var cat: String = String(cdef.get("category", ""))
+				var pc: Color = Color(0.30, 0.36, 0.28)
+				match cat:
+					"trap": pc = Color(0.42, 0.26, 0.26)
+					"spell": pc = Color(0.36, 0.30, 0.44)
+					"aftermath": pc = Color(0.22, 0.26, 0.34)
+				_add_button("%s\n[%s]" % [String(cdef.get("name", _prep_draw[j])), cat],
+						Vector2(40.0 + float(j) * 200.0, 574.0), Vector2(180.0, 72.0), pc, Callable(self, "_on_prep_draw").bind(j), 13)
+			_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_prep_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
 		if _fight_intro_timer > 0.0:
@@ -706,9 +731,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		_prep_click(event.position)
 
-# Apply a pending Equip card to the tapped player unit (Spec B single-target).
+# Apply a pending (drawn) Equip card to the tapped player unit (single-target).
 func _prep_click(pos: Vector2) -> void:
-	if _prep_equip_card < 0 or _prep_equip_card >= GameManager.card_hand.size():
+	if _prep_equip_id == "":
 		return
 	var hit: RTUnit = null
 	for u: RTUnit in player_units:
@@ -717,11 +742,8 @@ func _prep_click(pos: Vector2) -> void:
 			break
 	if hit == null:
 		return
-	var cdef: Dictionary = GameManager.card_def(String(GameManager.card_hand[_prep_equip_card]))
-	hit.apply_effect(cdef.get("effect", {}))
-	GameManager.card_play(_prep_equip_card)
-	GameManager.save_run()
-	_prep_equip_card = -1
+	hit.apply_effect(GameManager.card_def(_prep_equip_id).get("effect", {}))
+	_consume_drawn(_prep_equip_id)
 	_rebuild_ui()
 
 func _toggle_help() -> void:
@@ -987,49 +1009,32 @@ func _start_campaign_fight() -> void:
 	_last_recap.clear()
 	var tier: int = GameManager.pending_battle_tier
 	var elite: bool = GameManager.pending_battle_elite
-	# Player team — one regiment per campaign roster entry (remembered so the
-	# survivors can be written back with permadeath after the fight).
-	var p_cards: Array = []
-	var p_entries: Array = []
-	# The hero always fights as the front-most (index 0) lineup unit (Spec D).
+	# Build the player POOL (hero + roster). The hero is always available; the
+	# player chooses a lineup (hotbar) from this pool in PREP (#10).
+	_pool = []
 	if GameManager.has_hero():
 		var hd := GameManager.hero_data()
-		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true})
-		p_entries.append(null)
+		_pool.append({
+			"card": {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true},
+			"entry": null, "hero": true,
+		})
 	for entry: Dictionary in GameManager.player_roster:
-		p_cards.append(_campaign_card(String(entry["type"])))
-		p_entries.append(entry)
-	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
+		_pool.append({"card": _campaign_card(String(entry["type"])), "entry": entry, "hero": false})
+	# Default lineup: the first LINEUP_CAP pool entries (hero first).
+	_lineup_sel = []
+	for i in range(_pool.size()):
+		_lineup_sel.append(i < LINEUP_CAP)
+
+	# Enemy team — spawned now so it's visible during PREP.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
 	var e_cards: Array = []
 	for t in e_types:
 		e_cards.append(_campaign_card(String(t)))
-	var p_counts := _unit_counts(p_cards)
 	var e_counts := _unit_counts(e_cards)
-	var p_pos := _formation_positions(p_cards.size(), 0)
-	for i in range(p_cards.size()):
-		var u := _spawn_unit(p_cards[i], 0, p_pos[i], 1.0, p_counts)
-		_unit_state[u.get_instance_id()]["roster_entry"] = p_entries[i]
-		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
-		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
-		u.hp = u.max_hp
-		if bool(p_cards[i].get("hero", false)):
-			# Hero combat stats now come from the skill tree (Spec A): separate HP
-			# and damage mults plus an attack-speed (cooldown) mult.
-			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
-			u.hp = u.max_hp
-			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
-			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
-		player_units.append(u)
-	# The hero (always in the lineup) grants its Command leader aura to the whole
-	# team at the start of battle (Spec A/D), scaled by the Command tree branch.
-	if GameManager.has_hero():
-		_apply_hero_aura()
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
-	# Elite battles roll a deterministic modifier that buffs the whole enemy host.
 	if elite:
 		var m := GameManager.elite_modifier_data(tier)
 		for u: RTUnit in enemy_units:
@@ -1039,13 +1044,43 @@ func _start_campaign_fight() -> void:
 			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
 			if u.has_method("_refresh_hp_bar"):
 				u.call("_refresh_hp_bar")
+
 	_armed_traps = []
-	# Campaign battles with cards in hand get a PREP step to play them first.
-	if GameManager.has_hero() and not GameManager.card_hand.is_empty():
-		phase = Phase.PREP
-		_rebuild_ui()
-	else:
-		_begin_fight()
+	_prep_draw = []
+	_prep_equip_id = ""
+	_prep_step = 0
+	phase = Phase.PREP
+	_rebuild_ui()
+
+# Spawn the chosen lineup, apply mults + aura, then draw 3 cards for the play step.
+func _deploy_lineup() -> void:
+	var sel_cards: Array = []
+	var sel_entries: Array = []
+	for i in range(_pool.size()):
+		if bool(_lineup_sel[i]):
+			sel_cards.append(_pool[i]["card"])
+			sel_entries.append(_pool[i]["entry"])
+	if sel_cards.is_empty():
+		return
+	var p_counts := _unit_counts(sel_cards)
+	var p_pos := _formation_positions(sel_cards.size(), 0)
+	for i in range(sel_cards.size()):
+		var u := _spawn_unit(sel_cards[i], 0, p_pos[i], 1.0, p_counts)
+		_unit_state[u.get_instance_id()]["roster_entry"] = sel_entries[i]
+		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+		u.hp = u.max_hp
+		if bool(sel_cards[i].get("hero", false)):
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
+		player_units.append(u)
+	if GameManager.has_hero():
+		_apply_hero_aura()
+	_prep_draw = GameManager.cards_draw(3)
+	_prep_step = 1
+	_rebuild_ui()
 
 # Start the actual fight (after PREP, or directly when there's nothing to play).
 func _begin_fight() -> void:
@@ -1058,7 +1093,7 @@ func _begin_fight() -> void:
 			rest.append(trap)
 	_armed_traps = rest
 	_below50_triggered = false
-	_prep_equip_card = -1
+	_prep_equip_id = ""
 	phase = Phase.FIGHT
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
@@ -1066,30 +1101,62 @@ func _begin_fight() -> void:
 	_speed_scale = 1.0
 	_rebuild_ui()
 
-# Play the hand card at index `i` during PREP (Spec B). Equip buffs the front
-# unit, Spell hits the front enemy, Trap arms for a combat event. One-use.
-func _on_prep_card(i: int) -> void:
-	if phase != Phase.PREP or i < 0 or i >= GameManager.card_hand.size():
+func _on_lineup_toggle(i: int) -> void:
+	if _prep_step != 0 or i < 0 or i >= _lineup_sel.size():
 		return
-	var cdef: Dictionary = GameManager.card_def(String(GameManager.card_hand[i]))
-	var cat := String(cdef.get("category", ""))
-	var effect: Dictionary = cdef.get("effect", {})
-	match cat:
+	if bool(_pool[i].get("hero", false)):
+		return   # the hero is always deployed
+	if not bool(_lineup_sel[i]):
+		var count := 0
+		for s in _lineup_sel:
+			if bool(s):
+				count += 1
+		if count >= LINEUP_CAP:
+			return   # lineup is full
+	_lineup_sel[i] = not bool(_lineup_sel[i])
+	_rebuild_ui()
+
+func _on_deploy() -> void:
+	if _prep_step == 0:
+		_deploy_lineup()
+
+# Play one of the 3 drawn cards (#10). Equip waits for a unit tap; Spell hits the
+# front enemy; Trap arms. The other two drawn cards return to the deck.
+func _on_prep_draw(j: int) -> void:
+	if _prep_step != 1 or j < 0 or j >= _prep_draw.size():
+		return
+	var cdef: Dictionary = GameManager.card_def(String(_prep_draw[j]))
+	match String(cdef.get("category", "")):
 		"equip":
-			_prep_equip_card = i   # wait for a unit tap (resolved in _prep_click)
+			_prep_equip_id = String(_prep_draw[j])
 			_rebuild_ui()
 			return
 		"spell":
 			var e := _frontmost_alive(enemy_units)
 			if e != null:
-				e.apply_effect(effect)
+				e.apply_effect(cdef.get("effect", {}))
 		"trap":
 			_armed_traps.append(cdef)
 		_:
-			return   # aftermath can't be played in prep
-	GameManager.card_play(i)
-	GameManager.save_run()
+			pass   # aftermath has no prep target — just discards
+	_consume_drawn(String(_prep_draw[j]))
 	_rebuild_ui()
+
+func _consume_drawn(played_id: String) -> void:
+	GameManager.card_graveyard.append(played_id)
+	for id in _prep_draw:
+		if String(id) != played_id:
+			GameManager.card_deck.append(String(id))
+	_prep_draw = []
+	_prep_equip_id = ""
+	GameManager.save_run()
+
+func _on_prep_fight() -> void:
+	GameManager.cards_return(_prep_draw)   # unplayed cards go back to the deck
+	_prep_draw = []
+	_prep_equip_id = ""
+	GameManager.save_run()
+	_begin_fight()
 
 # Resolve a trap's effect against the right target.
 func _fire_trap(trap: Dictionary) -> void:

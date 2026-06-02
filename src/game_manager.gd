@@ -652,10 +652,25 @@ func cards_init_run() -> void:
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = run_seed
-	for i in range(8):
+	# Seed the draw pile. Campaign battles draw from this each fight (draw 3,
+	# play 1) — there's no persistent hand. Reserves adds starting cards.
+	var start_count := 8 + hero_start_hand_bonus()
+	for i in range(start_count):
 		card_deck.append(_random_card_id(rng))
-	# Opening hand: cap + the Reserves (start-hand) bonus.
-	card_draw_to_hand(card_hand_cap() + hero_start_hand_bonus())
+
+# Draw up to n cards off the top of the draw pile (removed from the pile).
+func cards_draw(n: int) -> Array:
+	var out: Array = []
+	for i in range(n):
+		if card_deck.is_empty():
+			break
+		out.append(card_deck.pop_front())
+	return out
+
+# Return unplayed drawn cards to the bottom of the draw pile.
+func cards_return(ids: Array) -> void:
+	for id in ids:
+		card_deck.append(str(id))
 
 func card_draw_to_hand(target: int = -1) -> void:
 	var cap: int = target if target >= 0 else card_hand_cap()
