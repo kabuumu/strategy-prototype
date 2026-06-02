@@ -6,21 +6,34 @@ func _ready() -> void:
 	_build_ui()
 
 func _draw() -> void:
-	# Background gradient effect — two overlapping rects
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.05, 0.06, 0.09))
-	# Selected-hero preview — large and faint, flanking the menu.
+	# Subtle decorative line under the title block
+	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
+
+# Selected-hero preview — TextureRect nodes (reliable, nearest-filtered) flanking
+# the menu, behind the buttons.
+func _add_hero_preview() -> void:
 	var hid := GameManager.resolved_menu_hero()
 	var sk := String(GameManager.HEROES.get(hid, {}).get("sprite_key", "soldier"))
 	var tex := load("res://assets/units/%s_player.png" % sk) as Texture2D
-	if tex != null:
-		draw_texture_rect(tex, Rect2(Vector2(70.0, 250.0), Vector2(360.0, 360.0)), false, Color(1.0, 1.0, 1.0, 0.85))
-		draw_texture_rect(tex, Rect2(Vector2(850.0, 250.0), Vector2(360.0, 360.0)), false, Color(1.0, 1.0, 1.0, 0.85))
-	# Subtle decorative line under the title block
-	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
+	if tex == null:
+		return
+	for px in [70.0, 850.0]:
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.position = Vector2(px, 250.0)
+		tr.size = Vector2(360.0, 360.0)
+		tr.modulate = Color(1.0, 1.0, 1.0, 0.9)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tr.z_index = -1
+		add_child(tr)
 
 func _build_ui() -> void:
 	var has_save: bool = GameManager.has_saved_run()
 
+	_add_hero_preview()   # background sprite, behind the menu
 	_add_centered_label("STRATEGY PROTOTYPE", 56, Color(0.95, 0.90, 0.60), 30.0)
 	_add_centered_label("Medieval strategy roguelite — build an army, auto-resolve the fights", 18,
 		Color(0.55, 0.55, 0.65), 96.0)

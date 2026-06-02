@@ -226,54 +226,200 @@ def _write(name: str, samples: list) -> None:
     print("wrote", os.path.relpath(path), "(%.1fs)" % (len(samples) / RATE))
 
 
+# ===========================================================================
+# Dark cinematic / ambient engine — NOT chiptune. Detuned sine pads, deep sub
+# drones, filtered-noise wind beds, low booms, and a Schroeder reverb for space.
+# Still pure-stdlib synthesis (the committed-tooling constraint), but the timbre
+# is pads/drones, not square/triangle.
+# ===========================================================================
+
+def _env(n: int, atk: float, rel: float) -> list:
+    """Slow attack/release amplitude envelope (seconds)."""
+    a = max(1, int(RATE * atk))
+    r = max(1, int(RATE * rel))
+    e = [1.0] * n
+    for i in range(min(a, n)):
+        e[i] = i / a
+    for i in range(min(r, n)):
+        e[n - 1 - i] *= i / r
+    return e
+
+
+def _pad(root_semi: int, voices: list, dur: float, vol: float, detune: float = 0.005) -> list:
+    """A lush chord pad: detuned sine layers per voice, slow swell in/out."""
+    n = int(RATE * dur)
+    out = [0.0] * n
+    env = _env(n, dur * 0.34, dur * 0.5)
+    for v in voices:
+        f = _freq(root_semi + v)
+        for mult in (1.0 - detune, 1.0 + detune):
+            ph = 0.0
+            inc = f * mult / RATE
+            for i in range(n):
+                ph += inc
+                out[i] += math.sin(2.0 * math.pi * ph) * env[i]
+    k = vol / (len(voices) * 2)
+    return [s * k for s in out]
+
+
+def _drone(semi: int, dur: float, vol: float) -> list:
+    """Deep sustained sine + octave, with a slow amplitude swell."""
+    n = int(RATE * dur)
+    out = [0.0] * n
+    f = _freq(semi)
+    ph = 0.0
+    ph2 = 0.0
+    for i in range(n):
+        t = i / RATE
+        swell = 0.82 + 0.18 * math.sin(2.0 * math.pi * 0.06 * t)
+        ph += f / RATE
+        ph2 += 2.0 * f / RATE
+        out[i] = (math.sin(2.0 * math.pi * ph) * 0.82 + math.sin(2.0 * math.pi * ph2) * 0.18) * vol * swell
+    return out
+
+
+def _wind(dur: float, vol: float) -> list:
+    """A desolate wind bed: heavily low-passed noise with a slow swell."""
+    n = int(RATE * dur)
+    raw = [random.random() * 2.0 - 1.0 for _ in range(n)]
+    lp = _lowpass(_lowpass(raw, 0.04), 0.04)
+    out = [0.0] * n
+    for i in range(n):
+        t = i / RATE
+        swell = 0.45 + 0.45 * math.sin(2.0 * math.pi * 0.045 * t - 1.0)
+        out[i] = lp[i] * vol * swell
+    return out
+
+
+def _boom(semi: int, dur: float, vol: float) -> list:
+    """A low tension hit: sine with a downward pitch drop and long decay."""
+    n = int(RATE * dur)
+    out = [0.0] * n
+    base = _freq(semi)
+    ph = 0.0
+    for i in range(n):
+        t = i / RATE
+        f = base * (1.0 + 1.4 * math.exp(-7.0 * t))
+        ph += f / RATE
+        out[i] = math.sin(2.0 * math.pi * ph) * vol * math.exp(-2.2 * t)
+    return out
+
+
+def _comb(samples: list, delay: int, fb: float) -> list:
+    out = [0.0] * len(samples)
+    buf = [0.0] * delay
+    p = 0
+    for i, x in enumerate(samples):
+        y = buf[p]
+        buf[p] = x + y * fb
+        out[i] = y
+        p += 1
+        if p >= delay:
+            p = 0
+    return out
+
+
+def _allpass(samples: list, delay: int, g: float) -> list:
+    out = [0.0] * len(samples)
+    buf = [0.0] * delay
+    p = 0
+    for i, x in enumerate(samples):
+        bo = buf[p]
+        y = -g * x + bo
+        buf[p] = x + g * bo
+        out[i] = y
+        p += 1
+        if p >= delay:
+            p = 0
+    return out
+
+
+def _reverb(samples: list, mix: float = 0.32) -> list:
+    """Schroeder reverb (parallel combs -> series allpass) for cavernous space."""
+    combs = [_comb(samples, int(RATE * d), f)
+             for d, f in [(0.0297, 0.80), (0.0371, 0.76), (0.0411, 0.72), (0.0437, 0.70)]]
+    wet = [(combs[0][i] + combs[1][i] + combs[2][i] + combs[3][i]) * 0.25
+           for i in range(len(samples))]
+    wet = _allpass(wet, int(RATE * 0.0050), 0.7)
+    wet = _allpass(wet, int(RATE * 0.0017), 0.7)
+    return [(1.0 - mix) * samples[i] + mix * wet[i] for i in range(len(samples))]
+
+
+def _mix(length: int, layers: list) -> list:
+    """Sum (samples, start_sample) layers into a single buffer of `length`."""
+    out = [0.0] * length
+    for samples, off in layers:
+        for i, s in enumerate(samples):
+            j = off + i
+            if 0 <= j < length:
+                out[j] += s
+    return out
+
+
+def _finish(samples: list, lp: float = 0.6, rev: float = 0.32) -> list:
+    samples = [math.tanh(1.4 * s) for s in samples]
+    samples = _lowpass(samples, lp)            # warmth — roll off harshness
+    samples = _reverb(samples, rev)            # space
+    samples = _seamless(samples, 90.0)
+    peak = max(0.001, max(abs(s) for s in samples))
+    return [s * (0.80 / peak) for s in samples]
+
+
+# Minor-triad pad voicing in Phrygian (root, b3, 5, octave).
+_TRIAD = [0, 3, 7, 12]
+
+
 def main() -> None:
-    # Deterministic noise so regenerated builds are byte-identical (CI-friendly).
     random.seed(0xC0FFEE)
 
-    # Setting: post-apocalyptic, dark and tense. All tracks are voiced in the
-    # Phrygian mode (flat-2nd) with deep roots and slow drones for an ominous,
-    # desolate feel. (Still pure-stdlib chiptune synthesis — the tooling
-    # constraint — but retuned for mood.)
+    # Setting: post-apocalyptic, dark and tense. Cinematic ambient — sine pads,
+    # deep drones, wind, and reverb. No 8-bit/chiptune voices.
 
-    # Title — ominous, slow, drone-y. Phrygian i / bII hangs unresolved.
-    _write("title", _build(
-        progression=[0, 1, 0, 5, 0, 1, 6, 0],
-        scale=PHRYGIAN, root_semi=-14, bpm=64, arp_div=1, duty=0.25,
-        melody_phrases=[
-            [(0, 2), (1, 1), (0, 1)],
-            [(2, 2), (1, 2)],
-            [(0, 1), (1, 1), (2, 2)],
-            [(3, 2), (1, 1), (0, 1)],
-        ],
-        drums={"K": "x...............",
-               "H": "............x..."},
-        drum_gain=0.32, mel_vol=0.19, arp_vol=0.12))
-    # Map — desolate wasteland. Very slow, deep, sparse, mostly drone + pad.
-    _write("map", _build(
-        progression=[0, 0, 1, 0, 5, 0, 1, 6],
-        scale=PHRYGIAN, root_semi=-16, bpm=58, arp_div=1, duty=0.2,
-        melody_phrases=[
-            [(0, 3), (1, 1)],
-            [(2, 2), (1, 2)],
-            [(0, 2), (1, 2)],
-            [(1, 3), (0, 1)],
-        ],
-        drums={"K": "x..............."},
-        drum_gain=0.28, mel_vol=0.15, arp_vol=0.10))
-    # Battle — tense, driving, dark. Phrygian lead over a pounding low kick.
-    _write("battle", _build(
-        progression=[0, 0, 1, 0, 5, 1, 0, 5],
-        scale=PHRYGIAN, root_semi=-14, bpm=126, arp_div=2, duty=0.5,
-        melody_phrases=[
-            [(0, 0.5), (1, 0.5), (0, 1), (1, 0.5), (2, 0.5), (1, 1)],
-            [(1, 0.5), (0, 0.5), (1, 0.5), (2, 0.5), (0, 2)],
-            [(2, 0.5), (1, 0.5), (0, 1), (1, 0.5), (0, 0.5), (5, 1)],
-            [(0, 0.5), (1, 0.5), (2, 0.5), (1, 0.5), (0, 2)],
-        ],
-        drums={"K": "x..x..x.x..x..x.",
-               "S": "....x.......x...",
-               "H": "x.x.x.x.x.x.x.x."},
-        drum_gain=1.0, mel_vol=0.24))
+    # Title — ominous, evolving pad chords over a deep drone + faint wind.
+    title_chords = [(0, 4.0), (1, 4.0), (0, 4.0), (8, 4.0),
+                    (0, 4.0), (1, 4.0), (10, 4.0), (0, 4.0)]   # i bII i bVI i bII bVII i
+    base = -14
+    total = int(RATE * sum(d for _, d in title_chords))
+    layers = []
+    off = 0
+    for root, d in title_chords:
+        layers.append((_pad(base + root, _TRIAD, d, 0.55), off))
+        off += int(RATE * d)
+    layers.append((_drone(base - 12, total / RATE, 0.34), 0))
+    layers.append((_wind(total / RATE, 0.16), 0))
+    _write("title", _finish(_mix(total, layers)))
+
+    # Map — desolate wasteland. Deep drone + prominent wind + sparse lonely pads.
+    map_secs = 36.0
+    total = int(RATE * map_secs)
+    layers = [
+        (_drone(-26, map_secs, 0.36), 0),
+        (_drone(-14, map_secs, 0.12), 0),
+        (_wind(map_secs, 0.26), 0),
+    ]
+    # A few sparse, far-apart single-note pads (root / b6 / b3) — lonely.
+    for root, t in [(0, 2.0), (8, 11.0), (3, 20.0), (1, 28.0)]:
+        layers.append((_pad(-2 + root, [0, 12], 5.0, 0.30), int(RATE * t)))
+    _write("map", _finish(_mix(total, layers), lp=0.5))
+
+    # Battle — tense and driving. A pulsing low boom on every beat + dark pad
+    # stabs + reverb. No melody lead, just relentless pressure.
+    bpm = 120
+    beat = 60.0 / bpm
+    beats = 32                       # ~16s loop
+    total = int(RATE * beat * beats)
+    layers = [(_drone(-26, beat * beats, 0.30), 0)]
+    for b in range(beats):
+        off = int(RATE * beat * b)
+        # Pounding pulse every beat; accent the downbeat of each bar (4 beats).
+        vol = 0.62 if (b % 4 == 0) else 0.40
+        layers.append((_boom(-26, beat * 0.95, vol), off))
+    # Dark pad stabs every two bars, moving i -> bII for tension.
+    pad_roots = [0, 1, 0, 8]
+    for k, root in enumerate(pad_roots):
+        off = int(RATE * beat * (k * 8))
+        layers.append((_pad(-12 + root, _TRIAD, beat * 8, 0.34), off))
+    _write("battle", _finish(_mix(total, layers), lp=0.7, rev=0.26))
 
 
 if __name__ == "__main__":

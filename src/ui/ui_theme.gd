@@ -40,8 +40,12 @@ static func label(text: String, font_size: int, color: Color, pos: Vector2, size
 	lbl.modulate = color
 	lbl.position = pos
 	if size != Vector2.ZERO:
-		lbl.size = size
+		# Order matters: enable autowrap and pin the width via custom_minimum_size
+		# BEFORE setting size, or the label clamps to its full single-line content
+		# width and never wraps (free Labels ignore `size` for wrap width).
 		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.custom_minimum_size = size
+		lbl.size = size
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return lbl
 
