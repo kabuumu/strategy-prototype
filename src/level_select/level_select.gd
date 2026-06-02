@@ -561,6 +561,7 @@ func _draw() -> void:
 				col = col.darkened(0.3)
 			draw_circle(c, NODE_R, col)
 			draw_arc(c, NODE_R, 0.0, TAU, 32, col.lightened(0.3), 2.0)
+			_draw_node_icon(c, String(nd["type"]), bool(nd.get("visited", false)))
 			if is_target:
 				draw_arc(c, NODE_R + 5.0 + pulse * 4.0, 0.0, TAU, 36, Color(0.95, 0.85, 0.35, 0.35 + pulse * 0.4), 3.0)
 			if not sel_target.is_empty() and int(sel_target["tier"]) == tier and int(sel_target["index"]) == i:
@@ -585,6 +586,33 @@ func _draw() -> void:
 
 func _w2s(world: Vector2) -> Vector2:
 	return world - Vector2(_cam_x, 0.0)
+
+# A simple primitive icon per node type, drawn on top of the node disc so each
+# node reads at a glance (battle = crossed swords, elite = burst, shop = coin,
+# heal = cross, recruit = a figure).
+func _draw_node_icon(c: Vector2, type: String, visited: bool) -> void:
+	var w := Color(0.97, 0.97, 1.0, 0.40 if visited else 0.95)
+	var r := NODE_R * 0.55
+	match type:
+		"battle":
+			draw_line(c + Vector2(-r, -r), c + Vector2(r, r), w, 3.0)
+			draw_line(c + Vector2(-r, r), c + Vector2(r, -r), w, 3.0)
+		"elite_battle":
+			for k in range(4):
+				var a := float(k) * PI / 4.0
+				var d := Vector2(cos(a), sin(a)) * r
+				draw_line(c - d, c + d, w, 2.5)
+		"shop":
+			draw_arc(c, r, 0.0, TAU, 20, w, 3.0)
+			draw_string(ThemeDB.fallback_font, c + Vector2(-4.0, 5.0), "$", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, w)
+		"heal":
+			draw_line(c + Vector2(0.0, -r), c + Vector2(0.0, r), w, 4.0)
+			draw_line(c + Vector2(-r, 0.0), c + Vector2(r, 0.0), w, 4.0)
+		"gain_unit":
+			draw_circle(c + Vector2(0.0, -r * 0.45), r * 0.42, w)
+			draw_rect(Rect2(c + Vector2(-r * 0.55, r * 0.05), Vector2(r * 1.1, r * 0.8)), w)
+		_:
+			draw_circle(c, r * 0.5, w)
 
 # Bottom-left overview of the whole run: every node + connection scaled to fit,
 # with visited/current/reachable/selected markers and a box showing where the
