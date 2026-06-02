@@ -13,8 +13,8 @@ func _draw() -> void:
 	var sk := String(GameManager.HEROES.get(hid, {}).get("sprite_key", "soldier"))
 	var tex := load("res://assets/units/%s_player.png" % sk) as Texture2D
 	if tex != null:
-		draw_texture_rect(tex, Rect2(Vector2(110.0, 250.0), Vector2(340.0, 340.0)), false, Color(1.0, 1.0, 1.0, 0.16))
-		draw_texture_rect(tex, Rect2(Vector2(830.0, 250.0), Vector2(340.0, 340.0)), false, Color(1.0, 1.0, 1.0, 0.16))
+		draw_texture_rect(tex, Rect2(Vector2(70.0, 250.0), Vector2(360.0, 360.0)), false, Color(1.0, 1.0, 1.0, 0.85))
+		draw_texture_rect(tex, Rect2(Vector2(850.0, 250.0), Vector2(360.0, 360.0)), false, Color(1.0, 1.0, 1.0, 0.85))
 	# Subtle decorative line under the title block
 	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
 
@@ -40,11 +40,12 @@ func _build_ui() -> void:
 		Color(0.28, 0.44, 0.34), _on_auto_battler, 20,
 		"A single auto-resolved fight — no campaign state touched.")
 
-	# Choose which hero leads campaigns (previewed in the background).
-	_add_menu_button("Choose Hero", Vector2(490.0, 426.0), Vector2(300.0, 46.0),
-		Color(0.34, 0.30, 0.46), _on_choose_hero, 20, "Pick which hero leads your campaigns.")
+	# Choose which hero leads campaigns (previewed in the background). Kept out of
+	# the centred button column / progress panel: button top-right, name on top.
+	_add_menu_button("Choose Hero", Vector2(966.0, 74.0), Vector2(170.0, 38.0),
+		Color(0.34, 0.30, 0.46), _on_choose_hero, 15, "Pick which hero leads your campaigns.")
 	var hname: String = String(GameManager.HEROES.get(GameManager.resolved_menu_hero(), {}).get("name", "—"))
-	_add_centered_label("Selected hero: %s" % hname, 18, Color(0.85, 0.80, 0.55), 486.0)
+	_add_centered_label("Selected hero: %s" % hname, 18, Color(0.90, 0.82, 0.55), 122.0)
 
 	_add_centered_label("H help · Esc back",
 		13, Color(0.40, 0.40, 0.45), 692.0)
