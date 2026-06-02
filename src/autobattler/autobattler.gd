@@ -919,7 +919,7 @@ func _start_campaign_fight() -> void:
 	# Prepend Hero if fighting (Fight mode) so they receive the front-most index (0)
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
 		var hd := GameManager.hero_data()
-		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true})
+		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true})
 		p_entries.append(null)
 	for entry: Dictionary in GameManager.player_roster:
 		p_cards.append(_campaign_card(String(entry["type"])))
@@ -940,10 +940,12 @@ func _start_campaign_fight() -> void:
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
 		if bool(p_cards[i].get("hero", false)):
-			var m := GameManager.hero_fight_mult()
-			u.max_hp = maxi(1, int(round(float(u.max_hp) * m)))
+			# Hero combat stats now come from the skill tree (Spec A): separate HP
+			# and damage mults plus an attack-speed (cooldown) mult.
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
 			u.hp = u.max_hp
-			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * m)))
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
 		player_units.append(u)
 	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
