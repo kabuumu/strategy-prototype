@@ -947,6 +947,10 @@ func _start_campaign_fight() -> void:
 			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
 			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
 		player_units.append(u)
+	# Hero in the lineup grants its Command leader aura to the whole team at the
+	# start of battle (Spec A/D), scaled by the Command tree branch.
+	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
+		_apply_hero_aura()
 	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
 	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
 		_apply_hero_buff(GameManager.pending_hero_buff)
@@ -983,6 +987,31 @@ func _apply_hero_buff(buff_id: String) -> void:
 				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * bm))))
 			"warchest":
 				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * bm)))
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
+
+# Command leader aura (Spec A): when the hero fights in the lineup it buffs the
+# whole team at battle start, scaled by the Command tree (hero_aura_mult_tree).
+# The aura family is the hero's own buff id (aegis=+HP, march=+dmg, warchest=heal).
+func _apply_hero_aura() -> void:
+	if not GameManager.has_hero():
+		return
+	var buff: Dictionary = GameManager.hero_data().get("buff", {})
+	var buff_id := String(buff.get("id", ""))
+	var am: float = GameManager.hero_aura_mult_tree()   # hero is in the lineup -> 100%
+	for u: RTUnit in player_units:
+		if not is_instance_valid(u):
+			continue
+		match buff_id:
+			"aegis":
+				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * am))))
+				u.hp = u.max_hp
+				if u.has_method("_refresh_hp_bar"):
+					u.call("_refresh_hp_bar")
+			"march":
+				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * am))))
+			"warchest":
+				u.hp = mini(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * am)))
 				if u.has_method("_refresh_hp_bar"):
 					u.call("_refresh_hp_bar")
 
