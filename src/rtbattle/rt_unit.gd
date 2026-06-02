@@ -28,6 +28,7 @@ class Soldier:
 var unit_type: String = "soldier"
 var team: int = 0                       # 0 = player (blue), 1 = enemy (red)
 var unit_name: String = "Soldier"
+var is_hero: bool = false
 
 var hp_per_soldier: int = 15
 var soldier_count: int = 9              # max soldier sprites at full HP
@@ -73,8 +74,14 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	team             = p_team
 	position         = world_pos
 	unit_name        = String(stats.get("name", type.capitalize()))
-	soldier_count    = int(stats.get("soldier_count", 9))
-	hp_per_soldier   = int(stats.get("hp_per_soldier", 15))
+	is_hero          = bool(stats.get("is_hero", false))
+	var base_soldier_count = int(stats.get("soldier_count", 9))
+	if is_hero:
+		soldier_count = 1
+		hp_per_soldier = base_soldier_count * int(stats.get("hp_per_soldier", 15))
+	else:
+		soldier_count = base_soldier_count
+		hp_per_soldier = int(stats.get("hp_per_soldier", 15))
 	max_hp           = soldier_count * hp_per_soldier
 	hp               = max_hp
 	damage_per_attack = int(stats.get("damage_per_attack", 8))
@@ -82,8 +89,8 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	attack_range_px   = float(stats.get("attack_range_px", 60.0))
 	move_speed_px     = float(stats.get("move_speed_px", 60.0))
 	is_ranged         = attack_range_px > 80.0
-	# Radius scales with soldier count so a 9-man block is wider than a 5-man.
-	radius            = 18.0 + sqrt(float(soldier_count)) * 7.0
+	# Radius scales with base soldier count so hero has full squad blocking footprint.
+	radius            = 18.0 + sqrt(float(base_soldier_count)) * 7.0
 	# Idle stance: detect enemies within attack range + a small buffer so
 	# units engage smoothly rather than chattering at the threshold.
 	engage_radius_px  = attack_range_px + 40.0
@@ -131,25 +138,28 @@ func _build_visuals(stats: Dictionary) -> void:
 	var spacing: float = (radius * 1.6) / float(cols)
 	for i in range(soldier_count):
 		var s := Soldier.new()
-		var col: int = i % cols
-		var row: int = i / cols
-		# Centre the formation around (0,0). Add a small per-soldier jitter
-		# so the regiment looks like a crowd rather than a grid.
-		var seed_v := Vector2(
-			float(i) * 12.9898,
-			float(i) * 78.233
-		)
-		var jitter := Vector2(
-			fposmod(sin(seed_v.x) * 43758.5453, 1.0) - 0.5,
-			fposmod(sin(seed_v.y) * 43758.5453, 1.0) - 0.5
-		) * (spacing * 0.4)
-		var ox: float = (float(col) - float(cols - 1) * 0.5) * spacing + jitter.x
-		var oy: float = (float(row) - float(cols - 1) * 0.5) * spacing + jitter.y
+		var ox: float = 0.0
+		var oy: float = 0.0
+		if not is_hero:
+			var col: int = i % cols
+			var row: int = i / cols
+			# Centre the formation around (0,0). Add a small per-soldier jitter
+			# so the regiment looks like a crowd rather than a grid.
+			var seed_v := Vector2(
+				float(i) * 12.9898,
+				float(i) * 78.233
+			)
+			var jitter := Vector2(
+				fposmod(sin(seed_v.x) * 43758.5453, 1.0) - 0.5,
+				fposmod(sin(seed_v.y) * 43758.5453, 1.0) - 0.5
+			) * (spacing * 0.4)
+			ox = (float(col) - float(cols - 1) * 0.5) * spacing + jitter.x
+			oy = (float(row) - float(cols - 1) * 0.5) * spacing + jitter.y
 		s.offset       = Vector2(ox, oy)
 		s.sprite       = Sprite2D.new()
 		s.sprite.texture        = tex
 		s.sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		s.sprite.scale          = Vector2(0.9, 0.9)
+		s.sprite.scale          = Vector2(1.3, 1.3) if is_hero else Vector2(0.9, 0.9)
 		s.sprite.position       = s.offset
 		add_child(s.sprite)
 		_soldiers.append(s)
