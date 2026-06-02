@@ -45,3 +45,53 @@ func test_buy_level_insufficient_xp(t) -> void:
 	t.eq(gm.hero_buy_level(), false, "not enough xp -> no purchase")
 	t.eq(gm.hero_meta_level(), 1, "still level 1")
 	t.eq(gm.hero_banked_xp(), 5, "xp untouched")
+
+# --- slice 2: the node tree (prereqs, ranks, gates, respec) ----------------
+
+func _hero_with_points(id: String, points: int) -> Node:
+	var gm := _gm_with_hero(id)
+	for i in range(points):
+		gm.hero_award_xp(gm.hero_level_cost(gm.hero_meta_level()))
+		gm.hero_buy_level()
+	return gm
+
+func test_node_requires_point_and_prereq(t) -> void:
+	var gm0 := _gm_with_hero("bard")
+	t.eq(gm0.hero_can_buy_node("conditioning"), false, "no points -> cannot buy a root")
+	var gm := _hero_with_points("bard", 1)
+	t.eq(gm.hero_can_buy_node("conditioning"), true, "root buyable with a point")
+	t.eq(gm.hero_can_buy_node("honed_blade"), false, "branch node blocked until its prereq is owned")
+	t.eq(gm.hero_buy_node("conditioning"), true, "bought the root")
+	t.eq(gm.hero_node_rank("conditioning"), 1, "rank 1")
+	t.eq(gm.hero_unspent_points(), 0, "the point was spent")
+	t.eq(gm.hero_can_buy_node("honed_blade"), false, "prereq now met but no points left")
+
+func test_multi_rank_cap(t) -> void:
+	var gm := _hero_with_points("bard", 4)
+	t.eq(gm.hero_buy_node("conditioning"), true)
+	t.eq(gm.hero_buy_node("conditioning"), true)
+	t.eq(gm.hero_buy_node("conditioning"), true)
+	t.eq(gm.hero_node_rank("conditioning"), 3, "reached max rank 3")
+	t.eq(gm.hero_can_buy_node("conditioning"), false, "cannot exceed max rank")
+
+func test_capstone_gate(t) -> void:
+	var gm := _hero_with_points("bard", 4)
+	gm.hero_buy_node("conditioning")
+	gm.hero_buy_node("honed_blade")
+	t.eq(gm.hero_can_buy_node("might_cap"), false, "capstone gated below 3 points in section")
+	gm.hero_buy_node("warlord")
+	t.eq(gm.hero_points_in_section("might"), 3, "3 points in might")
+	t.eq(gm.hero_can_buy_node("might_cap"), true, "capstone unlocks once the gate is met")
+
+func test_respec_drops_level_and_clears_nodes(t) -> void:
+	var gm := _hero_with_points("bard", 2)   # level 3, 2 unspent points
+	gm.hero_buy_node("conditioning")
+	t.eq(gm.hero_meta_level(), 3, "level 3")
+	t.eq(gm.hero_respec(), true, "respec succeeds")
+	t.eq(gm.hero_meta_level(), 2, "level dropped by 1 (the respec cost)")
+	t.eq(gm.hero_node_rank("conditioning"), 0, "all nodes cleared")
+	t.eq(gm.hero_unspent_points(), 1, "one point lost permanently (2 -> 1)")
+
+func test_respec_blocked_at_level_1(t) -> void:
+	var gm := _gm_with_hero("bard")
+	t.eq(gm.hero_respec(), false, "cannot respec below level 1")

@@ -450,6 +450,100 @@ func hero_buy_level() -> bool:
 	m["level"] = int(m["level"]) + 1
 	return true
 
+# Shared 4-section CK3 skeleton (Spec A §3a). Each node: section, the node that
+# must be owned first (`requires`, "" = a section root or capstone), max rank
+# (stat nodes are multi-rank), and an optional `gate` = minimum points spent in
+# the section before a capstone unlocks. 44 points fully clears the tree.
+const HERO_TREE: Dictionary = {
+	# Might — hero combat
+	"conditioning":  {"section": "might",   "requires": "",             "max_rank": 3},
+	"honed_blade":   {"section": "might",   "requires": "conditioning", "max_rank": 3},
+	"warlord":       {"section": "might",   "requires": "honed_blade",  "max_rank": 1},
+	"quickstep":     {"section": "might",   "requires": "conditioning", "max_rank": 3},
+	"veteran":       {"section": "might",   "requires": "quickstep",    "max_rank": 1},
+	"might_cap":     {"section": "might",   "requires": "",             "max_rank": 1, "gate": 3},
+	# Command — leader auras
+	"drillmaster":   {"section": "command", "requires": "",             "max_rank": 3},
+	"banneret":      {"section": "command", "requires": "drillmaster",  "max_rank": 2},
+	"inspiring":     {"section": "command", "requires": "banneret",     "max_rank": 1},
+	"quartermaster": {"section": "command", "requires": "drillmaster",  "max_rank": 2},
+	"thrifty":       {"section": "command", "requires": "quartermaster","max_rank": 1},
+	"command_sig":   {"section": "command", "requires": "",             "max_rank": 1, "gate": 3},
+	# Guile — sway / economy
+	"charisma":      {"section": "guile",   "requires": "",             "max_rank": 2},
+	"negotiator":    {"section": "guile",   "requires": "charisma",     "max_rank": 2},
+	"silver_tongue": {"section": "guile",   "requires": "negotiator",   "max_rank": 1},
+	"duelist":       {"section": "guile",   "requires": "charisma",     "max_rank": 2},
+	"war_chest":     {"section": "guile",   "requires": "duelist",      "max_rank": 3},
+	"guile_cap":     {"section": "guile",   "requires": "",             "max_rank": 1, "gate": 3},
+	# Tactics — the Card deck (Spec B)
+	"field_kit":     {"section": "tactics", "requires": "",             "max_rank": 2},
+	"bandolier":     {"section": "tactics", "requires": "field_kit",    "max_rank": 2},
+	"quick_draw":    {"section": "tactics", "requires": "bandolier",    "max_rank": 2},
+	"scout_ahead":   {"section": "tactics", "requires": "field_kit",    "max_rank": 2},
+	"reserves":      {"section": "tactics", "requires": "scout_ahead",  "max_rank": 2},
+	"tactics_cap":   {"section": "tactics", "requires": "",             "max_rank": 1, "gate": 3},
+}
+
+# Current rank of a node for a hero (0 = unowned).
+func hero_node_rank(node_id: String, id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return int(_hero_meta(hid)["nodes"].get(node_id, 0))
+
+func hero_has_node(node_id: String, id: String = "") -> bool:
+	return hero_node_rank(node_id, id) >= 1
+
+# Total points placed in a section (for capstone gates).
+func hero_points_in_section(section: String, id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	var total := 0
+	var nodes: Dictionary = _hero_meta(hid)["nodes"]
+	for nid in nodes.keys():
+		if HERO_TREE.has(nid) and String(HERO_TREE[nid].get("section", "")) == section:
+			total += int(nodes[nid])
+	return total
+
+# Can the selected hero place a point on this node right now?
+func hero_can_buy_node(node_id: String) -> bool:
+	if not has_hero() or not HERO_TREE.has(node_id):
+		return false
+	if hero_unspent_points() < 1:
+		return false
+	var def: Dictionary = HERO_TREE[node_id]
+	if hero_node_rank(node_id) >= int(def.get("max_rank", 1)):
+		return false
+	var req := String(def.get("requires", ""))
+	if req != "" and not hero_has_node(req):
+		return false
+	var gate := int(def.get("gate", 0))
+	if gate > 0 and hero_points_in_section(String(def["section"])) < gate:
+		return false
+	return true
+
+# Place one point on a node (raise its rank). Returns false if not allowed.
+func hero_buy_node(node_id: String) -> bool:
+	if not hero_can_buy_node(node_id):
+		return false
+	var m := _hero_meta(selected_hero)
+	m["nodes"][node_id] = hero_node_rank(node_id) + 1
+	return true
+
+# Respec (Spec A) — permanently drops the hero one level (loses one point
+# forever) and clears all placed nodes. Cannot drop below level 1.
+func hero_respec() -> bool:
+	if not has_hero():
+		return false
+	var m := _hero_meta(selected_hero)
+	if int(m["level"]) <= 1:
+		return false
+	m["level"] = int(m["level"]) - 1
+	m["nodes"] = {}
+	return true
+
 # ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
 # sway type the player must beat to recruit. Deterministic per node so the offer
