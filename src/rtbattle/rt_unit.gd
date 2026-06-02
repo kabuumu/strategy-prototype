@@ -53,6 +53,16 @@ var order: int = Order.IDLE
 var move_target: Vector2 = Vector2.ZERO
 var attack_target: RTUnit = null
 
+# When true the unit stands completely inert — no move, no auto-engage, no
+# firing (it can still take damage). Branch B (front-vs-front) holds every
+# non-front unit so only the two fronts clash; the next steps up on a faint.
+var holding: bool = false
+
+# Front-vs-front: damage is a flat `damage_per_attack` regardless of how many
+# soldier sprites remain (the sprites are cosmetic, culled per ~10% HP). When
+# false (field melee) damage scales with the alive-soldier ratio.
+var flat_damage: bool = false
+
 var _cooldown: float = 0.0
 var _soldiers: Array = []               # Array[Soldier]
 var _ring: ColorRect                    # selection indicator (initially hidden)
@@ -75,8 +85,10 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	position         = world_pos
 	unit_name        = String(stats.get("name", type.capitalize()))
 	is_hero          = bool(stats.get("is_hero", false))
+	flat_damage      = bool(stats.get("flat_damage", false))
 	var base_soldier_count = int(stats.get("soldier_count", 9))
 	if is_hero:
+		# Hero renders as one larger sprite holding the whole regiment's HP.
 		soldier_count = 1
 		hp_per_soldier = base_soldier_count * int(stats.get("hp_per_soldier", 15))
 	else:
@@ -307,6 +319,10 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 	if not is_alive():
 		return fired
 
+	# Held units (front-vs-front backline) stand inert this tick.
+	if holding:
+		return fired
+
 	if _cooldown > 0.0:
 		_cooldown = max(0.0, _cooldown - delta)
 
@@ -370,12 +386,14 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		var dist: float = position.distance_to(attack_target.position)
 		if dist <= attack_range_px + attack_target.radius and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
-			# Damage scales with how many soldiers we still have — a battered
-			# regiment hits weaker.
-			var scaled: int = max(1, int(round(
-				damage_per_attack
-				* (float(alive_soldier_count()) / float(soldier_count))
-			)))
+			# Field melee: damage scales with how many soldiers remain (a battered
+			# regiment hits weaker). Front-vs-front (flat_damage): always full —
+			# the soldier sprites are cosmetic, culled per ~10% HP for the visual.
+			var scaled: int = damage_per_attack
+			if not flat_damage:
+				scaled = max(1, int(round(
+					damage_per_attack * (float(alive_soldier_count()) / float(soldier_count))
+				)))
 			attack_target.take_damage(scaled)
 			_play_attack_animation(attack_target)
 			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}

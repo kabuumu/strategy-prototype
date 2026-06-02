@@ -180,6 +180,10 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.055, 0.065, 0.090))
+	# Combat-model A/B label (Quick Auto Battle is the comparison sandbox).
+	draw_string(ThemeDB.fallback_font, Vector2(44.0, 26.0),
+			"COMBAT B · FRONT-VS-FRONT (single pet)", HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+			Color(0.55, 0.85, 0.95, 0.85))
 	draw_rect(FIELD_RECT, Color(0.15, 0.20, 0.16))
 	draw_line(Vector2(FIELD_RECT.get_center().x, FIELD_RECT.position.y),
 			Vector2(FIELD_RECT.get_center().x, FIELD_RECT.end.y), Color(0.90, 0.85, 0.45, 0.22), 2.0)
@@ -1075,13 +1079,19 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 	var stats: Dictionary = UNIT_TYPES[unit_id].duplicate(true)
 	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
-	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / float(stats.get("soldier_count", 1)))))
+	# Front-vs-front: a cosmetic squad of 10 sprites that cull one per ~10% HP
+	# lost (keeps the little-army animation), but combat HP is a single pool and
+	# the sprite count does NOT scale damage (see flat_damage below).
+	stats["soldier_count"] = 10
+	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / 10.0)))
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 18.0
 	if String(card.get("item", "")) == "drum":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	stats["is_hero"] = card.get("hero", false)
+	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
 	u.setup(unit_id, team_id, pos, stats)
+	u.holding = true             # held until the front-vs-front controller engages the front
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
 	u.hp = u.max_hp
 	u.unit_name = "%s Lv %d" % [_unit_name(unit_id), int(card.get("level", 1))]
@@ -1129,8 +1139,31 @@ func _auto_target(delta: float) -> void:
 	if _ai_timer > 0.0:
 		return
 	_ai_timer = AI_RETARGET_PERIOD
-	_assign_targets(player_units, enemy_units)
-	_assign_targets(enemy_units, player_units)
+	# Branch B — front-vs-front: only each team's frontmost-alive unit fights;
+	# everyone else holds. When a front faints, the next in line steps up.
+	_front_engage(player_units, enemy_units)
+	_front_engage(enemy_units, player_units)
+
+# Frontmost still-alive unit of a team. Live arrays are kept in formation order
+# (index 0 = front) and compacted by _on_unit_died, so the first alive entry is
+# the current front.
+func _frontmost_alive(team: Array) -> RTUnit:
+	for u: RTUnit in team:
+		if is_instance_valid(u) and u.is_alive():
+			return u
+	return null
+
+func _front_engage(team: Array, foes: Array) -> void:
+	var front: RTUnit = _frontmost_alive(team)
+	var foe_front: RTUnit = _frontmost_alive(foes)
+	for u: RTUnit in team:
+		if not (is_instance_valid(u) and u.is_alive()):
+			continue
+		if u == front and foe_front != null:
+			u.holding = false
+			u.order_attack(foe_front)
+		else:
+			u.holding = true
 
 func _assign_targets(attackers: Array, defenders: Array) -> void:
 	for u: RTUnit in attackers:
