@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. **You may create or edit any file in this codebase** — there is no read-only area; make the changes the task needs.
 
-> A complementary `.github/copilot-instructions.md` exists with overlapping guidance. Keep the two in sync when changing conventions.
+> Sibling instruction files carry the same guidance for other assistants: `.github/copilot-instructions.md` (Copilot), `AGENTS.md` (the cross-tool standard, e.g. Codex), and `GEMINI.md` (Gemini CLI). **Keep all four in sync** when changing conventions.
 
 ## Project
 
@@ -16,7 +16,14 @@ Sprites (`assets/units/`), SFX (`assets/sfx/`) and music (`assets/music/`) are c
 
 ## Commands
 
-The game is normally run and tested through the Godot editor — there is no unit-test or lint suite.
+The game is normally run and tested through the Godot editor.
+
+**Tests (headless, no addon):**
+```bash
+tools/smoke_test.sh     # boots every scene a few frames; fails on any script/parse error
+tools/run_tests.sh      # runs the GDScript unit suite under tests/
+```
+The unit suite is a dependency-free harness (matching the pure-stdlib tooling ethos): `tests/framework.gd` (assertions), `tests/run_tests.gd` (a `SceneTree` runner invoked via `godot --headless --script res://tests/run_tests.gd` that discovers `tests/test_*.gd` and runs each `test_*` method), exiting non-zero on failure. Tests instantiate their own `GameManager` copy (`load("res://src/game_manager.gd").new()`) since autoloads aren't loaded under `--script`. **Add a `tests/test_*.gd` regression test when changing game logic.**
 
 Headless web export (mirrors CI in `.github/workflows/deploy.yml`, Godot 4.4):
 ```bash
@@ -61,6 +68,17 @@ Graph data: 12–15 tiers (randomized per run, `MAP_TIERS_RANGE`). Tier 0 = sing
 ### Auto-battler (`src/autobattler/`)
 
 `autobattler.gd` builds both armies from rosters and auto-resolves the fight with no player input during combat — strength comes from the army built across the run. It uses `rtbattle/rt_unit.gd` (the only surviving file in `src/rtbattle/`) for per-unit combat behaviour and loads `assets/units/*.png` for sprites. Enemy scaling: HP mult = `1.0 + tier*0.2 + (0.25 if elite)`; roster seeded from tier+elite (deterministic). Win/loss reporting goes through `_conclude_campaign`.
+
+**How combat actually works (audited 2026-06-02):**
+- **Phase machine** `enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }`. **Quick Auto Battle** (standalone from the title) runs the full **Super-Auto-Pets-style** loop: SHOP → FIGHT → RESULT → REWARD → SHOP, ending at GAME_OVER (`wins >= MAX_WINS` / `hearts <= 0`). **Campaign** battles set `_campaign` and **skip SHOP**, jumping straight to FIGHT; **duels** likewise (`_start_duel_fight`).
+- **SHOP team-building** (quick-battle only): buy (`BUY_COST` gold) into a `TEAM_SIZE = 5` hotbar, **merge** a duplicate to level up (`MAX_LEVEL = 3`), **reorder** (slot 0 deploys at the front), **sell**, **freeze** the shop, **roll** (`ROLL_COST`). Gold is `GOLD_PER_ROUND`. None of this gold economy runs in campaign — the campaign uses `player_roster` as-is, in roster order.
+- **FIGHT is a real-time field melee, NOT a turn-based front-vs-front queue.** All units spawn on `FIELD_RECT`, move toward AI-assigned targets (`_auto_target` on `AI_RETARGET_PERIOD`), and attack on `attack_cooldown` when in range. A unit is a **Total-War-style regiment**: `max_hp = soldier_count * hp_per_soldier`, and **damage scales by the alive-soldier ratio** (`damage_per_attack * alive/total`); sprites cull as HP drops. The hero (`is_hero`) is a single sprite holding the whole regiment's HP.
+- **Hero injection:** `_start_campaign_fight` appends the hero card at index 0 (frontmost) with a `null` roster entry (never persisted/permakilled) when `hero_battle_mode == "fight"`; in `"buff"` mode the hero isn't spawned and `_apply_hero_buff` modifies the team instead.
+- **Permadeath is implemented:** `_conclude_campaign` collects alive units' roster entries into `survivors` and calls `set_roster(survivors)`; fallen units are dropped from `player_roster` permanently. Loss calls `clear_run()`.
+
+### Planned redesign (design-stage, not yet built)
+
+`docs/superpowers/specs/2026-06-02-*.md` hold five brainstormed specs for a large overhaul: **D** SAP-style campaign combat (promote the existing shop/lineup loop into the campaign; single-pet HP/Attack units, prep phase), **A** a permanent per-hero CK3-style XP skill tree (deletes fight/buff + Valor; hero = a permanent lineup unit; Command = leader auras), **B** a run-local Card deck, **C** point-and-click overworld, **E** touch/mobile input. **These describe intended future state — the code above is current reality.** Reconcile against the code before implementing (much of "SAP combat" already exists).
 
 ## Conventions
 

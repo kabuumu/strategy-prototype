@@ -1,0 +1,32 @@
+# GEMINI.md
+
+Agent guidance for Gemini CLI in this repository. The fullest version lives in **`CLAUDE.md`**; `AGENTS.md` is the same condensed guidance. Siblings: `.github/copilot-instructions.md`. **Keep all four in sync.**
+
+**You may create or edit any file in this codebase** — no read-only area; make the changes the task needs.
+
+## Project
+
+Godot **4.4** auto-battler strategy roguelite in **GDScript**. Forward Plus, viewport 1280×720 (`canvas_items` stretch). Main scene `src/title/title.tscn`. Scene flow: `title → charselect → level_select ⇄ autobattler`. The only fight mode is the auto-battler; your roster auto-resolves each encounter.
+
+## Commands / tests (headless, no addon)
+
+```bash
+godot --headless --import     # import assets after changing any of them
+tools/smoke_test.sh           # boots every scene; fails on any script/parse error
+tools/run_tests.sh            # GDScript unit suite under tests/
+```
+The unit suite is dependency-free: `tests/framework.gd` (assertions) + `tests/run_tests.gd` (a `SceneTree` runner, `godot --headless --script res://tests/run_tests.gd`, that discovers `tests/test_*.gd` and runs each `test_*` method, exiting non-zero on failure). Tests instantiate their own `GameManager` copy because autoloads aren't loaded under `--script`. **Add a `tests/test_*.gd` regression test when changing game logic.**
+
+## How combat actually works (audited 2026-06-02 — common misconception)
+
+`enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }`. **Quick Auto Battle** (standalone from the title) runs the full **Super-Auto-Pets-style** loop: SHOP team-building (buy / `merge`-to-level `MAX_LEVEL 3` / reorder where slot 0 = front / sell / freeze / roll, over a `TEAM_SIZE = 5` gold hotbar) → FIGHT → RESULT → REWARD. **Campaign battles and duels SKIP SHOP** (`_campaign`, `_start_campaign_fight`) and fight `player_roster` directly. **FIGHT is a real-time field melee** on `FIELD_RECT` (units move toward AI targets, attack on `attack_cooldown`), **not** a turn-based front-vs-front queue; each unit is a **regiment** — `max_hp = soldier_count * hp_per_soldier` and **damage scales by the alive-soldier ratio**. The hero is injected at index 0 (front) with a `null` roster entry (never persisted). **Permadeath is implemented**: `_conclude_campaign` keeps only alive units via `set_roster`; loss calls `clear_run`.
+
+## Key conventions
+
+- **All UI is built in code** — no UI nodes in `.tscn`; create every `Label`/`Button`/`ColorRect`/`StyleBoxFlat` programmatically in `_build_ui()`/`_ready()`. Inline `StyleBoxFlat` via `add_theme_stylebox_override` (`_circle_style`, `_btn_style`).
+- **All persistent cross-scene state lives on the `GameManager` autoload** (`src/game_manager.gd`). Never store run-state in scene scripts. Use exact lowercase `UNIT_TYPES` keys (`"soldier"`, `"archer"`, `"scout"`).
+- Naming: `_build_*` constructs UI, `_refresh_*` updates UI, `_try_*` validates input, `_on_*` are signal callbacks.
+
+## Planned redesign (design-stage, NOT built)
+
+`docs/superpowers/specs/2026-06-02-*.md` hold five specs for a large overhaul (SAP-style campaign combat, a permanent per-hero CK3 XP skill tree that deletes fight/buff + Valor, a Card deck, point-and-click + touch overworld). **These are intended future state; the code is current reality.** Much of "SAP combat" already exists — reconcile against the code before implementing.

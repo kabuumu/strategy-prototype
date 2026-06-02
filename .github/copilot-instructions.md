@@ -1,10 +1,14 @@
 # Copilot Instructions
 
+**You may create or edit any file in this codebase** — no read-only area; make the changes the task needs.
+
+> Sibling instruction files carry the same guidance: `CLAUDE.md` (Claude Code), `AGENTS.md` (cross-tool standard, e.g. Codex), `GEMINI.md` (Gemini CLI). **Keep all four in sync** when changing conventions.
+
 ## Project
 
 Godot 4.4 auto-battler strategy roguelite written in GDScript. Engine version: 4.4, renderer: Forward Plus, viewport: 1280×720 (`canvas_items` stretch). The only fight mode is the auto-battler (`src/autobattler/`) — your roster auto-resolves each encounter.
 
-There are no build/test/lint commands — the game is run and tested through the Godot editor. Boot-test scenes headless with `tools/smoke_test.sh`.
+The game is run and tested through the Godot editor. Two headless checks (no addon): `tools/smoke_test.sh` boots every scene and fails on any script/parse error; `tools/run_tests.sh` runs the GDScript unit suite under `tests/` (a dependency-free harness — `tests/framework.gd` + a `SceneTree` runner `tests/run_tests.gd` discovering `tests/test_*.gd`; tests instantiate their own `GameManager` copy). **Add a `tests/test_*.gd` regression test when changing game logic.**
 
 ## Assets
 
@@ -39,6 +43,12 @@ title.tscn  →  charselect.tscn  →  level_select.tscn  ⇄  autobattler.tscn
 ### Auto-battler scene (`src/autobattler/`)
 
 `autobattler.gd` builds both armies from rosters and auto-resolves the fight — no player input during combat. It uses `rtbattle/rt_unit.gd` (the only surviving file in `src/rtbattle/`) for per-unit combat behaviour and loads `assets/units/*.png` for sprites. Enemy scaling: HP multiplier = `1.0 + tier * 0.2 + (0.25 if elite)`; roster seeded from tier+elite so it is deterministic. Win/loss reporting goes through `_conclude_campaign`.
+
+**How combat actually works (audited 2026-06-02):** `enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }`. Quick Auto Battle runs the full **Super-Auto-Pets-style** loop (SHOP team-building → FIGHT → RESULT → REWARD); **campaign + duels skip SHOP** and jump to FIGHT (`_campaign`/`_start_campaign_fight`). SHOP (quick-battle only) has buy/`merge`-to-level (`MAX_LEVEL 3`)/reorder (slot 0 = front)/sell/freeze/roll over a `TEAM_SIZE = 5` hotbar with gold. **FIGHT is a real-time field melee on `FIELD_RECT`** (units move to AI targets, attack on cooldown) — **not** a turn-based front-vs-front queue; a unit is a **regiment** (`max_hp = soldier_count * hp_per_soldier`, **damage scales by alive-soldier ratio**). Hero injected at index 0 (front) with a `null` roster entry. **Permadeath is implemented** — `_conclude_campaign` keeps only alive units via `set_roster`.
+
+### Planned redesign (design-stage, not built)
+
+`docs/superpowers/specs/2026-06-02-*.md` hold five specs for a large overhaul (SAP-style campaign combat, a permanent per-hero CK3 XP skill tree that deletes fight/buff + Valor, a Card deck, point-and-click + touch overworld). **These are intended future state; the code above is current reality.** Much of "SAP combat" already exists — reconcile against the code before implementing.
 
 ### Level select scene (`src/level_select/`)
 
