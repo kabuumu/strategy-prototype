@@ -384,6 +384,73 @@ func hero_buff_cost(base: int) -> int:
 	return maxi(0, base - (1 if has_perk("thrifty") else 0))
 
 # ---------------------------------------------------------------------------
+# Hero skill tree — permanent per-hero progression (Spec A). XP banks across
+# runs (hero_award_xp) and is spent BETWEEN runs to buy levels; each level grants
+# one skill point to place on a tree node (nodes land in a later slice). Mutators
+# change `hero_meta` in memory; callers persist via _save_meta(). All read paths
+# no-op to a neutral value when there is no hero.
+# ---------------------------------------------------------------------------
+
+# Get-or-create the meta record for a hero id.
+func _hero_meta(id: String) -> Dictionary:
+	if not hero_meta.has(id):
+		hero_meta[id] = {"xp": 0, "level": 1, "nodes": {}}
+	return hero_meta[id]
+
+# XP required to advance FROM `level` TO level+1. Escalating; uncapped.
+func hero_level_cost(level: int) -> int:
+	return 10 * level
+
+# Bank XP for the selected hero (permanent). No-op without a hero / non-positive.
+func hero_award_xp(amount: int) -> void:
+	if not has_hero() or amount <= 0:
+		return
+	var m := _hero_meta(selected_hero)
+	m["xp"] = int(m["xp"]) + amount
+
+func hero_banked_xp(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return int(_hero_meta(hid)["xp"])
+
+func hero_meta_level(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 1
+	return int(_hero_meta(hid)["level"])
+
+# Points spent on nodes (sum of node ranks) for a hero.
+func hero_spent_points(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	var spent := 0
+	for r in _hero_meta(hid)["nodes"].values():
+		spent += int(r)
+	return spent
+
+# Unspent skill points = (level-1 points granted) - points already placed.
+func hero_unspent_points(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return maxi(0, hero_meta_level(hid) - 1 - hero_spent_points(hid))
+
+# Spend banked XP to buy the selected hero one level (+1 skill point). Returns
+# false if there's no hero or not enough XP.
+func hero_buy_level() -> bool:
+	if not has_hero():
+		return false
+	var m := _hero_meta(selected_hero)
+	var cost := hero_level_cost(int(m["level"]))
+	if int(m["xp"]) < cost:
+		return false
+	m["xp"] = int(m["xp"]) - cost
+	m["level"] = int(m["level"]) + 1
+	return true
+
+# ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
 # sway type the player must beat to recruit. Deterministic per node so the offer
 # is stable across popup rebuilds and run reloads.
@@ -618,6 +685,11 @@ var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
 var runs_won: int = 0           # persists across runs (boss cleared) — gates hero unlocks
+# Permanent per-hero skill-tree progression (Spec A). Persists across runs in
+# meta.cfg, keyed by hero id: { id: {"xp":int, "level":int, "nodes":{node_id:rank}} }.
+# XP banks across runs and is spent between runs to buy levels (each level grants
+# one skill point) and place points on tree nodes. Survives reset()/select_hero().
+var hero_meta: Dictionary = {}
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -787,6 +859,29 @@ func _load_meta() -> void:
 	runs_won          = int(cfg.get_value("meta", "runs_won",          0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
+	_load_hero_meta(cfg)
+
+# Sanitised load of the per-hero skill-tree records (Spec A). Coerces leaves to
+# the expected types so a hand-edited / older meta.cfg can't inject garbage.
+func _load_hero_meta(cfg: ConfigFile) -> void:
+	hero_meta = {}
+	var hm: Variant = cfg.get_value("meta", "hero_meta", {})
+	if not (hm is Dictionary):
+		return
+	for k in (hm as Dictionary).keys():
+		var e: Variant = hm[k]
+		if not (e is Dictionary):
+			continue
+		var nodes: Dictionary = {}
+		var raw_nodes: Variant = (e as Dictionary).get("nodes", {})
+		if raw_nodes is Dictionary:
+			for nk in (raw_nodes as Dictionary).keys():
+				nodes[str(nk)] = int(raw_nodes[nk])
+		hero_meta[str(k)] = {
+			"xp": maxi(0, int((e as Dictionary).get("xp", 0))),
+			"level": maxi(1, int((e as Dictionary).get("level", 1))),
+			"nodes": nodes,
+		}
 
 func _save_meta() -> void:
 	var cfg := ConfigFile.new()
@@ -796,6 +891,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "runs_won",          runs_won)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
+	cfg.set_value("meta", "hero_meta",         hero_meta)
 	cfg.save(META_PATH)
 
 # Mark the first-battle help as seen (persists so it won't auto-open again).
