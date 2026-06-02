@@ -53,6 +53,11 @@ var order: int = Order.IDLE
 var move_target: Vector2 = Vector2.ZERO
 var attack_target: RTUnit = null
 
+# When true the unit stands completely inert — no move, no auto-engage, no
+# firing (it can still take damage). Branch B (front-vs-front) holds every
+# non-front unit so only the two fronts clash; the next steps up on a faint.
+var holding: bool = false
+
 var _cooldown: float = 0.0
 var _soldiers: Array = []               # Array[Soldier]
 var _ring: ColorRect                    # selection indicator (initially hidden)
@@ -76,7 +81,11 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	unit_name        = String(stats.get("name", type.capitalize()))
 	is_hero          = bool(stats.get("is_hero", false))
 	var base_soldier_count = int(stats.get("soldier_count", 9))
-	if is_hero:
+	# A "single pet" collapses the regiment into one combatant holding the whole
+	# regiment's HP (the hero already works this way). Branch B (front-vs-front)
+	# sets single_pet on every unit so there's no alive-ratio damage scaling.
+	var single_pet: bool = is_hero or bool(stats.get("single_pet", false))
+	if single_pet:
 		soldier_count = 1
 		hp_per_soldier = base_soldier_count * int(stats.get("hp_per_soldier", 15))
 	else:
@@ -305,6 +314,10 @@ func _kill_soldier(s: Soldier) -> void:
 func tick(delta: float, neighbours: Array) -> Dictionary:
 	var fired: Dictionary = {"fired": false}
 	if not is_alive():
+		return fired
+
+	# Held units (front-vs-front backline) stand inert this tick.
+	if holding:
 		return fired
 
 	if _cooldown > 0.0:
