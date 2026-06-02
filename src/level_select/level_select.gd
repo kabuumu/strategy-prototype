@@ -86,6 +86,7 @@ var _popup: Control = null
 var _settings_overlay: Control = null
 var _inventory_popup: Control = null
 var _tree_panel: Control = null   # hero skill-tree overlay (Spec A)
+var _deck_panel: Control = null   # card deck overlay (Spec B)
 var _shop_relic_offer: String = ""
 var _pending_recruit_toast: Dictionary = {}
 
@@ -302,13 +303,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			_toggle_inventory()
 		return
 	if event.keycode == KEY_T:
-		if _popup == null and _inventory_popup == null:
+		if _popup == null and _inventory_popup == null and _deck_panel == null:
 			_toggle_hero_tree()
 		return
+	if event.keycode == KEY_C:
+		if _popup == null and _inventory_popup == null and _tree_panel == null:
+			_toggle_deck()
+		return
 	if event.keycode == KEY_ESCAPE:
-		# Esc closes the skill tree / inventory / a shop popup first; else settings.
+		# Esc closes the skill tree / deck / inventory / a shop popup first; else settings.
 		if _tree_panel != null:
 			_toggle_hero_tree()
+		elif _deck_panel != null:
+			_toggle_deck()
 		elif _inventory_popup != null:
 			_toggle_inventory()
 		elif _popup != null:
@@ -368,6 +375,17 @@ func _toggle_hero_tree() -> void:
 	_tree_panel = load("res://src/ui/hero_tree_panel.gd").new()
 	add_child(_tree_panel)
 	_tree_panel.setup(GameManager.selected_hero, func(): _tree_panel = null)
+
+func _toggle_deck() -> void:
+	if _deck_panel != null:
+		_deck_panel.queue_free()
+		_deck_panel = null
+		return
+	if not GameManager.has_hero():
+		return
+	_deck_panel = load("res://src/ui/deck_panel.gd").new()
+	add_child(_deck_panel)
+	_deck_panel.setup(func(): _deck_panel = null)
 
 func _toggle_inventory() -> void:
 	if _inventory_popup != null:
@@ -474,7 +492,7 @@ func _input_blocked() -> bool:
 	# already blocks via _popup, and _update_travel must run once it closes to
 	# clear the flag and resume walking.
 	return _popup != null or _settings_overlay != null or _inventory_popup != null \
-		or _tree_panel != null or _awaiting_resolve or _leaving
+		or _tree_panel != null or _deck_panel != null or _awaiting_resolve or _leaving
 
 # Camera follows the avatar horizontally, clamped to the world.
 func _update_camera(delta: float) -> void:
@@ -828,6 +846,8 @@ func _build_hud() -> void:
 	side.add_child(_hero_label)
 	side.add_child(UITheme.button("Skill Tree  [T]", Vector2(176.0, 96.0), Vector2(140.0, 26.0),
 		Color(0.34, 0.28, 0.46), _toggle_hero_tree, 12))
+	side.add_child(UITheme.button("Deck  [C]", Vector2(18.0, 96.0), Vector2(140.0, 26.0),
+		Color(0.26, 0.34, 0.42), _toggle_deck, 12))
 
 	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 130.0)))
 	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 144.0), Vector2(292.0, 112.0))

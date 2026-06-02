@@ -678,6 +678,20 @@ func card_take_reward(id: String) -> void:
 		return
 	card_deck.append(id)
 
+# Permanently remove one copy of a card from the hand or draw pile (deck-prune).
+func card_prune(id: String) -> bool:
+	var i := card_hand.find(id)
+	if i >= 0:
+		card_hand.remove_at(i)
+		card_graveyard.append(id)
+		return true
+	i = card_deck.find(id)
+	if i >= 0:
+		card_deck.remove_at(i)
+		card_graveyard.append(id)
+		return true
+	return false
+
 # Grant one reward Card into the deck on a battle win (auto-draft; a 3-card pick
 # popup replaces this in the prep-UI slice). No-op without a hero.
 func card_grant_battle_reward() -> String:
