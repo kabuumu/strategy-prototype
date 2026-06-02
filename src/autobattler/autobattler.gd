@@ -243,7 +243,7 @@ func _rebuild_ui() -> void:
 	if _campaign:
 		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
 		var odds: String = GameManager.battle_odds(
-			GameManager.pending_battle_tier, GameManager.pending_battle_elite, GameManager.hero_battle_mode)
+			GameManager.pending_battle_tier, GameManager.pending_battle_elite, "fight")
 		var mod_text: String = ""
 		if GameManager.pending_battle_elite:
 			mod_text = "   ·   %s" % String(GameManager.elite_modifier_data(GameManager.pending_battle_tier).get("name", ""))
@@ -1116,22 +1116,6 @@ func _on_pick_reward_card(i: int) -> void:
 	GameManager.save_run()
 	_card_reward_offer = []
 	_rebuild_ui()
-
-func _apply_hero_buff(buff_id: String) -> void:
-	var bm := GameManager.hero_buff_mult()
-	for u: RTUnit in player_units:
-		match buff_id:
-			"aegis":
-				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * bm))))
-				u.hp = u.max_hp
-				if u.has_method("_refresh_hp_bar"):
-					u.call("_refresh_hp_bar")
-			"march":
-				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * bm))))
-			"warchest":
-				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * bm)))
-				if u.has_method("_refresh_hp_bar"):
-					u.call("_refresh_hp_bar")
 
 # Command leader aura (Spec A): when the hero fights in the lineup it buffs the
 # whole team at battle start, scaled by the Command tree (hero_aura_mult_tree).

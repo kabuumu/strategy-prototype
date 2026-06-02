@@ -289,9 +289,6 @@ func select_hero(id: String) -> void:
 	if not HEROES.has(id):
 		return
 	selected_hero = id
-	valor = 0
-	hero_battle_mode = "fight"
-	pending_hero_buff = ""
 	hero_level = 1
 	hero_xp = 0
 	hero_perks = []
@@ -301,15 +298,6 @@ func select_hero(id: String) -> void:
 	for t in bonus.get("units", []):
 		add_unit(str(t))
 	cards_init_run()   # Spec B: seed this run's Card deck + opening hand
-
-func add_valor(n: int) -> void:
-	valor = max(0, valor + n)
-
-func spend_valor(n: int) -> bool:
-	if valor < n:
-		return false
-	valor -= n
-	return true
 
 # Hero's aptitude for a sway type ("dialogue"/"persuasion"/"duel"); 0 if no hero.
 # The Silver Tongue perk lifts every aptitude by 1.
@@ -375,14 +363,6 @@ func hero_fight_mult() -> float:
 # Extra card levels the fighting hero spawns at (Veteran perk).
 func hero_fight_bonus_level() -> int:
 	return 1 if has_perk("veteran_hero") else 0
-
-# Multiplier on the bonus portion of a team BUFF (level scaling + Inspiring).
-func hero_buff_mult() -> float:
-	return 1.0 + 0.05 * float(hero_level - 1) + (0.50 if has_perk("inspiring") else 0.0)
-
-# Valor cost of a buff after the Thrifty perk.
-func hero_buff_cost(base: int) -> int:
-	return maxi(0, base - (1 if has_perk("thrifty") else 0))
 
 # ---------------------------------------------------------------------------
 # Hero skill tree — permanent per-hero progression (Spec A). XP banks across
@@ -801,13 +781,6 @@ func hero_fight_power() -> float:
 	var lvl: int = int(hd.get("fight_level", 1)) + hero_fight_bonus_level()
 	return _unit_power(int(u["max_hp"]) * lvl, int(u["damage"]) * lvl) * hero_fight_mult()
 
-# Approximate army-power multiplier from a team buff.
-func buff_power_factor(buff_id: String) -> float:
-	var bonus: float = 0.15
-	if buff_id == "warchest":
-		bonus = 0.12
-	return 1.0 + bonus * hero_buff_mult()
-
 # ---------------------------------------------------------------------------
 # Elite modifiers — every elite_battle (and the boss) rolls a deterministic
 # modifier that buffs the enemy host. Applied to enemy units in the autobattler;
@@ -840,14 +813,10 @@ func enemy_power(tier: int, elite: bool) -> float:
 		total *= (float(m.get("hp", 1.0)) + float(m.get("dmg", 1.0))) * 0.5
 	return total
 
-# Army power under a given hero mode ("fight" adds the hero unit, "buff" scales).
-func army_power_for(mode: String) -> float:
-	var base: float = army_power_base()
-	if mode == "fight":
-		return base + hero_fight_power()
-	elif mode == "buff" and has_hero():
-		return base * buff_power_factor(String(hero_data().get("buff", {}).get("id", "")))
-	return base
+# Army power estimate for the odds heuristic. The hero always fights as a lineup
+# unit; `mode` is retained for existing battle_odds callers but no longer branches.
+func army_power_for(_mode: String) -> float:
+	return army_power_base() + hero_fight_power()
 
 func odds_label(ratio: float) -> String:
 	if ratio >= 1.35:
@@ -919,9 +888,6 @@ var curses: Array[String] = []   # afflictions (run-long negative passives)
 var battle_mode: String = "auto"   # campaign battles are auto-resolved by the auto-battler
 # --- Hero (chosen at the start of a campaign; see HEROES) -------------------
 var selected_hero: String = ""           # "" = no hero (standalone Quick Auto Battle)
-var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
-var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
-var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
 # --- Hero progression (levels from wins; perks chosen on level-up) ----------
 var hero_level: int = 1
 var hero_xp: int = 0                       # +1 per battle won; HERO_XP_PER_LEVEL per level
@@ -1077,9 +1043,6 @@ func reset() -> void:
 	battles_won = 0
 	# Hero is chosen on the character-select screen AFTER reset() (select_hero).
 	selected_hero = ""
-	valor = 0
-	hero_battle_mode = "fight"
-	pending_hero_buff = ""
 	hero_level = 1
 	hero_xp = 0
 	hero_perks = []
@@ -1203,7 +1166,6 @@ func save_run() -> void:
 	cfg.set_value("run", "boss_id", boss_id)
 	cfg.set_value("run", "battle_mode", battle_mode)
 	cfg.set_value("run", "selected_hero", selected_hero)
-	cfg.set_value("run", "valor", valor)
 	cfg.set_value("run", "hero_level", hero_level)
 	cfg.set_value("run", "hero_xp", hero_xp)
 	cfg.set_value("run", "hero_perks", hero_perks)
@@ -1250,15 +1212,12 @@ func load_run() -> bool:
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
 	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
 	selected_hero     = str(cfg.get_value("run", "selected_hero", ""))
-	valor             = int(cfg.get_value("run", "valor", 0))
 	hero_level        = int(cfg.get_value("run", "hero_level", 1))
 	hero_xp           = int(cfg.get_value("run", "hero_xp", 0))
 	hero_perks = []
 	for pk in cfg.get_value("run", "hero_perks", []):
 		hero_perks.append(str(pk))
 	pending_hero_perk = bool(cfg.get_value("run", "pending_hero_perk", false))
-	hero_battle_mode  = "fight"
-	pending_hero_buff = ""
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true

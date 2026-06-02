@@ -637,8 +637,8 @@ func _gen_edge_content() -> void:
 		var is_gold: bool = rng.randf() < 0.7
 		_edge_pickups.append({
 			"t": t, "pos": pos, "taken": false,
-			"kind": "gold" if is_gold else "valor",
-			"amount": rng.randi_range(8, 15) if is_gold else 1,
+			"kind": "gold",
+			"amount": rng.randi_range(8, 15) if is_gold else rng.randi_range(4, 8),
 		})
 	# ~25% encounter, opened at the start of the edge (no mid-edge scene change).
 	if rng.randf() < 0.25:
@@ -667,12 +667,8 @@ func _update_travel(delta: float) -> void:
 
 func _collect_pickup(p: Dictionary) -> void:
 	p["taken"] = true
-	if String(p["kind"]) == "gold":
-		GameManager.add_gold(int(p["amount"]))
-		_show_toast("+%d gold" % int(p["amount"]), Color(0.95, 0.82, 0.30))
-	else:
-		GameManager.add_valor(int(p["amount"]))
-		_show_toast("+%d Valor" % int(p["amount"]), Color(0.62, 0.72, 0.98))
+	GameManager.add_gold(int(p["amount"]))
+	_show_toast("+%d gold" % int(p["amount"]), Color(0.95, 0.82, 0.30))
 	Sfx.play("gold")
 	_refresh()
 
@@ -795,8 +791,8 @@ func _refresh() -> void:
 	_gold_label.text   = "Gold: %d" % GameManager.gold
 	if _hero_label != null:
 		if GameManager.has_hero():
-			_hero_label.text = "Hero: %s  Lv%d   ·   Valor: %d" % [
-				String(GameManager.hero_data().get("name", "Hero")), GameManager.hero_level, GameManager.valor]
+			_hero_label.text = "Hero: %s  ·  Tree Lv%d" % [
+				String(GameManager.hero_data().get("name", "Hero")), GameManager.hero_meta_level()]
 		else:
 			_hero_label.text = ""
 	_relics_label.text = _relics_text()
@@ -861,8 +857,7 @@ func _trigger_node(tier: int, index: int) -> void:
 		"battle", "elite_battle":
 			var elite: bool = node_data["type"] == "elite_battle"
 			if not GameManager.has_hero():
-				# Defensive — campaigns always have a hero. No hero, no toggle.
-				GameManager.hero_battle_mode = "fight"
+				# Defensive — campaigns always have a hero.
 				_launch_autobattle(tier, elite)
 			else:
 				_show_prebattle_popup(tier, elite)
@@ -907,15 +902,12 @@ func _launch_autobattle(tier: int, elite: bool) -> void:
 
 # ---------------------------------------------------------------------------
 # Pre-battle popup — choose the hero's role for the upcoming fight.
-# Fight: the hero joins the army. Buff: spend Valor for a team-wide boon.
+# Pre-battle confirmation. The hero always fights at the front of the army.
 # ---------------------------------------------------------------------------
 func _show_prebattle_popup(tier: int, elite: bool) -> void:
 	if _popup != null:
 		return
 	var hero: Dictionary = GameManager.hero_data()
-	var buff: Dictionary = hero.get("buff", {})
-	var cost: int = GameManager.hero_buff_cost(int(buff.get("cost", 0)))
-	var valor: int = GameManager.valor
 
 	_popup = UITheme.panel(self, Vector2(360.0, 180.0), Vector2(560.0, 360.0),
 		Color(0.09, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
@@ -945,29 +937,14 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 	_popup.add_child(UITheme.label(syn_text, 13, Color(0.70, 0.92, 0.88),
 		Vector2(28.0, 94.0), Vector2(504.0, 20.0)))
 
-	# Fight — hero joins the army as a unit.
-	_popup.add_child(UITheme.label("Fight", 18, UITheme.TEXT, Vector2(28.0, 116.0), Vector2(504.0, 24.0)))
-	_popup.add_child(UITheme.label("Fights alongside your army.  Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 140.0), Vector2(504.0, 20.0)))
-	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 162.0), Vector2(504.0, 42.0),
+	# The hero fights as the front-most lineup unit, granting its leader aura
+	# (Spec D — fight/buff mode removed).
+	_popup.add_child(UITheme.label("The hero fights at the front of your army and grants its leader aura.",
+		14, UITheme.TEXT, Vector2(28.0, 128.0), Vector2(504.0, 24.0)))
+	_popup.add_child(UITheme.label("Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
+		13, UITheme.TEXT_MUTED, Vector2(28.0, 156.0), Vector2(504.0, 20.0)))
+	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 188.0), Vector2(504.0, 46.0),
 		UITheme.GREEN.darkened(0.1), _on_prebattle_fight.bind(tier, elite)))
-
-	# Buff — spend Valor for a team-wide boon instead of fighting.
-	_popup.add_child(UITheme.label("Buff", 18, UITheme.TEXT, Vector2(28.0, 204.0), Vector2(504.0, 24.0)))
-	_popup.add_child(UITheme.label("%s: %s — costs %d Valor (you have %d)\nOdds: %s" % [
-		String(buff.get("name", "—")), String(buff.get("desc", "")), cost, valor,
-		GameManager.battle_odds(tier, elite, "buff")],
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 228.0), Vector2(504.0, 50.0)))
-	var can_afford: bool = valor >= cost
-	var buff_btn := UITheme.button("Buff", Vector2(28.0, 282.0), Vector2(504.0, 42.0),
-		UITheme.BLUE, _on_prebattle_buff.bind(tier, elite, String(buff.get("id", "")), cost))
-	buff_btn.disabled = not can_afford
-	if not can_afford:
-		buff_btn.add_theme_stylebox_override("disabled", UITheme.button_style(Color(0.20, 0.22, 0.30)))
-	_popup.add_child(buff_btn)
-	if not can_afford:
-		_popup.add_child(UITheme.label("Not enough Valor.", 12, UITheme.RED,
-			Vector2(28.0, 328.0), Vector2(504.0, 18.0)))
 
 	# No Cancel: entering a battle node commits the visit (visit_node already
 	# advanced the tier), and Fight is always available — so the player can't
@@ -976,15 +953,6 @@ func _show_prebattle_popup(tier: int, elite: bool) -> void:
 func _on_prebattle_fight(tier: int, elite: bool) -> void:
 	_popup.queue_free()
 	_popup = null
-	GameManager.hero_battle_mode = "fight"
-	_launch_autobattle(tier, elite)
-
-func _on_prebattle_buff(tier: int, elite: bool, buff_id: String, cost: int) -> void:
-	_popup.queue_free()
-	_popup = null
-	GameManager.hero_battle_mode = "buff"
-	GameManager.pending_hero_buff = buff_id
-	GameManager.spend_valor(cost)
 	_launch_autobattle(tier, elite)
 
 # ---------------------------------------------------------------------------

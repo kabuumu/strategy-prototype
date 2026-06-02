@@ -117,8 +117,8 @@ func _build_card(hero_id: String, pos: Vector2) -> void:
 		int(hero["fight_level"])], 14, blue,
 		Vector2(pos.x + 18.0, y), Vector2(CARD_W - 36.0, 22.0)))
 	y += 26.0
-	add_child(UITheme.label("Buff:  %s — %s (%d Valor)" % [str(buff["name"]),
-		str(buff["desc"]), int(buff["cost"])], 14, green,
+	add_child(UITheme.label("Aura:  %s — %s" % [str(buff["name"]),
+		str(buff["desc"])], 14, green,
 		Vector2(pos.x + 18.0, y), Vector2(CARD_W - 36.0, 40.0)))
 	y += 44.0
 	add_child(UITheme.label("Sways:  %s" % _best_sway(hero["sway_aptitudes"]), 14,
