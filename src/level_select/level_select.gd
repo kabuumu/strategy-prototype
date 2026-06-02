@@ -40,6 +40,7 @@ var _cam_user_x: float = -1.0          # >=0 = manual pan; -1 = follow the avata
 var _press_pos: Vector2 = Vector2.ZERO
 var _press_active: bool = false
 var _drag_panning: bool = false
+var _auto_walk: bool = false           # click/tap travel walks without a held key
 var _hero_tex: Texture2D = null
 var _edge_pickups: Array = []          # [{t,pos,kind,amount,taken}]
 var _awaiting_resolve: bool = false    # arrived; waiting for a popup to close
@@ -319,7 +320,7 @@ func _try_click_travel(screen_pos: Vector2) -> void:
 		var sp: Vector2 = _w2s(_node_world_pos(int(tgt["tier"]), int(tgt["index"])))
 		if screen_pos.distance_to(sp) <= NODE_R + 8.0:
 			_sel = k
-			_begin_travel()
+			_begin_travel(true)
 			return
 
 # Click/tap a reachable node on the bottom-left minimap to travel (Spec C).
@@ -345,7 +346,7 @@ func _try_minimap_travel(pos: Vector2) -> bool:
 				cy + (float(idx) - float(count - 1) * 0.5) * lane)
 		if pos.distance_to(mp) <= 8.0:
 			_sel = k
-			_begin_travel()
+			_begin_travel(true)
 			return true
 	return true
 
@@ -666,9 +667,10 @@ func _update_node_detail() -> void:
 	var t: Dictionary = _targets[_sel]
 	_node_detail_label.text = _node_detail_text(int(t["tier"]), int(t["index"]))
 
-func _begin_travel() -> void:
+func _begin_travel(auto: bool = false) -> void:
 	if _targets.is_empty():
 		return
+	_auto_walk = auto    # click/tap travel auto-advances; keyboard travel is hold-gated
 	_cam_user_x = -1.0   # recenter: resume following the avatar
 	_travel_target = _targets[_sel]
 	_travel_from = _standing_pos()
@@ -702,8 +704,8 @@ func _update_travel(delta: float) -> void:
 		if _popup == null:
 			_encounter_pending = false   # encounter resolved — resume next frame
 		return
-	if not (Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
-		return   # hold to walk; release pauses
+	if not (_auto_walk or Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D)):
+		return   # click/tap travel auto-walks; keyboard travel holds →/D to walk
 	var dist: float = maxf(1.0, _travel_from.distance_to(_travel_to))
 	_travel_t = minf(1.0, _travel_t + delta * WALK_SPEED / dist)
 	_avatar = _travel_from.lerp(_travel_to, _travel_t)
@@ -726,6 +728,7 @@ func _collect_pickup(p: Dictionary) -> void:
 	_refresh()
 
 func _arrive() -> void:
+	_auto_walk = false
 	var tgt := _travel_target
 	_avatar = _travel_to
 	_nav = Nav.AT_NODE
@@ -908,12 +911,8 @@ func _trigger_node(tier: int, index: int) -> void:
 
 	match node_data["type"]:
 		"battle", "elite_battle":
-			var elite: bool = node_data["type"] == "elite_battle"
-			if not GameManager.has_hero():
-				# Defensive — campaigns always have a hero.
-				_launch_autobattle(tier, elite)
-			else:
-				_show_prebattle_popup(tier, elite)
+			# Straight into the fight — no role popup (the hero always fights).
+			_launch_autobattle(tier, node_data["type"] == "elite_battle")
 		"gain_unit":
 			_show_recruit_popup(tier, index)
 		"shop":
@@ -952,61 +951,6 @@ func _launch_autobattle(tier: int, elite: bool) -> void:
 	GameManager.pending_battle_elite = elite
 	GameManager.pending_autobattle = true
 	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
-
-# ---------------------------------------------------------------------------
-# Pre-battle popup — choose the hero's role for the upcoming fight.
-# Pre-battle confirmation. The hero always fights at the front of the army.
-# ---------------------------------------------------------------------------
-func _show_prebattle_popup(tier: int, elite: bool) -> void:
-	if _popup != null:
-		return
-	var hero: Dictionary = GameManager.hero_data()
-
-	_popup = UITheme.panel(self, Vector2(360.0, 180.0), Vector2(560.0, 360.0),
-		Color(0.09, 0.10, 0.16, 0.99), Color(0.50, 0.52, 0.74))
-	_popup.add_child(UITheme.label("Battle — Your Hero's Role", 26, UITheme.GOLD,
-		Vector2(28.0, 18.0), Vector2(504.0, 32.0)))
-	_popup.add_child(UITheme.label("%s — choose how %s joins this fight." % [
-		String(hero.get("name", "Hero")), String(hero.get("name", "your hero"))],
-		15, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(504.0, 24.0)))
-
-	# Elite modifier note (only meaningful for elite battles), under the subtitle.
-	if elite:
-		var m := GameManager.elite_modifier_data(tier)
-		if not m.is_empty():
-			_popup.add_child(UITheme.label("Elite — %s: %s" % [String(m["name"]), String(m["desc"])],
-				13, Color(0.92, 0.72, 0.98), Vector2(28.0, 76.0), Vector2(504.0, 18.0)))
-
-	# Active army synergies (composition bonuses) under the subtitle.
-	var syn_ids := GameManager.army_synergies()
-	var syn_text: String
-	if syn_ids.is_empty():
-		syn_text = "Synergies: none"
-	else:
-		var syn_names: Array[String] = []
-		for sid: String in syn_ids:
-			syn_names.append(String(GameManager.SYNERGIES[sid]["name"]))
-		syn_text = "Synergies: " + "  ·  ".join(syn_names)
-	_popup.add_child(UITheme.label(syn_text, 13, Color(0.70, 0.92, 0.88),
-		Vector2(28.0, 94.0), Vector2(504.0, 20.0)))
-
-	# The hero fights as the front-most lineup unit, granting its leader aura
-	# (Spec D — fight/buff mode removed).
-	_popup.add_child(UITheme.label("The hero fights at the front of your army and grants its leader aura.",
-		14, UITheme.TEXT, Vector2(28.0, 128.0), Vector2(504.0, 24.0)))
-	_popup.add_child(UITheme.label("Odds: %s" % GameManager.battle_odds(tier, elite, "fight"),
-		13, UITheme.TEXT_MUTED, Vector2(28.0, 156.0), Vector2(504.0, 20.0)))
-	_popup.add_child(UITheme.button("Fight", Vector2(28.0, 188.0), Vector2(504.0, 46.0),
-		UITheme.GREEN.darkened(0.1), _on_prebattle_fight.bind(tier, elite)))
-
-	# No Cancel: entering a battle node commits the visit (visit_node already
-	# advanced the tier), and Fight is always available — so the player can't
-	# back out into a softlock.
-
-func _on_prebattle_fight(tier: int, elite: bool) -> void:
-	_popup.queue_free()
-	_popup = null
-	_launch_autobattle(tier, elite)
 
 # ---------------------------------------------------------------------------
 # Recruitment popup (Phase 2) — "meet & sway". A gain_unit node offers 2-3
