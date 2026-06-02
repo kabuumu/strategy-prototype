@@ -85,6 +85,7 @@ var _node_detail_label: Label
 var _popup: Control = null
 var _settings_overlay: Control = null
 var _inventory_popup: Control = null
+var _tree_panel: Control = null   # hero skill-tree overlay (Spec A)
 var _shop_relic_offer: String = ""
 var _pending_recruit_toast: Dictionary = {}
 
@@ -297,12 +298,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_DOWN or event.keycode == KEY_S:
 			_select_target(1); return
 	if event.keycode == KEY_I:
-		if _popup == null:
+		if _popup == null and _tree_panel == null:
 			_toggle_inventory()
 		return
+	if event.keycode == KEY_T:
+		if _popup == null and _inventory_popup == null:
+			_toggle_hero_tree()
+		return
 	if event.keycode == KEY_ESCAPE:
-		# Esc closes the inventory or a shop/unit popup first; else the settings menu.
-		if _inventory_popup != null:
+		# Esc closes the skill tree / inventory / a shop popup first; else settings.
+		if _tree_panel != null:
+			_toggle_hero_tree()
+		elif _inventory_popup != null:
 			_toggle_inventory()
 		elif _popup != null:
 			return
@@ -351,6 +358,17 @@ func _try_minimap_travel(pos: Vector2) -> bool:
 	return true
 
 # Inventory & status overlay — explains every owned relic and affliction.
+func _toggle_hero_tree() -> void:
+	if _tree_panel != null:
+		_tree_panel.queue_free()
+		_tree_panel = null
+		return
+	if not GameManager.has_hero():
+		return
+	_tree_panel = load("res://src/ui/hero_tree_panel.gd").new()
+	add_child(_tree_panel)
+	_tree_panel.setup(GameManager.selected_hero, func(): _tree_panel = null)
+
 func _toggle_inventory() -> void:
 	if _inventory_popup != null:
 		_inventory_popup.queue_free()
@@ -456,7 +474,7 @@ func _input_blocked() -> bool:
 	# already blocks via _popup, and _update_travel must run once it closes to
 	# clear the flag and resume walking.
 	return _popup != null or _settings_overlay != null or _inventory_popup != null \
-		or _awaiting_resolve or _leaving
+		or _tree_panel != null or _awaiting_resolve or _leaving
 
 # Camera follows the avatar horizontally, clamped to the world.
 func _update_camera(delta: float) -> void:
@@ -808,6 +826,8 @@ func _build_hud() -> void:
 	side.add_child(_gold_label)
 	_hero_label = UITheme.label("", 14, Color(0.78, 0.84, 0.98), Vector2(18.0, 104.0), Vector2(286.0, 22.0))
 	side.add_child(_hero_label)
+	side.add_child(UITheme.button("Skill Tree  [T]", Vector2(176.0, 96.0), Vector2(140.0, 26.0),
+		Color(0.34, 0.28, 0.46), _toggle_hero_tree, 12))
 
 	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 130.0)))
 	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 144.0), Vector2(292.0, 112.0))
