@@ -545,6 +545,60 @@ func hero_respec() -> bool:
 	return true
 
 # ---------------------------------------------------------------------------
+# Node-derived stat outputs (Spec A §7). Read the selected hero's purchased
+# nodes; return neutral values with no hero so consumers need no special-casing.
+# Numbers are tunable. (Wiring into combat + removing the old level/perk helpers
+# happens in a later slice — these coexist for now.)
+# ---------------------------------------------------------------------------
+
+# Hero unit HP multiplier (Might: Conditioning, +12% / rank).
+func hero_hp_mult_tree() -> float:
+	return 1.0 + 0.12 * float(hero_node_rank("conditioning"))
+
+# Hero unit damage multiplier (Might: Honed Blade +10% / rank, Warlord +20%).
+func hero_damage_mult_tree() -> float:
+	return 1.0 + 0.10 * float(hero_node_rank("honed_blade")) + 0.20 * float(hero_node_rank("warlord"))
+
+# Hero attack-cooldown multiplier (<1 = faster). Quickstep −6% / rank.
+func hero_attack_cooldown_mult() -> float:
+	return maxf(0.4, 1.0 - 0.06 * float(hero_node_rank("quickstep")))
+
+# Extra Troop-levels the hero unit fights at (Veteran).
+func hero_tree_bonus_level() -> int:
+	return hero_node_rank("veteran")
+
+# Leader-aura strength multiplier (Command: Drillmaster/Banneret +10% / rank, Inspiring +50%).
+func hero_aura_mult_tree() -> float:
+	return 1.0 + 0.10 * float(hero_node_rank("drillmaster")) \
+		+ 0.10 * float(hero_node_rank("banneret")) \
+		+ 0.50 * float(hero_node_rank("inspiring"))
+
+# Steadfast (Thrifty, repurposed): auras stay at full strength when the hero is
+# benched (else 50%). Consumed by Spec D's benched-aura factor.
+func hero_aura_benched_factor() -> float:
+	return 1.0 if hero_has_node("thrifty") else 0.5
+
+# Sway aptitude bonus from the Guile tree (on top of base aptitudes).
+func hero_tree_sway_bonus() -> int:
+	return hero_node_rank("charisma") + hero_node_rank("silver_tongue")
+
+# --- Deck caps consumed by Spec B (Tactics section) ---
+func hero_hand_cap() -> int:
+	return 5 + hero_node_rank("field_kit")
+
+func hero_trap_slots() -> int:
+	return 2 + hero_node_rank("bandolier")
+
+func hero_prep_budget() -> int:
+	return 1 + hero_node_rank("quick_draw")
+
+func hero_card_reward_bonus() -> int:
+	return hero_node_rank("scout_ahead")
+
+func hero_start_hand_bonus() -> int:
+	return hero_node_rank("reserves")
+
+# ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
 # sway type the player must beat to recruit. Deterministic per node so the offer
 # is stable across popup rebuilds and run reloads.

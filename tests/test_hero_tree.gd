@@ -95,3 +95,34 @@ func test_respec_drops_level_and_clears_nodes(t) -> void:
 func test_respec_blocked_at_level_1(t) -> void:
 	var gm := _gm_with_hero("bard")
 	t.eq(gm.hero_respec(), false, "cannot respec below level 1")
+
+# --- slice 3: node-derived stat outputs ------------------------------------
+
+func test_tree_outputs_neutral_without_nodes(t) -> void:
+	var gm := _gm_with_hero("bard")
+	t.approx(gm.hero_hp_mult_tree(), 1.0, 0.0001, "no nodes -> 1.0 HP mult")
+	t.approx(gm.hero_damage_mult_tree(), 1.0, 0.0001, "no nodes -> 1.0 damage mult")
+	t.approx(gm.hero_aura_mult_tree(), 1.0, 0.0001, "no nodes -> 1.0 aura mult")
+	t.eq(gm.hero_hand_cap(), 5, "base hand cap 5")
+	t.eq(gm.hero_trap_slots(), 2, "base trap slots 2")
+	t.eq(gm.hero_prep_budget(), 1, "base prep budget 1")
+	t.approx(gm.hero_aura_benched_factor(), 0.5, 0.0001, "no Steadfast -> benched auras at 50%")
+
+func test_might_nodes_scale_hp_and_damage(t) -> void:
+	var gm := _hero_with_points("bard", 6)
+	gm.hero_buy_node("conditioning"); gm.hero_buy_node("conditioning")
+	t.approx(gm.hero_hp_mult_tree(), 1.24, 0.0001, "Conditioning x2 -> +24% HP")
+	gm.hero_buy_node("honed_blade"); gm.hero_buy_node("honed_blade"); gm.hero_buy_node("honed_blade")
+	gm.hero_buy_node("warlord")
+	t.approx(gm.hero_damage_mult_tree(), 1.50, 0.0001, "Honed x3 + Warlord -> +50% damage")
+
+func test_tactics_nodes_raise_deck_caps(t) -> void:
+	var gm := _hero_with_points("bard", 2)
+	gm.hero_buy_node("field_kit"); gm.hero_buy_node("field_kit")
+	t.eq(gm.hero_hand_cap(), 7, "Field Kit x2 -> hand cap 7")
+
+func test_steadfast_keeps_auras_when_benched(t) -> void:
+	var gm := _hero_with_points("bard", 3)
+	gm.hero_buy_node("drillmaster"); gm.hero_buy_node("quartermaster"); gm.hero_buy_node("thrifty")
+	t.eq(gm.hero_has_node("thrifty"), true, "Steadfast owned")
+	t.approx(gm.hero_aura_benched_factor(), 1.0, 0.0001, "Steadfast -> full auras when benched")
