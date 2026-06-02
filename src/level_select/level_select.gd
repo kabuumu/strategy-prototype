@@ -35,6 +35,11 @@ var _travel_target: Dictionary = {}    # {tier,index} being walked to
 var _avatar: Vector2 = Vector2.ZERO    # world position of the hero
 var _cam_x: float = 0.0
 var _world_w: float = 0.0
+# Mouse/touch pan + click-vs-drag tracking (Spec C/E).
+var _cam_user_x: float = -1.0          # >=0 = manual pan; -1 = follow the avatar
+var _press_pos: Vector2 = Vector2.ZERO
+var _press_active: bool = false
+var _drag_panning: bool = false
 var _hero_tex: Texture2D = null
 var _edge_pickups: Array = []          # [{t,pos,kind,amount,taken}]
 var _awaiting_resolve: bool = false    # arrived; waiting for a popup to close
@@ -260,13 +265,30 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Point-and-click: tap/click a reachable node to travel to it (Spec C). Works
-	# on touch too via emulate_mouse_from_touch. Keyboard nav stays unchanged.
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_try_click_travel(event.position)
+	# Mouse/touch: drag pans the camera; a press-release without a drag clicks a
+	# reachable node (main map or minimap) to travel there (Spec C/E). Works on
+	# touch via emulate_mouse_from_touch. Keyboard nav stays unchanged.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_press_pos = event.position
+			_press_active = true
+			_drag_panning = false
+		else:
+			if _press_active and not _drag_panning:
+				if not _try_minimap_travel(event.position):
+					_try_click_travel(event.position)
+			_press_active = false
+		return
+	if event is InputEventMouseMotion and _press_active:
+		if not _drag_panning and event.position.distance_to(_press_pos) > 8.0:
+			_drag_panning = true
+			_cam_user_x = _cam_x
+		if _drag_panning:
+			_cam_user_x = clampf(_cam_user_x - event.relative.x, 0.0, maxf(0.0, _world_w - PLAY_W))
 		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
+	_cam_user_x = -1.0   # keyboard interaction recenters the follow camera
 	# ↑/↓ (W/S) choose which fork to take while standing at a node.
 	if not _input_blocked() and _nav == Nav.AT_NODE:
 		if event.keycode == KEY_UP or event.keycode == KEY_W:
@@ -299,6 +321,33 @@ func _try_click_travel(screen_pos: Vector2) -> void:
 			_sel = k
 			_begin_travel()
 			return
+
+# Click/tap a reachable node on the bottom-left minimap to travel (Spec C).
+# Returns true if the click was inside the minimap (consumed), so the main-map
+# hit-test is skipped.
+func _try_minimap_travel(pos: Vector2) -> bool:
+	var rect := Rect2(14.0, 498.0, 300.0, 184.0)
+	if not rect.has_point(pos):
+		return false
+	if _input_blocked() or _nav != Nav.AT_NODE:
+		return true
+	var last: int = maxi(1, GameManager.MAP_TIERS - 1)
+	var inner_x: float = rect.position.x + 20.0
+	var inner_w: float = rect.size.x - 32.0
+	var cy: float = rect.position.y + rect.size.y * 0.58
+	var lane: float = minf(16.0, (rect.size.y * 0.5 - 14.0) / 2.5)
+	for k in range(_targets.size()):
+		var tgt: Dictionary = _targets[k]
+		var tier: int = int(tgt["tier"])
+		var idx: int = int(tgt["index"])
+		var count: int = GameManager.map_data[tier].size()
+		var mp := Vector2(inner_x + (float(tier) / float(last)) * inner_w,
+				cy + (float(idx) - float(count - 1) * 0.5) * lane)
+		if pos.distance_to(mp) <= 8.0:
+			_sel = k
+			_begin_travel()
+			return true
+	return true
 
 # Inventory & status overlay — explains every owned relic and affliction.
 func _toggle_inventory() -> void:
@@ -410,6 +459,9 @@ func _input_blocked() -> bool:
 
 # Camera follows the avatar horizontally, clamped to the world.
 func _update_camera(delta: float) -> void:
+	if _cam_user_x >= 0.0:   # manual drag-pan overrides the follow camera
+		_cam_x = clampf(_cam_user_x, 0.0, maxf(0.0, _world_w - PLAY_W))
+		return
 	var want: float = clampf(_avatar.x - PLAY_W * 0.42, 0.0, maxf(0.0, _world_w - PLAY_W))
 	_cam_x = lerp(_cam_x, want, clampf(delta * 6.0, 0.0, 1.0))
 
@@ -617,6 +669,7 @@ func _update_node_detail() -> void:
 func _begin_travel() -> void:
 	if _targets.is_empty():
 		return
+	_cam_user_x = -1.0   # recenter: resume following the avatar
 	_travel_target = _targets[_sel]
 	_travel_from = _standing_pos()
 	_travel_to = _node_world_pos(int(_travel_target["tier"]), int(_travel_target["index"]))
