@@ -38,7 +38,8 @@ def _freq(semi: int) -> float:
 
 # One-octave diatonic scales (7 degrees, semitone offsets from the root).
 MAJOR = [0, 2, 4, 5, 7, 9, 11]
-MINOR = [0, 2, 3, 5, 7, 8, 10]  # natural minor
+MINOR = [0, 2, 3, 5, 7, 8, 10]      # natural minor
+PHRYGIAN = [0, 1, 3, 5, 7, 8, 10]   # darkest mode — flat 2nd; tense/ominous
 
 
 def _scale_note(scale: list, degree: int) -> int:
@@ -229,48 +230,50 @@ def main() -> None:
     # Deterministic noise so regenerated builds are byte-identical (CI-friendly).
     random.seed(0xC0FFEE)
 
-    # Title — stately major, hopeful. I V vi IV ... resolving V -> I at the loop.
-    # Four phrases (A B C D) develop the theme; light, soft percussion.
+    # Setting: post-apocalyptic, dark and tense. All tracks are voiced in the
+    # Phrygian mode (flat-2nd) with deep roots and slow drones for an ominous,
+    # desolate feel. (Still pure-stdlib chiptune synthesis — the tooling
+    # constraint — but retuned for mood.)
+
+    # Title — ominous, slow, drone-y. Phrygian i / bII hangs unresolved.
     _write("title", _build(
-        progression=[0, 4, 5, 3, 0, 3, 5, 4],
-        scale=MAJOR, root_semi=-9, bpm=92, arp_div=2, duty=0.5,
+        progression=[0, 1, 0, 5, 0, 1, 6, 0],
+        scale=PHRYGIAN, root_semi=-14, bpm=64, arp_div=1, duty=0.25,
         melody_phrases=[
-            [(0, 1), (2, 1), (1, 1), (3, 1)],
-            [(2, 1), (1, 1), (3, 2)],
-            [(3, 0.5), (2, 0.5), (1, 1), (0, 1), (2, 1)],
-            [(1, 1), (3, 1), (2, 1), (5, 1)],
-        ],
-        drums={"K": "x.......x.......",
-               "H": "..x...x...x...x.",
-               "S": "........x......."},
-        drum_gain=0.55))
-    # Map — calm minor wander, sparse melody, prominent pad, whisper of rhythm.
-    _write("map", _build(
-        progression=[0, 5, 3, 4, 0, 5, 6, 4],
-        scale=MINOR, root_semi=-9, bpm=80, arp_div=1, duty=0.375,
-        melody_phrases=[
-            [(0, 2), (2, 1), (1, 1)],
-            [(2, 2), (3, 1), (1, 1)],
+            [(0, 2), (1, 1), (0, 1)],
+            [(2, 2), (1, 2)],
             [(0, 1), (1, 1), (2, 2)],
-            [(3, 2), (2, 1), (0, 1)],
+            [(3, 2), (1, 1), (0, 1)],
         ],
         drums={"K": "x...............",
-               "H": "....x.......x..."},
-        drum_gain=0.4, mel_vol=0.22, arp_vol=0.15))
-    # Battle — driving minor, busy syncopated lead, full drum kit.
-    _write("battle", _build(
-        progression=[0, 0, 5, 3, 4, 4, 3, 4],
-        scale=MINOR, root_semi=-12, bpm=140, arp_div=2, duty=0.5,
+               "H": "............x..."},
+        drum_gain=0.32, mel_vol=0.19, arp_vol=0.12))
+    # Map — desolate wasteland. Very slow, deep, sparse, mostly drone + pad.
+    _write("map", _build(
+        progression=[0, 0, 1, 0, 5, 0, 1, 6],
+        scale=PHRYGIAN, root_semi=-16, bpm=58, arp_div=1, duty=0.2,
         melody_phrases=[
-            [(0, 0.5), (1, 0.5), (2, 1), (3, 0.5), (4, 0.5), (2, 1)],
-            [(3, 0.5), (2, 0.5), (1, 0.5), (2, 0.5), (0, 1), (4, 1)],
-            [(2, 0.5), (3, 0.5), (5, 1), (3, 0.5), (2, 0.5), (1, 1)],
-            [(0, 0.5), (2, 0.5), (4, 0.5), (2, 0.5), (3, 1), (0, 1)],
+            [(0, 3), (1, 1)],
+            [(2, 2), (1, 2)],
+            [(0, 2), (1, 2)],
+            [(1, 3), (0, 1)],
         ],
-        drums={"K": "x..x..x.x..x....",
+        drums={"K": "x..............."},
+        drum_gain=0.28, mel_vol=0.15, arp_vol=0.10))
+    # Battle — tense, driving, dark. Phrygian lead over a pounding low kick.
+    _write("battle", _build(
+        progression=[0, 0, 1, 0, 5, 1, 0, 5],
+        scale=PHRYGIAN, root_semi=-14, bpm=126, arp_div=2, duty=0.5,
+        melody_phrases=[
+            [(0, 0.5), (1, 0.5), (0, 1), (1, 0.5), (2, 0.5), (1, 1)],
+            [(1, 0.5), (0, 0.5), (1, 0.5), (2, 0.5), (0, 2)],
+            [(2, 0.5), (1, 0.5), (0, 1), (1, 0.5), (0, 0.5), (5, 1)],
+            [(0, 0.5), (1, 0.5), (2, 0.5), (1, 0.5), (0, 2)],
+        ],
+        drums={"K": "x..x..x.x..x..x.",
                "S": "....x.......x...",
                "H": "x.x.x.x.x.x.x.x."},
-        drum_gain=1.0, mel_vol=0.27))
+        drum_gain=1.0, mel_vol=0.24))
 
 
 if __name__ == "__main__":
