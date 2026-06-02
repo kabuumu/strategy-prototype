@@ -43,18 +43,21 @@ func test_next_steps_up_when_front_faints(t) -> void:
 	ab.free()
 	f0.free(); f1.free(); e0.free()
 
-func test_single_pet_collapses_regiment(t) -> void:
+func test_regiment_visual_and_flat_damage_flag(t) -> void:
+	# Front-vs-front keeps a cosmetic 10-sprite squad (one culls per ~10% HP)
+	# but flags flat damage so a wounded unit still hits full.
 	var u := RTUnit.new()
-	# Soldier: 9 soldiers x 15 hp. single_pet -> 1 combatant holding all 135 HP.
 	u.setup("soldier", 0, Vector2(100, 100), {
 		"name": "Soldier", "sprite_key": "soldier",
-		"soldier_count": 9, "hp_per_soldier": 15,
+		"soldier_count": 10, "hp_per_soldier": 12,
 		"damage_per_attack": 20, "attack_cooldown": 1.0,
 		"attack_range_px": 60.0, "move_speed_px": 60.0,
-		"single_pet": true,
+		"flat_damage": true,
 	})
-	t.eq(u.soldier_count, 1, "single_pet -> one combatant")
-	t.eq(u.max_hp, 135, "single pet holds the whole regiment's HP (9*15)")
+	t.eq(u.soldier_count, 10, "keeps a 10-sprite squad")
+	t.eq(u.alive_soldier_count(), 10, "all 10 sprites alive at full HP")
+	t.eq(u.max_hp, 120, "max_hp = 10 * hp_per_soldier")
+	t.eq(u.flat_damage, true, "flat_damage flag set")
 	u.free()
 
 func test_held_unit_does_nothing_on_tick(t) -> void:

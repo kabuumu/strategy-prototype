@@ -1079,13 +1079,17 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 	var stats: Dictionary = UNIT_TYPES[unit_id].duplicate(true)
 	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
-	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / float(stats.get("soldier_count", 1)))))
+	# Front-vs-front: a cosmetic squad of 10 sprites that cull one per ~10% HP
+	# lost (keeps the little-army animation), but combat HP is a single pool and
+	# the sprite count does NOT scale damage (see flat_damage below).
+	stats["soldier_count"] = 10
+	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / 10.0)))
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 18.0
 	if String(card.get("item", "")) == "drum":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	stats["is_hero"] = card.get("hero", false)
-	stats["single_pet"] = true   # Branch B: every unit is a single combatant (no alive-ratio scaling)
+	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
 	u.setup(unit_id, team_id, pos, stats)
 	u.holding = true             # held until the front-vs-front controller engages the front
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
