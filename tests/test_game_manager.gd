@@ -79,3 +79,14 @@ func test_save_load_roundtrip(t) -> void:
 	t.eq(gm.gold, 42, "gold restored from save")
 	t.eq(gm.selected_hero, "bard", "hero restored from save")
 	gm.clear_run()
+
+func test_run_seed_set_and_persisted(t) -> void:
+	var gm := _fresh()
+	t.ne(gm.run_seed, 0, "reset() assigns a run seed")
+	var seed_before: int = gm.run_seed
+	gm.select_hero("knight_captain")
+	gm.save_run()
+	gm.run_seed = 0
+	gm.load_run()
+	t.eq(gm.run_seed, seed_before, "run_seed restored from save")
+	gm.clear_run()

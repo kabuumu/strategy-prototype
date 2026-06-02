@@ -715,6 +715,10 @@ func apply_audio() -> void:
 	var db: float = -60.0 if master_volume <= 0.001 else linear_to_db(master_volume)
 	AudioServer.set_bus_volume_db(0, db)
 
+# Per-run RNG seed, set once in reset() and persisted. Deterministic systems
+# (e.g. the planned Card deck draws) key off this so a reloaded run reproduces.
+var run_seed: int = 0
+
 func reset() -> void:
 	# Capture the just-ended run's stats so the title screen can show a recap.
 	# (Skipped on the very first call when no run has happened yet.)
@@ -754,6 +758,7 @@ func reset() -> void:
 	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()
+	run_seed = brng.randi()   # per-run seed: deterministic deck draws / future seeded systems
 	boss_id = BOSS_IDS[brng.randi() % BOSS_IDS.size()]
 	MAP_TIERS = brng.randi_range(MAP_TIERS_RANGE.x, MAP_TIERS_RANGE.y)
 	_generate_map()
@@ -807,7 +812,7 @@ func mark_tutorial_seen() -> void:
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
 # Bump when the run-save schema changes incompatibly; older saves are discarded
 # on load instead of loading partial/garbage state.
-const SAVE_VERSION: int = 4
+const SAVE_VERSION: int = 5
 
 func has_saved_run() -> bool:
 	if not FileAccess.file_exists(RUN_SAVE_PATH):
@@ -820,6 +825,7 @@ func has_saved_run() -> bool:
 func save_run() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("run", "version", SAVE_VERSION)
+	cfg.set_value("run", "run_seed", run_seed)
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
 	cfg.set_value("run", "relics", relics)
@@ -860,6 +866,7 @@ func load_run() -> bool:
 	curses = []
 	for c in cfg.get_value("run", "curses", []):
 		curses.append(str(c))
+	run_seed          = int(cfg.get_value("run", "run_seed", 0))
 	gold              = int(cfg.get_value("run", "gold", 0))
 	current_tier      = int(cfg.get_value("run", "current_tier", 0))
 	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
