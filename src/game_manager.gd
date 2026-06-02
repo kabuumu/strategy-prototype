@@ -300,6 +300,7 @@ func select_hero(id: String) -> void:
 	gold += int(bonus.get("gold", 0))
 	for t in bonus.get("units", []):
 		add_unit(str(t))
+	cards_init_run()   # Spec B: seed this run's Card deck + opening hand
 
 func add_valor(n: int) -> void:
 	valor = max(0, valor + n)
@@ -597,6 +598,105 @@ func hero_card_reward_bonus() -> int:
 
 func hero_start_hand_bonus() -> int:
 	return hero_node_rank("reserves")
+
+# ---------------------------------------------------------------------------
+# Card deck (Spec B) — run-local, hero/campaign-only. A draw pile, a hand
+# (capped by the Tactics tree), and a graveyard. Cards are drawn at run start
+# and refilled each battle prep; played cards are one-use (-> graveyard).
+# Effects/traps and the prep UI are wired in later slices; this is the deck
+# economy + persistence.
+# ---------------------------------------------------------------------------
+const CARD_POOL: Array = [
+	# Equip — buff a Troop for the fight (includes the old upgrade-card).
+	{"id": "promotion",   "name": "Battlefield Promotion", "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "level", "value": 1}},
+	{"id": "whetstone",   "name": "Whetstone",             "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "damage_pct", "value": 0.5}},
+	{"id": "iron_hide",   "name": "Iron Hide",             "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "hp_pct", "value": 0.5}},
+	{"id": "swift_boots", "name": "Swift Boots",           "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "cooldown_pct", "value": -0.25}},
+	{"id": "longbow",     "name": "Longbow",               "category": "equip",     "rarity": "uncommon", "target": "troop",       "effect": {"kind": "ranged"}},
+	# Spell — immediate effect at fight start.
+	{"id": "firebolt",    "name": "Firebolt",              "category": "spell",     "rarity": "common",   "target": "enemy",       "effect": {"kind": "damage", "value": 20}},
+	# Trap — set ahead, fires on a combat event (phase-1 effects use existing levers).
+	{"id": "caltrops",    "name": "Caltrops",              "category": "trap",      "rarity": "common",   "target": "battlefield", "trigger": "combat_start",   "effect": {"kind": "damage", "value": 12}},
+	{"id": "second_wind", "name": "Second Wind",           "category": "trap",      "rarity": "common",   "target": "troop",       "trigger": "troop_below_50", "effect": {"kind": "heal_pct", "value": 0.3}},
+	{"id": "vengeance",   "name": "Vengeance",             "category": "trap",      "rarity": "uncommon", "target": "battlefield", "trigger": "ally_death",     "effect": {"kind": "team_damage_pct", "value": 0.15}},
+	# Aftermath — played post-battle on survivors.
+	{"id": "field_medic", "name": "Field Medic",           "category": "aftermath", "rarity": "common",   "target": "survivor",    "effect": {"kind": "heal_full"}},
+	{"id": "war_medal",   "name": "Battlefield Medal",     "category": "aftermath", "rarity": "uncommon", "target": "survivor",    "effect": {"kind": "level", "value": 1}},
+]
+
+var card_deck: Array = []        # draw pile (ids), drawn from the front
+var card_hand: Array = []        # current hand (ids)
+var card_graveyard: Array = []   # spent this run (ids)
+
+func card_def(id: String) -> Dictionary:
+	for c in CARD_POOL:
+		if String(c["id"]) == id:
+			return c
+	return {}
+
+# Rarity-weighted random pick from the pool (commons 3x, uncommon 2x, rare 1x).
+func _random_card_id(rng: RandomNumberGenerator) -> String:
+	var weighted: Array = []
+	for c in CARD_POOL:
+		var w := 3
+		match String(c.get("rarity", "common")):
+			"uncommon": w = 2
+			"rare": w = 1
+		for k in range(w):
+			weighted.append(String(c["id"]))
+	if weighted.is_empty():
+		return ""
+	return String(weighted[rng.randi() % weighted.size()])
+
+# Hand capacity (Tactics tree raises it; base 5 via hero_hand_cap()).
+func card_hand_cap() -> int:
+	return hero_hand_cap()
+
+# Seed the run's deck and draw an opening hand. Called from select_hero (after
+# reset() has set run_seed). No-op / cleared without a hero.
+func cards_init_run() -> void:
+	card_deck = []
+	card_hand = []
+	card_graveyard = []
+	if not has_hero():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed
+	for i in range(8):
+		card_deck.append(_random_card_id(rng))
+	# Opening hand: cap + the Reserves (start-hand) bonus.
+	card_draw_to_hand(card_hand_cap() + hero_start_hand_bonus())
+
+func card_draw_to_hand(target: int = -1) -> void:
+	var cap: int = target if target >= 0 else card_hand_cap()
+	while card_hand.size() < cap and not card_deck.is_empty():
+		card_hand.append(card_deck.pop_front())
+
+# Play the card at a hand index — moves it to the graveyard (one-use).
+func card_play(hand_index: int) -> String:
+	if hand_index < 0 or hand_index >= card_hand.size():
+		return ""
+	var id := String(card_hand[hand_index])
+	card_hand.remove_at(hand_index)
+	card_graveyard.append(id)
+	return id
+
+# Deterministic 3-card reward draft for a win (run_seed + battles_won).
+func card_reward_choices(n: int = 3) -> Array:
+	var out: Array = []
+	if not has_hero():
+		return out
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed * 131 + battles_won * 17 + 7
+	for i in range(n):
+		out.append(_random_card_id(rng))
+	return out
+
+# Add a drafted reward card to the draw pile.
+func card_take_reward(id: String) -> void:
+	if card_def(id).is_empty():
+		return
+	card_deck.append(id)
 
 # ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
@@ -958,6 +1058,9 @@ func reset() -> void:
 	gold = 0
 	relics = []
 	curses = []
+	card_deck = []
+	card_hand = []
+	card_graveyard = []
 	current_tier = 0
 	last_chosen_index = -1
 	pending_battle_tier = 0
@@ -1077,6 +1180,9 @@ func save_run() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("run", "version", SAVE_VERSION)
 	cfg.set_value("run", "run_seed", run_seed)
+	cfg.set_value("run", "card_deck", card_deck)
+	cfg.set_value("run", "card_hand", card_hand)
+	cfg.set_value("run", "card_graveyard", card_graveyard)
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
 	cfg.set_value("run", "relics", relics)
@@ -1118,6 +1224,15 @@ func load_run() -> bool:
 	for c in cfg.get_value("run", "curses", []):
 		curses.append(str(c))
 	run_seed          = int(cfg.get_value("run", "run_seed", 0))
+	card_deck = []
+	for c in cfg.get_value("run", "card_deck", []):
+		card_deck.append(str(c))
+	card_hand = []
+	for c in cfg.get_value("run", "card_hand", []):
+		card_hand.append(str(c))
+	card_graveyard = []
+	for c in cfg.get_value("run", "card_graveyard", []):
+		card_graveyard.append(str(c))
 	gold              = int(cfg.get_value("run", "gold", 0))
 	current_tier      = int(cfg.get_value("run", "current_tier", 0))
 	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
