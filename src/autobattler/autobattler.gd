@@ -133,10 +133,12 @@ const CAMPAIGN_CARD_MAP: Dictionary = {
 	"soldier": "soldier", "archer": "archer", "scout": "scout", "spearmen": "spearmen",
 	"knight": "soldier", "guardian": "spearmen", "mage": "archer",
 	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "spearmen",
+	"berserker": "soldier", "marksman": "archer",
 }
 const CAMPAIGN_CARD_LEVEL: Dictionary = {
 	"knight": 2, "guardian": 2, "mage": 2,
 	"warlord": 3, "pyromancer": 3, "juggernaut": 3,
+	"berserker": 2, "marksman": 2,
 }
 var _campaign: bool = false
 var _campaign_lost: bool = false
@@ -1099,10 +1101,7 @@ func _level_up_slot(index: int) -> int:
 	return level
 
 func _spawn_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var player_roster: Array = []
 	for card: Dictionary in team:
 		if not _is_empty_card(card):
@@ -1134,10 +1133,7 @@ func _campaign_card(unit_type: String) -> Dictionary:
 	}
 
 func _start_campaign_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var tier: int = GameManager.pending_battle_tier
 	var elite: bool = GameManager.pending_battle_elite
 	# Build the player POOL (hero + roster). The hero is always available; the
@@ -1226,15 +1222,12 @@ func _deploy_lineup() -> void:
 	# engages last (front-vs-front steps up by array order) — the general fights
 	# only once its screen of troops has fallen.
 	var deploy_cards: Array = []
-	var deploy_entries: Array = []
 	for i in range(_pool.size()):
 		if bool(_lineup_sel[i]):
 			deploy_cards.append(_pool[i]["card"])
-			deploy_entries.append(_pool[i]["entry"])
 	var troop_count := deploy_cards.size()
 	if GameManager.has_hero():
 		deploy_cards.append(_build_hero_card())
-		deploy_entries.append(null)
 	if deploy_cards.is_empty():
 		return
 	# Defensive formation: troops form a forward wedge, the hero sits centred behind
@@ -1243,7 +1236,6 @@ func _deploy_lineup() -> void:
 	var p_counts := _unit_counts(deploy_cards)
 	for i in range(deploy_cards.size()):
 		var u := _spawn_unit(deploy_cards[i], 0, pos[i], 1.0, p_counts)
-		_unit_state[u.get_instance_id()]["roster_entry"] = deploy_entries[i]
 		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
@@ -1594,10 +1586,7 @@ func _on_campaign_continue() -> void:
 # resolution the outcome is reported via GameManager.duel_outcome and the map
 # (level_select) recruits the unit on a win.
 func _start_duel_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var hero_card: Dictionary
 	if GameManager.has_hero():
 		hero_card = _build_hero_card()
@@ -1662,10 +1651,7 @@ func _on_duel_continue() -> void:
 # upgrade-absorb on return (GameManager.resolve_pit).
 # ---------------------------------------------------------------------------
 func _start_pit_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var roster: Array = GameManager.player_roster
 	var didx: int = GameManager.pit_defender_index
 	var def_type := "soldier"
@@ -1792,16 +1778,6 @@ func _front_engage(team: Array, foes: Array) -> void:
 		else:
 			u.holding = true
 
-func _assign_targets(attackers: Array, defenders: Array) -> void:
-	for u: RTUnit in attackers:
-		if not u.is_alive():
-			continue
-		if u.order == RTUnit.Order.ATTACK and u.attack_target != null and u.attack_target.is_alive():
-			continue
-		var nearest := _nearest_enemy(u, defenders)
-		if nearest != null:
-			u.order_attack(nearest)
-
 func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	if _unit_id_for(unit) == "archer":
 		return _backline_enemy(unit, defenders)
@@ -1854,12 +1830,18 @@ func _tick_unit(unit: RTUnit, delta: float, all_units: Array) -> void:
 		return
 	var damage: int = max(0, hp_before - target.hp)
 	damage = _apply_infantry_shield(target, damage)
-	if _unit_id_for(unit) == "spearmen" and _unit_id_for(target) == "scout" and target.is_alive():
-		var bonus := 6 + int(_unit_level_for(unit)) * 3
-		var bonus_dealt := _deal_damage(unit, target, bonus, Color(0.72, 1.0, 0.56), "Spear")
-		damage += bonus_dealt
-	else:
-		_add_feedback(unit.position, target.position, Color(1.0, 0.72, 0.36), "Hit")
+	# Feedback colour/label reflects the class wheel; the multiplier itself is
+	# applied once in RTUnit.tick (no extra flat bonus here, or it double-counts).
+	var adv := RTUnit.class_advantage(_unit_id_for(unit), _unit_id_for(target))
+	var hit_col := Color(1.0, 0.72, 0.36)
+	var hit_label := "Hit"
+	if adv > 1.0:
+		hit_col = Color(0.72, 1.0, 0.56)
+		hit_label = "Strong!"
+	elif adv < 1.0:
+		hit_col = Color(0.85, 0.58, 0.58)
+		hit_label = "Weak"
+	_add_feedback(unit.position, target.position, hit_col, hit_label)
 	Sfx.play("hit", -14.0)
 	_record_damage(unit, damage)
 
@@ -2028,6 +2010,13 @@ func _on_unit_died(u: RTUnit) -> void:
 	t.timeout.connect(func():
 		_free_node(u)
 	)
+
+# Clear the field + per-fight scratch state (shared prelude of every fight setup).
+func _reset_battle_state() -> void:
+	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
 
 func _clear_units() -> void:
 	for u: RTUnit in player_units:

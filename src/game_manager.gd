@@ -81,14 +81,14 @@ const UNIT_TYPES: Dictionary = {
 		"enrage_range_bonus": 0,
 	},
 	"spearmen": {
-		"name": "Healer",
-		"max_hp": 65,
+		"name": "Spearmen",
+		"max_hp": 80,
 		"move_range": 3,
 		"attack_range": 1,
-		"damage": 10,
-		"color": Color(0.20, 0.82, 0.70),
-		# Field Heal: restore HP to a nearby ally
-		"ability": {"id": "heal_ally", "name": "Field Heal", "desc": "Heal a nearby ally for 35"}
+		"damage": 14,
+		"color": Color(0.55, 0.62, 0.78),
+		# Brace: reach + bulk; strong against Cavalry (class wheel)
+		"ability": {"id": "brace", "name": "Brace", "desc": "Reach and bulk — strong against Cavalry"}
 	},
 	# --- Advanced recruits (found via gain-unit nodes / the shop) -------------
 	# These reuse the boss sprite art (sprite_unit) and existing ability ids,
@@ -149,20 +149,6 @@ const UNIT_TYPES: Dictionary = {
 		"ability": {"id": "pierce", "name": "Piercing Bolt", "desc": "Hits the target and the unit behind it"}
 	}
 }
-
-# How much the Healer's Field Heal restores
-const HEAL_ABILITY_AMOUNT: int = 35
-
-# Action points per class per turn. A unit spends 1 AP per move, attack, or
-# ability, and may act in any order until its AP runs out. Scouts get an extra.
-const UNIT_AP: Dictionary = {
-	"soldier": 2, "archer": 2, "scout": 3, "spearmen": 2,
-	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
-	"knight": 3, "mage": 2, "guardian": 2, "berserker": 3, "marksman": 2,
-}
-
-func ap_for(unit_type: String) -> int:
-	return int(UNIT_AP.get(unit_type, 2))
 
 # Unit types the player can recruit/buy (excludes bosses).
 func recruitable_types() -> Array[String]:
@@ -728,11 +714,6 @@ func cards_return(ids: Array) -> void:
 	for id in ids:
 		card_deck.append(str(id))
 
-func card_draw_to_hand(target: int = -1) -> void:
-	var cap: int = target if target >= 0 else card_hand_cap()
-	while card_hand.size() < cap and not card_deck.is_empty():
-		card_hand.append(card_deck.pop_front())
-
 # Play the card at a hand index — moves it to the graveyard (one-use).
 func card_play(hand_index: int) -> String:
 	if hand_index < 0 or hand_index >= card_hand.size():
@@ -1095,9 +1076,6 @@ var pending_battle_tier: int = 0
 var pending_battle_elite: bool = false
 # When true, the campaign battle is auto-resolved by the auto-battler (set by level_select).
 var pending_autobattle: bool = false
-# Set by the non-hex campaign modes on a win so level_select offers an upgrade
-# pick (the hex battle has its own inline upgrade picker). Consumed on the map.
-var pending_upgrade_reward: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
@@ -1466,27 +1444,6 @@ func _assign_node_types(rng: RandomNumberGenerator) -> void:
 			nodes[rng.randi() % nodes.size()]["type"] = "elite_battle"
 		prev_econ = econ_here
 
-func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
-	if tier == MAP_TIERS - 1:
-		return "elite_battle"
-	# Tier 0 is overwritten by _starting_node_types after generation; the value
-	# returned here is just a placeholder.
-	var roll := rng.randi() % 13
-	if roll < 4:
-		return "battle"
-	elif roll < 6:
-		return "elite_battle"
-	elif roll < 7:
-		return "gain_unit"
-	elif roll < 9:
-		return "shop"
-	elif roll < 11:
-		return "event"
-	elif roll < 12:
-		return "treasure"
-	else:
-		return "heal"
-
 # ---------------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------------
@@ -1716,7 +1673,7 @@ const EVENTS: Array = [
 	},
 	{
 		"title": "Field Hospital",
-		"text": "A camp of spearmens tends the wounded of both armies.",
+		"text": "A camp of field medics tends the wounded of both armies.",
 		"choices": [
 			{"label": "Rest the party (heal fully)", "effect": {"heal_all": 9999}},
 			{"label": "Donate for a blessing (30g, +relic)", "cost": 30, "effect": {"add_relic": "random"}},

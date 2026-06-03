@@ -3,7 +3,6 @@ extends Node
 
 const BG: Color = Color(0.055, 0.065, 0.090)
 const PANEL: Color = Color(0.095, 0.105, 0.145, 0.96)
-const PANEL_ALT: Color = Color(0.075, 0.085, 0.120, 0.95)
 const LINE: Color = Color(0.29, 0.31, 0.40, 0.90)
 const TEXT: Color = Color(0.86, 0.89, 0.92)
 const TEXT_MUTED: Color = Color(0.58, 0.61, 0.68)
@@ -57,15 +56,6 @@ static func panel(parent: Node, pos: Vector2, size: Vector2, bg: Color = PANEL, 
 	parent.add_child(p)
 	return p
 
-static func color_band(parent: Node, pos: Vector2, size: Vector2, color: Color) -> ColorRect:
-	var rect := ColorRect.new()
-	rect.position = pos
-	rect.size = size
-	rect.color = color
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(rect)
-	return rect
-
 static func button(text: String, pos: Vector2, size: Vector2, color: Color, cb: Callable, font_size: int = 18, tooltip: String = "") -> Button:
 	var btn := Button.new()
 	btn.text = text
@@ -81,30 +71,6 @@ static func button(text: String, pos: Vector2, size: Vector2, color: Color, cb: 
 	btn.pressed.connect(cb)
 	return btn
 
-# Full-screen pause / settings overlay shared by every play scene.
-# Returns a Control (high z_index, swallows clicks to the scene below) holding a
-# centred panel with "Resume" and "Exit to Main Menu" buttons. Add it as a child
-# and free it to dismiss. `note` is an optional muted hint under the buttons.
-static func pause_menu(on_resume: Callable, on_exit: Callable, note: String = "") -> Control:
-	var root := Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.z_index = 4096
-
-	var dim := ColorRect.new()
-	dim.color = Color(0.0, 0.0, 0.0, 0.62)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_STOP   # block input to the scene below
-	root.add_child(dim)
-
-	panel(root, Vector2(490.0, 224.0), Vector2(300.0, 272.0))
-	root.add_child(label("Paused", 26, GOLD, Vector2(596.0, 244.0)))
-	root.add_child(button("Resume", Vector2(520.0, 296.0), Vector2(240.0, 50.0),
-		Color(0.20, 0.45, 0.30), on_resume))
-	root.add_child(button("Exit to Main Menu", Vector2(520.0, 356.0), Vector2(240.0, 50.0),
-		Color(0.45, 0.30, 0.34), on_exit))
-	if note != "":
-		root.add_child(label(note, 12, TEXT_MUTED, Vector2(516.0, 424.0), Vector2(250.0, 44.0)))
-	return root
 
 # Full-screen help overlay: dimmed background, a titled panel of body text, and
 # a Close button. Returns the root Control — add it as a child, free to dismiss.
