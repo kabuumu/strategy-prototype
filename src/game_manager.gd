@@ -166,11 +166,11 @@ func ap_for(unit_type: String) -> int:
 
 # Unit types the player can recruit/buy (excludes bosses).
 func recruitable_types() -> Array[String]:
-	var out: Array[String] = []
-	for k: String in UNIT_TYPES:
-		if not bool(UNIT_TYPES[k].get("is_boss", false)):
-			out.append(k)
-	return out
+	# Only the four base classes the campaign combat actually fields (each has a
+	# sprite + an autobattler stat block + a clear role); advanced/boss types are
+	# enemy-only flavour. Recruiting one of these means it shows up as itself in the
+	# battle pool, not flattened to a generic soldier.
+	return ["soldier", "archer", "scout", "healer"] as Array[String]
 
 # ---------------------------------------------------------------------------
 # Heroes — chosen at the start of a campaign on the character-select screen.
@@ -1124,7 +1124,7 @@ func reset() -> void:
 			best_tier_reached = last_run_tier_reached
 		_save_meta()
 	player_roster = []
-	for t: String in ["soldier", "soldier", "archer"]:
+	for t: String in ["soldier", "archer"]:
 		add_unit(t)
 	gold = 0
 	relics = []
@@ -1511,7 +1511,9 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 		pool.append("mage")
 		pool.append("guardian")
 		pool.append("marksman")
-	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 5)
+	# Enemy host grows slowly: ~2 for the first few nodes, +1 every ~3 tiers, so the
+	# opening battles are small (the villain also lurks at the back). Elite hosts add one.
+	var count: int = clampi(2 + tier / 3 + (1 if elite else 0), 2, 6)
 	var result: Array[String] = []
 	for _i in range(count):
 		result.append(pool[rng.randi() % pool.size()])
