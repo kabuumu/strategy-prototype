@@ -29,6 +29,8 @@ var unit_type: String = "soldier"
 var team: int = 0                       # 0 = player (blue), 1 = enemy (red)
 var unit_name: String = "Soldier"
 var is_hero: bool = false
+var is_villain: bool = false             # the recurring boss villain (single big sprite)
+var is_escaping: bool = false            # villain mid teleport-away (skip ticking it)
 
 var hp_per_soldier: int = 15
 var soldier_count: int = 9              # max soldier sprites at full HP
@@ -85,10 +87,11 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	position         = world_pos
 	unit_name        = String(stats.get("name", type.capitalize()))
 	is_hero          = bool(stats.get("is_hero", false))
+	is_villain       = bool(stats.get("is_villain", false))
 	flat_damage      = bool(stats.get("flat_damage", false))
 	var base_soldier_count = int(stats.get("soldier_count", 9))
-	if is_hero:
-		# Hero renders as one larger sprite holding the whole regiment's HP.
+	if is_hero or is_villain:
+		# Hero / villain render as one larger sprite holding the whole HP pool.
 		soldier_count = 1
 		hp_per_soldier = base_soldier_count * int(stats.get("hp_per_soldier", 15))
 	else:
@@ -152,7 +155,7 @@ func _build_visuals(stats: Dictionary) -> void:
 		var s := Soldier.new()
 		var ox: float = 0.0
 		var oy: float = 0.0
-		if not is_hero:
+		if not (is_hero or is_villain):
 			var col: int = i % cols
 			var row: int = i / cols
 			# Centre the formation around (0,0). Add a small per-soldier jitter
@@ -171,7 +174,8 @@ func _build_visuals(stats: Dictionary) -> void:
 		s.sprite       = Sprite2D.new()
 		s.sprite.texture        = tex
 		s.sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		s.sprite.scale          = Vector2(1.3, 1.3) if is_hero else Vector2(0.9, 0.9)
+		s.sprite.scale          = (Vector2(1.5, 1.5) if is_villain
+				else (Vector2(1.3, 1.3) if is_hero else Vector2(0.9, 0.9)))
 		s.sprite.position       = s.offset
 		add_child(s.sprite)
 		_soldiers.append(s)
@@ -251,6 +255,19 @@ func clear_order() -> void:
 # ---------------------------------------------------------------------------
 func is_alive() -> bool:
 	return hp > 0
+
+# Teleport-away animation for the villain when cornered: zip up-and-away with a
+# fade + spin, then free the node. The caller has already pulled it from play.
+func escape() -> void:
+	holding = true
+	is_escaping = true
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(self, "position", position + Vector2(46.0, -78.0), 0.5) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(self, "modulate", Color(1.5, 1.4, 1.9, 0.0), 0.5)
+	tw.tween_property(self, "rotation", 0.7, 0.5)
+	tw.chain().tween_callback(queue_free)
 
 # Apply a Card effect dict (Spec B) to this unit. Covers the phase-1 effect
 # kinds (existing levers); damage/heal route through normal HP so combat juice

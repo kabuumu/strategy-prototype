@@ -167,6 +167,10 @@ func _ready() -> void:
 	_rebuild_ui()
 
 var _hover_unit: RTUnit = null   # unit under the cursor (stat tooltip in PREP/FIGHT)
+var _villain_unit: RTUnit = null # the lurking/boss villain in a campaign battle
+var _villain_boss: bool = false  # final-tier node: the villain fights for real
+var _villain_taunt_timer: float = 0.0
+var _villain_taunt_idx: int = 0
 
 func _process(delta: float) -> void:
 	_age_feedback(delta)
@@ -192,15 +196,17 @@ func _process(delta: float) -> void:
 	var steps: int = max(1, int(round(_speed_scale)))
 	var step_delta := delta
 	for _step in range(steps):
+		_check_villain_escape()
 		_auto_target(step_delta)
 		for u: RTUnit in all_units:
-			if u.is_alive():
+			if u.is_alive() and not u.is_escaping:
 				_tick_unit(u, step_delta, all_units)
 				u.position.x = clamp(u.position.x, FIELD_RECT.position.x + u.radius, FIELD_RECT.end.x - u.radius)
 				u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius, FIELD_RECT.end.y - u.radius)
 		if _check_fight_end():
 			break
 	_check_below50_traps()
+	_villain_lurk_taunt(delta)
 	queue_redraw()
 
 # Fire troop_below_50 traps once, when any player Troop first drops below half HP.
@@ -218,6 +224,56 @@ func _check_below50_traps() -> void:
 			_armed_traps = rest
 			_below50_triggered = true
 			return
+
+# --- Villain (recurring boss) ----------------------------------------------
+# A unit the player can't target in a normal battle (only the boss villain is
+# fightable).
+func _untargetable(u: RTUnit) -> bool:
+	return u.is_villain and not _villain_boss
+
+# The villain bails when it would be fought (it's the frontmost-alive enemy), but
+# only in a normal battle; on the boss node it stands and fights.
+func _check_villain_escape() -> void:
+	if _villain_boss or _villain_unit == null:
+		return
+	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()) or _villain_unit.is_escaping:
+		return
+	if _frontmost_alive(enemy_units) == _villain_unit:
+		_villain_do_escape()
+
+func _villain_do_escape() -> void:
+	var v := _villain_unit
+	_villain_unit = null
+	enemy_units.erase(v)
+	_unit_state.erase(v.get_instance_id())
+	_add_feedback(v.position + Vector2(0.0, -36.0), v.position + Vector2(0.0, -78.0),
+			Color(0.86, 0.52, 0.96), _villain_taunt(false))
+	if v.has_method("escape"):
+		v.escape()
+	else:
+		v.queue_free()
+
+# A periodic bark while the villain lurks at the back (normal battles only).
+func _villain_lurk_taunt(delta: float) -> void:
+	if _villain_boss or _villain_unit == null:
+		return
+	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()) or _villain_unit.is_escaping:
+		return
+	_villain_taunt_timer -= delta
+	if _villain_taunt_timer <= 0.0:
+		_villain_taunt_timer = 6.0
+		var v := _villain_unit
+		_add_feedback(v.position + Vector2(0.0, -36.0), v.position + Vector2(0.0, -60.0),
+				Color(0.82, 0.55, 0.95), _villain_taunt(false))
+
+# Next taunt line (cycles); boss=true uses the showdown lines.
+func _villain_taunt(boss: bool) -> String:
+	var lines: Array = GameManager.VILLAIN.get("boss_taunts" if boss else "taunts", [])
+	if lines.is_empty():
+		return "..."
+	var s := String(lines[_villain_taunt_idx % lines.size()])
+	_villain_taunt_idx += 1
+	return s
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.055, 0.065, 0.090))
@@ -1101,6 +1157,32 @@ func _start_campaign_fight() -> void:
 			if u.has_method("_refresh_hp_bar"):
 				u.call("_refresh_hp_bar")
 
+	# The recurring villain joins every campaign battle. On the final tier it IS the
+	# boss and fights to the death; on every other node it lurks at the back and
+	# teleports away (with a taunt) the moment it would be fought.
+	_villain_unit = null
+	_villain_taunt_idx = 0
+	_villain_taunt_timer = 3.5
+	_villain_boss = (tier >= GameManager.MAP_TIERS - 1)
+	var v_card := {
+		"id": String(GameManager.VILLAIN.get("archetype", "warlord")),
+		"sprite_key": "villain", "villain": true,
+		"level": 2 + tier / 2, "xp": 0,
+	}
+	var v_pos := Vector2(FIELD_RECT.end.x - 80.0, FIELD_RECT.position.y + FIELD_RECT.size.y * 0.5)
+	var vu := _spawn_unit(v_card, 1, v_pos, hp_mult)
+	vu.unit_name = String(GameManager.VILLAIN.get("name", "Vex"))
+	if _villain_boss:
+		vu.max_hp = maxi(1, int(round(float(vu.max_hp) * 4.0)))
+		vu.hp = vu.max_hp
+		vu.damage_per_attack = maxi(1, int(round(float(vu.damage_per_attack) * 1.6)))
+		if vu.has_method("_refresh_hp_bar"):
+			vu.call("_refresh_hp_bar")
+	enemy_units.append(vu)   # appended last = back of the enemy line
+	_villain_unit = vu
+	_add_feedback(v_pos + Vector2(0.0, -42.0), v_pos + Vector2(0.0, -72.0),
+			Color(0.86, 0.52, 0.96), _villain_taunt(_villain_boss))
+
 	_armed_traps = []
 	_prep_draw = []
 	_prep_equip_id = ""
@@ -1560,6 +1642,7 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 	if String(card.get("item", "")) == "drum":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	stats["is_hero"] = card.get("hero", false)
+	stats["is_villain"] = card.get("villain", false)
 	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
 	u.setup(unit_id, team_id, pos, stats)
 	u.holding = true             # held until the front-vs-front controller engages the front
@@ -1653,7 +1736,7 @@ func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	var best: RTUnit = null
 	var best_score: float = INF
 	for target: RTUnit in defenders:
-		if not target.is_alive():
+		if not target.is_alive() or _untargetable(target):
 			continue
 		var d := unit.position.distance_to(target.position)
 		var wounded: float = 1.0 - float(target.hp) / float(maxi(1, target.max_hp))
@@ -1669,7 +1752,7 @@ func _backline_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	var best: RTUnit = null
 	var best_x := -INF if team_id == 0 else INF
 	for target: RTUnit in defenders:
-		if not target.is_alive():
+		if not target.is_alive() or _untargetable(target):
 			continue
 		if team_id == 0 and target.position.x > best_x:
 			best = target

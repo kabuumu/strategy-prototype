@@ -251,6 +251,29 @@ const HEROES: Dictionary = {
 
 const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince", "warden", "trickster", "templar"]
 
+# The recurring enemy villain — a sassy phantom that haunts every campaign battle,
+# teleporting away when cornered, until the final boss node where you fight it for
+# real. `archetype` sets its combat stat block for the boss fight.
+const VILLAIN: Dictionary = {
+	"name": "Vex",
+	"sprite_key": "villain",
+	"archetype": "soldier",   # combat stat block (must be a base UNIT_TYPES key)
+	"taunts": [
+		"Catch me if you can!",
+		"Too slow, mortals!",
+		"See you at the finish line!",
+		"That army? Adorable.",
+		"Ta-ta for now!",
+		"Not today, hero!",
+		"Missed me!",
+	],
+	"boss_taunts": [
+		"No more running. Let's dance.",
+		"You actually made it. Pity.",
+		"This is where your little journey ends!",
+	],
+}
+
 # Heroes not listed here are always unlocked (the three starters). Each entry:
 # the meta stat to check, the minimum value, and a hint shown on the locked card.
 const HERO_UNLOCK: Dictionary = {
