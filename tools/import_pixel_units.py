@@ -40,11 +40,28 @@ CLASS_TILE = {
     "soldier":    96,    # full-helm knight        — line infantry
     "archer":     112,   # green-headband ranger   — bow
     "scout":      98,    # light brown-tunic man   — fast skirmisher
-    "healer":     84,    # purple-robed wizard      — support caster
+    "spearmen":   84,    # robed figure            — reach + bulk (Spearmen)
     "pyromancer": 99,    # robed mage              — offensive caster
     "warlord":    87,    # horned-helm veteran     — commander
     "juggernaut": 110,   # red heavy-armoured brute — tank
 }
+
+# hero id -> tile index. Distinct character tiles so a hero never looks like one
+# of the line troops (which use CLASS_TILE). Output <hero>_player/enemy.png, with a
+# gold grounding ring marking it as a leader.
+HERO_TILE = {
+    "knight_captain":  97,   # blue-tabard knight    — frontline commander
+    "bard":            100,  # flowing-hair figure   — silver tongue
+    "merchant_prince": 111,  # bearded sage/merchant — coin
+    "warden":          88,   # hooded druid-guardian
+    "trickster":       85,   # nimble adventurer     — rogue
+    "templar":         86,   # bald paladin/monk     — holy duelist
+}
+
+# The recurring villain — a single distinct sprite (toothy grinning mimic-imp) with
+# a purple menace ring. Used by the enemy side; appears in battles and teleports
+# away until the final boss node.
+VILLAIN_TILE = 121   # a grinning phantom — a sassy menace that vanishes when cornered
 
 # Enemy recolour: blend toward crimson while preserving the sprite's detail
 # (a luminance-keeping lerp reads far cleaner than a flat multiply).
@@ -76,7 +93,7 @@ def _blend_enemy(tile: Image.Image) -> Image.Image:
     return out
 
 
-def _emit(tile: Image.Image, path: str) -> None:
+def _emit(tile: Image.Image, path: str, ring_color=None) -> None:
     big = tile.resize((TILE * SCALE, TILE * SCALE), Image.NEAREST)
     size = TILE * SCALE
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -85,6 +102,14 @@ def _emit(tile: Image.Image, path: str) -> None:
     sd = ImageDraw.Draw(shadow)
     sd.ellipse([size * 0.22, size * 0.80, size * 0.78, size * 0.96], fill=(0, 0, 0, 90))
     canvas.alpha_composite(shadow)
+    if ring_color is not None:
+        # A coloured ring around the feet so a special unit (gold hero / purple
+        # villain) reads at a glance.
+        ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring)
+        rd.ellipse([size * 0.16, size * 0.78, size * 0.84, size * 0.98],
+                   outline=ring_color, width=2)
+        canvas.alpha_composite(ring)
     canvas.alpha_composite(big)
     canvas.save(path)
 
@@ -119,7 +144,18 @@ def main() -> None:
         _emit(tile, os.path.join(OUT, f"{cls}_player.png"))
         _emit(_blend_enemy(tile), os.path.join(OUT, f"{cls}_enemy.png"))
         print(f"  {cls:<11} <- tile {idx}")
-    print(f"wrote {len(CLASS_TILE) * 2} sprites to assets/units/")
+    gold = (245, 205, 70, 235)
+    purple = (190, 90, 230, 240)
+    for hid, idx in HERO_TILE.items():
+        tile = _tile(tilemap, idx)
+        _emit(tile, os.path.join(OUT, f"{hid}_player.png"), ring_color=gold)
+        _emit(_blend_enemy(tile), os.path.join(OUT, f"{hid}_enemy.png"), ring_color=gold)
+        print(f"  hero {hid:<16} <- tile {idx}")
+    vtile = _tile(tilemap, VILLAIN_TILE)
+    _emit(vtile, os.path.join(OUT, "villain_player.png"), ring_color=purple)
+    _emit(_blend_enemy(vtile), os.path.join(OUT, "villain_enemy.png"), ring_color=purple)
+    print(f"  villain          <- tile {VILLAIN_TILE}")
+    print(f"wrote {(len(CLASS_TILE) + len(HERO_TILE)) * 2 + 2} sprites to assets/units/")
 
 
 if __name__ == "__main__":

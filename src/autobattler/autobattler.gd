@@ -17,7 +17,24 @@ const MAX_LEVEL: int = 3
 const FIGHT_INTRO_SECONDS: float = 0.75
 const FEEDBACK_LIFETIME: float = 0.55
 
-enum Phase { SHOP, FIGHT, RESULT, REWARD, GAME_OVER }
+enum Phase { SHOP, PREP, FIGHT, RESULT, REWARD, GAME_OVER }
+
+# Traps set during the campaign PREP phase, fired on combat events (Spec B).
+var _armed_traps: Array = []
+var _below50_triggered: bool = false   # troop_below_50 traps fire once per fight
+var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (Spec B)
+var _upgrade_offer: Array = []         # 3 unit-upgrade choices on a campaign win
+var _upgrade_pick: String = ""         # chosen upgrade awaiting unit assignment ("" = none)
+var _reward_taken: bool = false        # a campaign-win reward (card OR upgrade) was claimed
+# Campaign PREP (#10): step 0 = pick + ORDER a troop lineup; step 1 = draw 3, play 1.
+const LINEUP_CAP: int = 5
+var _prep_step: int = 0
+var _pool: Array = []                  # [{card, entry}] — roster troops (NOT the hero)
+var _lineup_sel: Array = []            # bool per pool index (deployed?); pool order = deploy order
+var _prep_sel: int = -1                # pool index selected for reorder/bench in PREP step 0
+var _hero_unit: RTUnit = null          # the deployed hero (campaign); its death ends the run
+var _prep_draw: Array = []             # up to 3 drawn card ids for the play step
+var _prep_equip_id: String = ""        # a drawn Equip card awaiting a unit tap
 
 const UNIT_TYPES: Dictionary = {
 	"soldier": {
@@ -53,10 +70,10 @@ const UNIT_TYPES: Dictionary = {
 		"attack_range_px": 58.0,
 		"move_speed_px": 96.0,
 	},
-	"healer": {
+	"spearmen": {
 		"name": "Spearmen",
 		"role": "Reach and bulk",
-		"sprite_key": "healer",
+		"sprite_key": "spearmen",
 		"soldier_count": 8,
 		"hp_per_soldier": 15,
 		"damage_per_attack": 9,
@@ -97,7 +114,7 @@ var _freeze_mode: bool = false
 var _enemy_preview: Array = []
 var _reward_choices: Array = []
 var _reroll_discount_next: bool = false
-var _speed_scale: float = 1.0
+var _speed_scale: float = 2.0   # 2x by default — 1x standard felt too slow
 var _start_abilities_applied: bool = false
 var _unit_state: Dictionary = {}
 var _feedback: Array = []
@@ -113,23 +130,33 @@ const HELP_BODY: String = "Auto-battler: build a team, then watch it fight on it
 # Campaign unit types are mapped onto the four auto-battler archetypes; the
 # advanced recruits / bosses fight as higher-level (stronger) cards.
 const CAMPAIGN_CARD_MAP: Dictionary = {
-	"soldier": "soldier", "archer": "archer", "scout": "scout", "healer": "healer",
-	"knight": "soldier", "guardian": "healer", "mage": "archer",
-	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "healer",
+	"soldier": "soldier", "archer": "archer", "scout": "scout", "spearmen": "spearmen",
+	"knight": "soldier", "guardian": "spearmen", "mage": "archer",
+	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "spearmen",
+	"berserker": "soldier", "marksman": "archer",
 }
 const CAMPAIGN_CARD_LEVEL: Dictionary = {
 	"knight": 2, "guardian": 2, "mage": 2,
 	"warlord": 3, "pyromancer": 3, "juggernaut": 3,
+	"berserker": 2, "marksman": 2,
 }
 var _campaign: bool = false
 var _campaign_lost: bool = false
 var _campaign_relic: String = ""
 var _campaign_gold: int = 0
 var _duel: bool = false
+var _pit: bool = false   # roster-cap pit: a recruit duels one chosen unit to the death
 
 func _ready() -> void:
-	Music.play("battle")
+	# Music is set per phase: pre-fight phases (quick-battle SHOP, campaign PREP)
+	# loop the "Ceramic War Rite" intro; FIGHT swaps to the full battle track.
+	# Duels skip prep, so they go straight to the battle track.
 	_rng.randomize()
+	if GameManager.pending_pit:
+		GameManager.pending_pit = false
+		_pit = true
+		_start_pit_fight()
+		return
 	if GameManager.pending_duel:
 		GameManager.pending_duel = false
 		_duel = true
@@ -140,14 +167,23 @@ func _ready() -> void:
 		_campaign = true
 		_start_campaign_fight()
 		return
+	Music.play("prebattle")   # quick-battle shop is a pre-fight build phase
 	for _i in range(TEAM_SIZE):
 		team.append({})
 	_roll_shop(true)
 	_refresh_enemy_preview()
 	_rebuild_ui()
 
+var _hover_unit: RTUnit = null   # unit under the cursor (stat tooltip in PREP/FIGHT)
+var _villain_unit: RTUnit = null # the lurking/boss villain in a campaign battle
+var _villain_boss: bool = false  # final-tier node: the villain fights for real
+var _villain_taunt_timer: float = 0.0
+var _villain_taunt_idx: int = 0
+
 func _process(delta: float) -> void:
 	_age_feedback(delta)
+	if phase == Phase.PREP or phase == Phase.FIGHT:
+		_update_hover()
 	if phase != Phase.FIGHT:
 		queue_redraw()
 		return
@@ -168,15 +204,84 @@ func _process(delta: float) -> void:
 	var steps: int = max(1, int(round(_speed_scale)))
 	var step_delta := delta
 	for _step in range(steps):
+		_check_villain_escape()
 		_auto_target(step_delta)
 		for u: RTUnit in all_units:
-			if u.is_alive():
+			if u.is_alive() and not u.is_escaping:
 				_tick_unit(u, step_delta, all_units)
 				u.position.x = clamp(u.position.x, FIELD_RECT.position.x + u.radius, FIELD_RECT.end.x - u.radius)
 				u.position.y = clamp(u.position.y, FIELD_RECT.position.y + u.radius, FIELD_RECT.end.y - u.radius)
 		if _check_fight_end():
 			break
+	_check_below50_traps()
+	_villain_lurk_taunt(delta)
 	queue_redraw()
+
+# Fire troop_below_50 traps once, when any player Troop first drops below half HP.
+func _check_below50_traps() -> void:
+	if _below50_triggered or _armed_traps.is_empty():
+		return
+	for u: RTUnit in player_units:
+		if is_instance_valid(u) and u.is_alive() and float(u.hp) / float(maxi(1, u.max_hp)) < 0.5:
+			var rest: Array = []
+			for trap in _armed_traps:
+				if String(trap.get("trigger", "")) == "troop_below_50":
+					_fire_trap(trap)
+				else:
+					rest.append(trap)
+			_armed_traps = rest
+			_below50_triggered = true
+			return
+
+# --- Villain (recurring boss) ----------------------------------------------
+# A unit the player can't target in a normal battle (only the boss villain is
+# fightable).
+func _untargetable(u: RTUnit) -> bool:
+	return u.is_villain and not _villain_boss
+
+# The villain bails when it would be fought (it's the frontmost-alive enemy), but
+# only in a normal battle; on the boss node it stands and fights.
+func _check_villain_escape() -> void:
+	if _villain_boss or _villain_unit == null:
+		return
+	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()) or _villain_unit.is_escaping:
+		return
+	if _frontmost_alive(enemy_units) == _villain_unit:
+		_villain_do_escape()
+
+func _villain_do_escape() -> void:
+	var v := _villain_unit
+	_villain_unit = null
+	enemy_units.erase(v)
+	_unit_state.erase(v.get_instance_id())
+	_add_feedback(v.position + Vector2(0.0, -36.0), v.position + Vector2(0.0, -78.0),
+			Color(0.86, 0.52, 0.96), _villain_taunt(false))
+	if v.has_method("escape"):
+		v.escape()
+	else:
+		v.queue_free()
+
+# A periodic bark while the villain lurks at the back (normal battles only).
+func _villain_lurk_taunt(delta: float) -> void:
+	if _villain_boss or _villain_unit == null:
+		return
+	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()) or _villain_unit.is_escaping:
+		return
+	_villain_taunt_timer -= delta
+	if _villain_taunt_timer <= 0.0:
+		_villain_taunt_timer = 6.0
+		var v := _villain_unit
+		_add_feedback(v.position + Vector2(0.0, -36.0), v.position + Vector2(0.0, -60.0),
+				Color(0.82, 0.55, 0.95), _villain_taunt(false))
+
+# Next taunt line (cycles); boss=true uses the showdown lines.
+func _villain_taunt(boss: bool) -> String:
+	var lines: Array = GameManager.VILLAIN.get("boss_taunts" if boss else "taunts", [])
+	if lines.is_empty():
+		return "..."
+	var s := String(lines[_villain_taunt_idx % lines.size()])
+	_villain_taunt_idx += 1
+	return s
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.055, 0.065, 0.090))
@@ -185,18 +290,21 @@ func _draw() -> void:
 			Vector2(FIELD_RECT.get_center().x, FIELD_RECT.end.y), Color(0.90, 0.85, 0.45, 0.22), 2.0)
 	if phase == Phase.FIGHT and _fight_intro_timer > 0.0:
 		draw_rect(FIELD_RECT, Color(0.02, 0.03, 0.04, 0.22))
-	for i in range(TEAM_SIZE):
-		var slot_rect := Rect2(_slot_pos(i), _slot_size())
-		var slot_color := Color(0.10, 0.12, 0.16)
-		if selected_slot == i:
-			slot_color = Color(0.26, 0.36, 0.30)
-		draw_rect(slot_rect, slot_color, false, 2.0)
-	for i in range(SHOP_SIZE):
-		var shop_rect := Rect2(_shop_pos(i), _shop_size())
-		var shop_color := Color(0.14, 0.12, 0.16)
-		if selected_shop == i:
-			shop_color = Color(0.26, 0.22, 0.34)
-		draw_rect(shop_rect, shop_color, false, 2.0)
+	# The hotbar + shop slot outlines belong to the quick-battle SHOP only — drawing
+	# them in PREP/RESULT/REWARD leaves empty boxes bleeding under those screens.
+	if phase == Phase.SHOP:
+		for i in range(TEAM_SIZE):
+			var slot_rect := Rect2(_slot_pos(i), _slot_size())
+			var slot_color := Color(0.10, 0.12, 0.16)
+			if selected_slot == i:
+				slot_color = Color(0.26, 0.36, 0.30)
+			draw_rect(slot_rect, slot_color, false, 2.0)
+		for i in range(SHOP_SIZE):
+			var shop_rect := Rect2(_shop_pos(i), _shop_size())
+			var shop_color := Color(0.14, 0.12, 0.16)
+			if selected_shop == i:
+				shop_color = Color(0.26, 0.22, 0.34)
+			draw_rect(shop_rect, shop_color, false, 2.0)
 	for fx: Dictionary in _feedback:
 		var t: float = clamp(1.0 - float(fx.get("age", 0.0)) / float(fx.get("life", FEEDBACK_LIFETIME)), 0.0, 1.0)
 		var color: Color = fx.get("color", UITheme.GOLD)
@@ -206,6 +314,60 @@ func _draw() -> void:
 		if from != to:
 			draw_line(from, to, color, 3.0, true)
 		draw_circle(to, 8.0 + (1.0 - t) * 8.0, Color(color.r, color.g, color.b, color.a * 0.25))
+	if (phase == Phase.PREP or phase == Phase.FIGHT) \
+			and _hover_unit != null and is_instance_valid(_hover_unit) and _hover_unit.is_alive():
+		_draw_unit_tooltip(_hover_unit)
+
+# Track the unit under the cursor so PREP/FIGHT can show its stats on hover.
+func _update_hover() -> void:
+	var m := get_global_mouse_position()
+	var best: RTUnit = null
+	var best_d := 54.0
+	for u: RTUnit in player_units + enemy_units:
+		if not (is_instance_valid(u) and u.is_alive()):
+			continue
+		var d := m.distance_to(u.position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != _hover_unit:
+		_hover_unit = best
+		queue_redraw()
+
+# A small stats card above the hovered unit (enemy = red border, ally = blue).
+func _draw_unit_tooltip(u: RTUnit) -> void:
+	var font := ThemeDB.fallback_font
+	var is_enemy := enemy_units.has(u)
+	var lines: Array = [
+		u.unit_name,
+		"HP   %d / %d" % [maxi(0, u.hp), u.max_hp],
+		"ATK  %d  ·  every %.1fs" % [u.damage_per_attack, u.attack_cooldown],
+	]
+	var matchup := RTUnit.class_matchup_text(u.unit_type)
+	if matchup != "":
+		lines.append(matchup)
+	var w := 150.0
+	for l: String in lines:
+		w = maxf(w, font.get_string_size(l, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 22.0)
+	var h := 16.0 + float(lines.size()) * 19.0
+	# Place the card to the side of the regiment (toward open mid-field) so it does
+	# not sit under the unit's own sprites, which render above this canvas draw.
+	var anchor: Vector2
+	if is_enemy:
+		anchor = Vector2(u.position.x - w - 58.0, u.position.y - h * 0.5)
+	else:
+		anchor = Vector2(u.position.x + 58.0, u.position.y - h * 0.5)
+	anchor.x = clampf(anchor.x, 6.0, 1280.0 - w - 6.0)
+	anchor.y = clampf(anchor.y, 70.0, 720.0 - h - 6.0)
+	var border := Color(0.86, 0.36, 0.36) if is_enemy else Color(0.46, 0.70, 0.96)
+	draw_rect(Rect2(anchor, Vector2(w, h)), Color(0.05, 0.06, 0.09, 0.96))
+	draw_rect(Rect2(anchor, Vector2(w, h)), border, false, 1.5)
+	draw_string(font, anchor + Vector2(11.0, 17.0), String(lines[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+			Color(0.99, 0.82, 0.82) if is_enemy else Color(0.86, 0.92, 1.0))
+	for i in range(1, lines.size()):
+		var lc := Color(0.92, 0.84, 0.55) if (matchup != "" and i == lines.size() - 1) else Color(0.85, 0.90, 0.90)
+		draw_string(font, anchor + Vector2(11.0, 17.0 + float(i) * 19.0), String(lines[i]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lc)
 
 func _rebuild_ui() -> void:
 	for n: Node in _ui_nodes:
@@ -216,7 +378,7 @@ func _rebuild_ui() -> void:
 	if _campaign:
 		var et: String = "  ·  Elite" if GameManager.pending_battle_elite else ""
 		var odds: String = GameManager.battle_odds(
-			GameManager.pending_battle_tier, GameManager.pending_battle_elite, GameManager.hero_battle_mode)
+			GameManager.pending_battle_tier, GameManager.pending_battle_elite, "fight")
 		var mod_text: String = ""
 		if GameManager.pending_battle_elite:
 			mod_text = "   ·   %s" % String(GameManager.elite_modifier_data(GameManager.pending_battle_tier).get("name", ""))
@@ -248,6 +410,52 @@ func _rebuild_ui() -> void:
 		_add_button("Freeze", Vector2(660.0, 640.0), Vector2(92.0, 42.0), Color(0.22, 0.32, 0.42), _on_freeze)
 		_add_button("Roll -%d" % _current_roll_cost(), Vector2(766.0, 640.0), Vector2(104.0, 42.0), Color(0.24, 0.30, 0.42), _on_roll)
 		_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_fight)
+	elif phase == Phase.PREP:
+		if _prep_step == 0:
+			var count := 0
+			for s in _lineup_sel:
+				if bool(s):
+					count += 1
+			_add_label("PREP — set lineup & order  (%d / %d troops)" % [count, LINEUP_CAP], 18, UITheme.GOLD,
+					Vector2(300.0, 46.0), Vector2(700.0, 24.0))
+			_add_label("Tap a troop to select · ◀ ▶ orders them (left = front) · In/Out benches · the hero deploys at the back. Then Deploy.",
+					13, UITheme.TEXT_MUTED, Vector2(40.0, 494.0), Vector2(1100.0, 20.0))
+			_add_label("FRONT →", 12, UITheme.GOLD.darkened(0.1), Vector2(46.0, 540.0), Vector2(90.0, 18.0))
+			for i in range(_pool.size()):
+				var bx: float = 138.0 + float(i) * 128.0
+				if bx > 1180.0:
+					break
+				var pcard: Dictionary = _pool[i]["card"]
+				var inlineup: bool = bool(_lineup_sel[i])
+				var selected: bool = (i == _prep_sel)
+				var bc: Color = UITheme.GREEN.darkened(0.1) if inlineup else Color(0.20, 0.22, 0.28)
+				if selected:
+					bc = bc.lightened(0.30)
+				_add_button("%s%s\nLv%d · %s" % ["▸ " if selected else "", _unit_name(_card_id(pcard)),
+						int(pcard.get("level", 1)), "in" if inlineup else "bench"],
+						Vector2(bx, 516.0), Vector2(120.0, 72.0), bc, Callable(self, "_on_prep_select").bind(i), 12)
+			_add_button("◀", Vector2(560.0, 600.0), Vector2(58.0, 42.0), Color(0.22, 0.28, 0.40), _on_prep_reorder.bind(-1))
+			_add_button("▶", Vector2(624.0, 600.0), Vector2(58.0, 42.0), Color(0.22, 0.28, 0.40), _on_prep_reorder.bind(1))
+			_add_button("In / Out", Vector2(690.0, 600.0), Vector2(112.0, 42.0), Color(0.30, 0.34, 0.28), _on_prep_toggle)
+			_add_button("Deploy", Vector2(946.0, 600.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_deploy)
+		else:
+			var hint := "Drew 3 — play one. Equip → tap a unit · Spell → front enemy · Trap arms. Or Fight to skip."
+			if _prep_equip_id != "":
+				hint = "Now tap a unit on the field to equip it."
+			_add_label("PREP — play a card, then Fight", 18, UITheme.GOLD, Vector2(300.0, 46.0), Vector2(700.0, 24.0))
+			_add_label(hint, 13, UITheme.TEXT_MUTED, Vector2(40.0, 552.0), Vector2(900.0, 20.0))
+			for j in range(_prep_draw.size()):
+				var cdef: Dictionary = GameManager.card_def(String(_prep_draw[j]))
+				var cat: String = String(cdef.get("category", ""))
+				var pc: Color = Color(0.30, 0.36, 0.28)
+				match cat:
+					"trap": pc = Color(0.42, 0.26, 0.26)
+					"spell": pc = Color(0.36, 0.30, 0.44)
+					"aftermath": pc = Color(0.22, 0.26, 0.34)
+				var cbtn := _add_button("%s\n[%s]" % [String(cdef.get("name", _prep_draw[j])), cat],
+						Vector2(40.0 + float(j) * 200.0, 574.0), Vector2(180.0, 72.0), pc, Callable(self, "_on_prep_draw").bind(j), 13)
+				cbtn.tooltip_text = GameManager.card_effect_text(cdef)
+			_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_prep_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
 		if _fight_intro_timer > 0.0:
@@ -258,29 +466,34 @@ func _rebuild_ui() -> void:
 		_add_button("2x", Vector2(526.0, 590.0), Vector2(70.0, 38.0), Color(0.22, 0.28, 0.40), _on_speed_2)
 		_add_button("Skip", Vector2(606.0, 590.0), Vector2(92.0, 38.0), Color(0.34, 0.25, 0.22), _on_skip_fight)
 	elif phase == Phase.RESULT:
-		_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
-		_add_recap_panel()
-		if _duel:
-			var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
-			var won := GameManager.duel_outcome == 1
-			var fate := "%s joins your army!" % recruit_name if won else "%s walks away." % recruit_name
-			_add_label(fate, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-			_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
-		elif _campaign:
-			var msg: String = ""
-			if _campaign_lost:
-				msg = "Your army was wiped out — the run ends here."
-			else:
-				msg = "+%d gold" % _campaign_gold
-				if _campaign_relic != "":
-					msg += "   ·   Relic found: %s" % String(GameManager.RELICS[_campaign_relic]["name"])
-			_add_label(msg, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-			if _campaign_lost:
-				_add_button("To Title", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
-			else:
-				_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue)
+		if _campaign and not _campaign_lost:
+			# One consolidated VICTORY screen: gold/relic + deck card + unit upgrade.
+			_build_campaign_victory_ui()
 		else:
-			_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
+			_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 520.0), Vector2(560.0, 56.0))
+			if _pit:
+				var rn := _unit_name(GameManager.pit_recruit_type) if UNIT_TYPES.has(GameManager.pit_recruit_type) else String(GameManager.pit_recruit_type).capitalize()
+				var pmsg := ("Your champion held its place — gains a level." if GameManager.pit_outcome == 0
+						else "%s won the pit and takes a slot — gains a level + the loser's upgrades." % rn)
+				_add_label(pmsg, 16, UITheme.TEXT_MUTED, Vector2(300.0, 592.0), Vector2(680.0, 24.0))
+				_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_pit_continue)
+			elif _duel:
+				var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
+				if GameManager.duel_outcome == 1:
+					_add_label("%s joins your army!" % recruit_name, 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+					_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+				else:
+					# Hero fell — the run is over (cleared in _conclude_duel).
+					_add_label("Your hero fell in the duel — the run ends here.", 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+					_add_button("To Title", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
+			elif _campaign:
+				# Campaign loss — permadeath, the run ends here.
+				_add_label("Your army was wiped out — the run ends here.", 16, UITheme.TEXT_MUTED,
+						Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+				_add_button("To Title", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
+			else:
+				_add_recap_panel()
+				_add_button("Next Shop", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
 	elif phase == Phase.REWARD:
 		_add_label("PICK A REWARD", 34, UITheme.GOLD, Vector2(420.0, 505.0), Vector2(440.0, 46.0))
 		_add_recap_panel(Vector2(330.0, 552.0))
@@ -567,6 +780,7 @@ func _on_fight() -> void:
 		_rebuild_ui()
 		return
 	phase = Phase.FIGHT
+	Music.play("battle")
 	selected_shop = -1
 	selected_slot = -1
 	_spawn_fight()
@@ -599,6 +813,7 @@ func _open_next_shop(message: String) -> void:
 	_roll_shop(false)
 	_refresh_enemy_preview()
 	phase = Phase.SHOP
+	Music.play("prebattle")   # back to the build phase between rounds
 	_shop_message = message
 	_rebuild_ui()
 
@@ -644,6 +859,25 @@ func _on_menu() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		_toggle_help()
+	# PREP: after picking an Equip card, tap a unit on the field to equip it.
+	if phase == Phase.PREP and event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		_prep_click(event.position)
+
+# Apply a pending (drawn) Equip card to the tapped player unit (single-target).
+func _prep_click(pos: Vector2) -> void:
+	if _prep_equip_id == "":
+		return
+	var hit: RTUnit = null
+	for u: RTUnit in player_units:
+		if is_instance_valid(u) and u.is_alive() and pos.distance_to(u.position) <= u.radius + 14.0:
+			hit = u
+			break
+	if hit == null:
+		return
+	hit.apply_effect(GameManager.card_def(_prep_equip_id).get("effect", {}))
+	_consume_drawn(_prep_equip_id)
+	_rebuild_ui()
 
 func _toggle_help() -> void:
 	if _help_overlay != null:
@@ -788,7 +1022,7 @@ func _active_synergy_names() -> Array:
 		out.append("2 Archers: ranged damage")
 	if int(counts.get("scout", 0)) >= 2:
 		out.append("2 Cavalry: charge damage")
-	if int(counts.get("healer", 0)) >= 2:
+	if int(counts.get("spearmen", 0)) >= 2:
 		out.append("2 Spearmen: team grit")
 	return out
 
@@ -845,7 +1079,7 @@ func _card_stats(card: Dictionary, synergy_counts: Dictionary = {}) -> Dictionar
 		damage += 3
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
 		damage += 2
-	if synergy_counts.get("healer", 0) >= 2:
+	if synergy_counts.get("spearmen", 0) >= 2:
 		hp += 10
 	return {
 		"hp": hp,
@@ -867,10 +1101,7 @@ func _level_up_slot(index: int) -> int:
 	return level
 
 func _spawn_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var player_roster: Array = []
 	for card: Dictionary in team:
 		if not _is_empty_card(card):
@@ -889,7 +1120,7 @@ func _spawn_fight() -> void:
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 
 # ---------------------------------------------------------------------------
 # Campaign single-fight (battle_mode "auto")
@@ -902,52 +1133,34 @@ func _campaign_card(unit_type: String) -> Dictionary:
 	}
 
 func _start_campaign_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var tier: int = GameManager.pending_battle_tier
 	var elite: bool = GameManager.pending_battle_elite
-	# Player team — one regiment per campaign roster entry (remembered so the
-	# survivors can be written back with permadeath after the fight).
-	var p_cards: Array = []
-	var p_entries: Array = []
-	# Prepend Hero if fighting (Fight mode) so they receive the front-most index (0)
-	if GameManager.has_hero() and GameManager.hero_battle_mode == "fight":
-		var hd := GameManager.hero_data()
-		p_cards.append({"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true})
-		p_entries.append(null)
+	# Build the player POOL (hero + roster). The hero is always available; the
+	# player chooses a lineup (hotbar) from this pool in PREP (#10).
+	# The POOL is the roster troops only. The hero always deploys on TOP of the
+	# chosen lineup (it is not one of the selectable slots), so picking N troops
+	# fields N troops + the hero. Pool order = front-to-back deploy order.
+	_hero_unit = null
+	_prep_sel = -1
+	_pool = []
 	for entry: Dictionary in GameManager.player_roster:
-		p_cards.append(_campaign_card(String(entry["type"])))
-		p_entries.append(entry)
-	# Enemy team — the tier roster, scaled by the campaign HP multiplier.
+		_pool.append({"card": _campaign_card(String(entry["type"])), "entry": entry})
+	# Default lineup: the first LINEUP_CAP troops.
+	_lineup_sel = []
+	for i in range(_pool.size()):
+		_lineup_sel.append(i < LINEUP_CAP)
+
+	# Enemy team — spawned now so it's visible during PREP.
 	var e_types: Array = GameManager.get_battle_enemy_roster(tier, elite)
 	var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
 	var e_cards: Array = []
 	for t in e_types:
 		e_cards.append(_campaign_card(String(t)))
-	var p_counts := _unit_counts(p_cards)
 	var e_counts := _unit_counts(e_cards)
-	var p_pos := _formation_positions(p_cards.size(), 0)
-	for i in range(p_cards.size()):
-		var u := _spawn_unit(p_cards[i], 0, p_pos[i], 1.0, p_counts)
-		_unit_state[u.get_instance_id()]["roster_entry"] = p_entries[i]
-		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
-		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
-		u.hp = u.max_hp
-		if bool(p_cards[i].get("hero", false)):
-			var m := GameManager.hero_fight_mult()
-			u.max_hp = maxi(1, int(round(float(u.max_hp) * m)))
-			u.hp = u.max_hp
-			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * m)))
-		player_units.append(u)
-	# Hero supports from the sidelines (Buff mode) — boost the roster, no spawn.
-	if GameManager.has_hero() and GameManager.hero_battle_mode == "buff":
-		_apply_hero_buff(GameManager.pending_hero_buff)
 	var e_pos := _formation_positions(e_cards.size(), 1)
 	for i in range(e_cards.size()):
 		enemy_units.append(_spawn_unit(e_cards[i], 1, e_pos[i], hp_mult, e_counts))
-	# Elite battles roll a deterministic modifier that buffs the whole enemy host.
 	if elite:
 		var m := GameManager.elite_modifier_data(tier)
 		for u: RTUnit in enemy_units:
@@ -957,26 +1170,357 @@ func _start_campaign_fight() -> void:
 			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
 			if u.has_method("_refresh_hp_bar"):
 				u.call("_refresh_hp_bar")
+
+	# The recurring villain joins every campaign battle. On the final tier it IS the
+	# boss and fights to the death; on every other node it lurks at the back and
+	# teleports away (with a taunt) the moment it would be fought.
+	_villain_unit = null
+	_villain_taunt_idx = 0
+	_villain_taunt_timer = 3.5
+	_villain_boss = (tier >= GameManager.MAP_TIERS - 1)
+	var v_card := {
+		"id": String(GameManager.VILLAIN.get("archetype", "warlord")),
+		"sprite_key": "villain", "villain": true,
+		"level": 2 + tier / 2, "xp": 0,
+	}
+	var v_pos := Vector2(FIELD_RECT.end.x - 80.0, FIELD_RECT.position.y + FIELD_RECT.size.y * 0.5)
+	var vu := _spawn_unit(v_card, 1, v_pos, hp_mult)
+	vu.unit_name = String(GameManager.VILLAIN.get("name", "Vex"))
+	if _villain_boss:
+		vu.max_hp = maxi(1, int(round(float(vu.max_hp) * 4.0)))
+		vu.hp = vu.max_hp
+		vu.damage_per_attack = maxi(1, int(round(float(vu.damage_per_attack) * 1.6)))
+		if vu.has_method("_refresh_hp_bar"):
+			vu.call("_refresh_hp_bar")
+	enemy_units.append(vu)   # appended last = back of the enemy line
+	_villain_unit = vu
+	_add_feedback(v_pos + Vector2(0.0, -42.0), v_pos + Vector2(0.0, -72.0),
+			Color(0.86, 0.52, 0.96), _villain_taunt(_villain_boss))
+
+	_armed_traps = []
+	_prep_draw = []
+	_prep_equip_id = ""
+	_prep_step = 0
+	phase = Phase.PREP
+	Music.play("prebattle")   # campaign pre-fight: loop the intro until fight starts
+	_rebuild_ui()
+
+# The hero's combat card (archetype + level, scaled by the skill tree).
+func _build_hero_card() -> Dictionary:
+	var hd := GameManager.hero_data()
+	return {
+		"id": String(hd["fight_archetype"]),
+		"sprite_key": String(hd.get("sprite_key", hd["fight_archetype"])),
+		"level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(),
+		"xp": 0, "hero": true,
+	}
+
+# Spawn the chosen lineup (hero + chosen troops), apply mults + aura, then draw 3
+# cards for the play step.
+func _deploy_lineup() -> void:
+	# Chosen troops in player order (pool order), then the hero appended LAST so it
+	# engages last (front-vs-front steps up by array order) — the general fights
+	# only once its screen of troops has fallen.
+	var deploy_cards: Array = []
+	for i in range(_pool.size()):
+		if bool(_lineup_sel[i]):
+			deploy_cards.append(_pool[i]["card"])
+	var troop_count := deploy_cards.size()
+	if GameManager.has_hero():
+		deploy_cards.append(_build_hero_card())
+	if deploy_cards.is_empty():
+		return
+	# Defensive formation: troops form a forward wedge, the hero sits centred behind
+	# them like a general.
+	var pos := _player_deploy_positions(troop_count, GameManager.has_hero())
+	var p_counts := _unit_counts(deploy_cards)
+	for i in range(deploy_cards.size()):
+		var u := _spawn_unit(deploy_cards[i], 0, pos[i], 1.0, p_counts)
+		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
+		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
+		u.hp = u.max_hp
+		if bool(deploy_cards[i].get("hero", false)):
+			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
+			u.hp = u.max_hp
+			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
+			_hero_unit = u
+		player_units.append(u)
+	if GameManager.has_hero():
+		_apply_hero_aura()
+	_prep_draw = GameManager.cards_draw(3)
+	_prep_step = 1
+	_rebuild_ui()
+
+# Player team start positions: `troop_count` troops in a forward defensive wedge
+# (front-of-order troop is the spearhead), then the hero centred well behind them.
+# Returns one Vector2 per deployed unit, troops first then the hero (if any).
+func _player_deploy_positions(troop_count: int, has_hero: bool) -> Array:
+	var cy := FIELD_RECT.position.y + FIELD_RECT.size.y * 0.5
+	var front_x := 500.0
+	var out: Array = []
+	for i in range(troop_count):
+		# lane: 0, +1, -1, +2, -2, … — front-of-order troop spearheads, flanks recede.
+		var lane := int((i + 1) / 2)
+		if i % 2 == 0:
+			lane = -lane
+		out.append(Vector2(front_x - absf(float(lane)) * 36.0, cy + float(lane) * 80.0))
+	if has_hero:
+		out.append(Vector2(front_x - 140.0, cy))   # general, centred behind the screen
+	return out
+
+# Start the actual fight (after PREP, or directly when there's nothing to play).
+func _begin_fight() -> void:
+	# Fire combat-start traps set during prep.
+	var rest: Array = []
+	for trap in _armed_traps:
+		if String(trap.get("trigger", "")) == "combat_start":
+			_fire_trap(trap)
+		else:
+			rest.append(trap)
+	_armed_traps = rest
+	_below50_triggered = false
+	_prep_equip_id = ""
 	phase = Phase.FIGHT
+	Music.play("battle")
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 	_rebuild_ui()
 
-func _apply_hero_buff(buff_id: String) -> void:
-	var bm := GameManager.hero_buff_mult()
+func _on_prep_select(i: int) -> void:
+	if _prep_step != 0 or i < 0 or i >= _pool.size():
+		return
+	_prep_sel = i
+	_rebuild_ui()
+
+func _on_prep_toggle() -> void:
+	if _prep_step != 0 or _prep_sel < 0 or _prep_sel >= _lineup_sel.size():
+		return
+	if not bool(_lineup_sel[_prep_sel]):
+		var count := 0
+		for s in _lineup_sel:
+			if bool(s):
+				count += 1
+		if count >= LINEUP_CAP:
+			return   # lineup is full
+	_lineup_sel[_prep_sel] = not bool(_lineup_sel[_prep_sel])
+	_rebuild_ui()
+
+# Move the selected troop one slot toward the front (dir -1) or back (dir +1).
+# Reorders the pool AND its parallel selection so deploy order follows.
+func _on_prep_reorder(dir: int) -> void:
+	if _prep_step != 0 or _prep_sel < 0:
+		return
+	var j := _prep_sel + dir
+	if j < 0 or j >= _pool.size():
+		return
+	var tmp_card = _pool[_prep_sel]
+	_pool[_prep_sel] = _pool[j]
+	_pool[j] = tmp_card
+	var tmp_sel = _lineup_sel[_prep_sel]
+	_lineup_sel[_prep_sel] = _lineup_sel[j]
+	_lineup_sel[j] = tmp_sel
+	_prep_sel = j
+	_rebuild_ui()
+
+func _on_deploy() -> void:
+	if _prep_step == 0:
+		_deploy_lineup()
+
+# Play one of the 3 drawn cards (#10). Equip waits for a unit tap; Spell hits the
+# front enemy; Trap arms. The other two drawn cards return to the deck.
+func _on_prep_draw(j: int) -> void:
+	if _prep_step != 1 or j < 0 or j >= _prep_draw.size():
+		return
+	var cdef: Dictionary = GameManager.card_def(String(_prep_draw[j]))
+	match String(cdef.get("category", "")):
+		"equip":
+			_prep_equip_id = String(_prep_draw[j])
+			_rebuild_ui()
+			return
+		"spell":
+			var e := _frontmost_alive(enemy_units)
+			if e != null:
+				e.apply_effect(cdef.get("effect", {}))
+		"trap":
+			_armed_traps.append(cdef)
+		_:
+			pass   # aftermath has no prep target — just discards
+	_consume_drawn(String(_prep_draw[j]))
+	_rebuild_ui()
+
+func _consume_drawn(played_id: String) -> void:
+	GameManager.card_graveyard.append(played_id)
+	for id in _prep_draw:
+		if String(id) != played_id:
+			GameManager.card_deck.append(String(id))
+	_prep_draw = []
+	_prep_equip_id = ""
+	GameManager.save_run()
+
+func _on_prep_fight() -> void:
+	GameManager.cards_return(_prep_draw)   # unplayed cards go back to the deck
+	_prep_draw = []
+	_prep_equip_id = ""
+	GameManager.save_run()
+	_begin_fight()
+
+# Resolve a trap's effect against the right target.
+func _fire_trap(trap: Dictionary) -> void:
+	var effect: Dictionary = trap.get("effect", {})
+	match String(effect.get("kind", "")):
+		"damage":
+			var e := _frontmost_alive(enemy_units)
+			if e != null:
+				e.apply_effect(effect)
+		"heal_pct", "heal_full":
+			var a := _frontmost_alive(player_units)
+			if a != null:
+				a.apply_effect(effect)
+		"team_damage_pct":
+			for u: RTUnit in player_units:
+				if is_instance_valid(u) and u.is_alive():
+					u.apply_effect({"kind": "damage_pct", "value": float(effect.get("value", 0.0))})
+
+# Draft the chosen reward card into the deck (Spec B) on the result screen.
+func _on_pick_reward_card(i: int) -> void:
+	if i < 0 or i >= _card_reward_offer.size():
+		return
+	GameManager.card_take_reward(String(_card_reward_offer[i]))
+	GameManager.save_run()
+	# Reward claimed — the upgrade option is spent too (one reward per win).
+	_card_reward_offer = []
+	_upgrade_offer = []
+	_upgrade_pick = ""
+	_reward_taken = true
+	_rebuild_ui()
+
+# One consolidated VICTORY screen for a campaign win: result + gold/relic + recap,
+# then the player claims ONE reward — a deck card OR a unit upgrade — then Continue.
+# Replaces the old in-battle screen plus the separate map reward popup.
+func _build_campaign_victory_ui() -> void:
+	var bg := ColorRect.new()
+	bg.position = Vector2(220.0, 70.0)
+	bg.size = Vector2(840.0, 628.0)
+	bg.color = Color(0.07, 0.09, 0.07, 0.97)
+	add_child(bg)
+	_ui_nodes.append(bg)
+	var accent := ColorRect.new()
+	accent.position = Vector2(220.0, 70.0)
+	accent.size = Vector2(840.0, 3.0)
+	accent.color = Color(0.55, 0.70, 0.40)
+	add_child(accent)
+	_ui_nodes.append(accent)
+
+	_center_label("VICTORY", 44, UITheme.GOLD, 92.0)
+	var sub := "+%d gold" % _campaign_gold
+	if _campaign_relic != "":
+		sub += "   ·   Relic found: %s" % String(GameManager.RELICS[_campaign_relic]["name"])
+	_center_label(sub, 17, Color(0.85, 0.88, 0.72), 152.0)
+	var survivors := String(_last_recap.get("survivors", ""))
+	if survivors != "":
+		_center_label(survivors, 13, UITheme.TEXT_MUTED, 180.0)
+
+	if _reward_taken:
+		_center_label("✓ reward claimed", 18, UITheme.GREEN, 350.0)
+	elif _upgrade_pick != "":
+		# Upgrade chosen — assign it to a surviving unit (or go Back).
+		var uname := String(GameManager.UPGRADE_TYPES[_upgrade_pick]["name"])
+		_center_label("Assign '%s' to a unit" % uname, 20, Color(0.92, 0.86, 0.66), 232.0)
+		var roster: Array = GameManager.player_roster
+		var first_row: int = mini(5, roster.size())
+		var start_x: float = (1280.0 - (float(first_row) * 150.0 - 10.0)) * 0.5
+		for i in range(roster.size()):
+			var entry: Dictionary = roster[i]
+			var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
+			_add_button("%s\nHP %d" % [String(udata["name"]), int(entry["hp"])],
+					Vector2(start_x + float(i % 5) * 150.0, 296.0 + float(i / 5) * 76.0), Vector2(140.0, 66.0),
+					Color(udata["color"]).darkened(0.2), Callable(self, "_on_assign_upgrade").bind(i), 12)
+		_add_button("← Back", Vector2(560.0, 556.0), Vector2(160.0, 38.0),
+				Color(0.30, 0.30, 0.34), _on_skip_upgrade, 14)
+	else:
+		# The choice — claim ONE reward.
+		_center_label("Choose one reward", 19, UITheme.TEXT, 222.0)
+		# Option A — a deck card (Spec B).
+		_add_label("Add a card to your deck", 15, Color(0.70, 0.84, 0.72), Vector2(270.0, 258.0), Vector2(540.0, 20.0))
+		for ci in range(_card_reward_offer.size()):
+			var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
+			var rbtn := _add_button(String(cd.get("name", _card_reward_offer[ci])),
+					Vector2(270.0 + float(ci) * 246.0, 284.0), Vector2(228.0, 54.0),
+					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
+			rbtn.tooltip_text = GameManager.card_effect_text(cd)
+		# Option B — a unit upgrade (pick, then assign). Only offered when troops
+		# survived; the hero isn't a roster unit, so a hero-only survival has nothing
+		# to upgrade and the card becomes the only reward.
+		var can_upgrade: bool = not GameManager.player_roster.is_empty()
+		_add_label("Upgrade a unit", 15, Color(0.84, 0.78, 0.62), Vector2(270.0, 384.0), Vector2(540.0, 20.0))
+		if can_upgrade:
+			_center_label("— or —", 14, UITheme.TEXT_MUTED, 354.0)
+			for i in range(_upgrade_offer.size()):
+				var uid := String(_upgrade_offer[i])
+				var data: Dictionary = GameManager.UPGRADE_TYPES[uid]
+				var ub := _add_button("%s\n%s" % [String(data["name"]), String(data["desc"])],
+						Vector2(270.0 + float(i) * 246.0, 410.0), Vector2(228.0, 92.0),
+						Color(data["color"]).darkened(0.35), Callable(self, "_on_pick_upgrade").bind(i), 13)
+				ub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		else:
+			_add_label("(no surviving troops to upgrade — take the card)", 13, UITheme.TEXT_MUTED,
+					Vector2(270.0, 412.0), Vector2(540.0, 20.0))
+
+	_add_button("Continue", Vector2(560.0, 638.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue, 18)
+
+# Centred label across the victory panel (220..1060).
+func _center_label(text: String, fs: int, color: Color, y: float) -> void:
+	var l := _add_label(text, fs, color, Vector2(220.0, y), Vector2(840.0, float(fs) + 10.0))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+func _on_pick_upgrade(i: int) -> void:
+	if i < 0 or i >= _upgrade_offer.size():
+		return
+	_upgrade_pick = String(_upgrade_offer[i])
+	_rebuild_ui()
+
+func _on_assign_upgrade(roster_index: int) -> void:
+	if _upgrade_pick == "" or roster_index < 0 or roster_index >= GameManager.player_roster.size():
+		return
+	GameManager.apply_upgrade(roster_index, _upgrade_pick)
+	GameManager.save_run()
+	# Reward claimed — the deck-card option is spent too (one reward per win).
+	_card_reward_offer = []
+	_upgrade_offer = []
+	_upgrade_pick = ""
+	_reward_taken = true
+	_rebuild_ui()
+
+# Back out of the upgrade-assign step to the reward choice (nothing claimed yet).
+func _on_skip_upgrade() -> void:
+	_upgrade_pick = ""
+	_rebuild_ui()
+
+# Command leader aura (Spec A): when the hero fights in the lineup it buffs the
+# whole team at battle start, scaled by the Command tree (hero_aura_mult_tree).
+# The aura family is the hero's own buff id (aegis=+HP, march=+dmg, warchest=heal).
+func _apply_hero_aura() -> void:
+	if not GameManager.has_hero():
+		return
+	var buff: Dictionary = GameManager.hero_data().get("buff", {})
+	var buff_id := String(buff.get("id", ""))
+	var am: float = GameManager.hero_aura_mult_tree()   # hero is in the lineup -> 100%
 	for u: RTUnit in player_units:
+		if not is_instance_valid(u):
+			continue
 		match buff_id:
 			"aegis":
-				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * bm))))
+				u.max_hp = maxi(1, int(round(float(u.max_hp) * (1.0 + 0.15 * am))))
 				u.hp = u.max_hp
 				if u.has_method("_refresh_hp_bar"):
 					u.call("_refresh_hp_bar")
 			"march":
-				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * bm))))
+				u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * (1.0 + 0.15 * am))))
 			"warchest":
-				u.hp = min(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * bm)))
+				u.hp = mini(u.max_hp, u.hp + int(round(float(u.max_hp) * 0.25 * am)))
 				if u.has_method("_refresh_hp_bar"):
 					u.call("_refresh_hp_bar")
 
@@ -988,21 +1532,40 @@ func _conclude_campaign(win: bool) -> void:
 	_campaign_gold = 0
 	if win:
 		# Survivors carry forward (permadeath drops the fallen regiments).
+		# No troop permadeath: every unit in the pool — deployed (alive OR fallen) and
+		# benched — carries forward to the next battle. Losing a battle still ends the
+		# run, but winning never costs you a troop (you can only recruit one at a
+		# time, so attrition made the run impossible). The pit (roster cap) is the
+		# only thing that retires a unit.
 		var survivors: Array[Dictionary] = []
-		for u: RTUnit in player_units:
-			if is_instance_valid(u) and u.is_alive():
-				var st: Dictionary = _unit_state.get(u.get_instance_id(), {})
-				var entry = st.get("roster_entry", null)
-				if entry != null:
-					survivors.append(entry)
+		for i in range(_pool.size()):
+			var entry = _pool[i].get("entry", null)
+			if entry != null:
+				survivors.append(entry)
+		# Aftermath cards in hand auto-resolve on the survivors (Spec B): a
+		# "level" card promotes a survivor's roster entry. (v1 auto; a chooser
+		# is a later refinement.)
+		if GameManager.has_hero():
+			for hi in range(GameManager.card_hand.size() - 1, -1, -1):
+				var acd: Dictionary = GameManager.card_def(String(GameManager.card_hand[hi]))
+				if String(acd.get("category", "")) != "aftermath" or survivors.is_empty():
+					continue
+				var eff: Dictionary = acd.get("effect", {})
+				if String(eff.get("kind", "")) == "level":
+					survivors[0]["level"] = int(survivors[0].get("level", 1)) + int(eff.get("value", 1))
+				GameManager.card_play(hi)
 		GameManager.set_roster(survivors)
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
-		GameManager.add_valor(2 + (1 if elite else 0))
-		GameManager.pending_upgrade_reward = true
+		# One VICTORY screen; the player claims ONE reward — a deck card OR a unit
+		# upgrade (no map popup).
+		_upgrade_offer = GameManager.random_upgrade_choices(3)
+		_upgrade_pick = ""
+		_reward_taken = false
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
+		_card_reward_offer = GameManager.card_reward_choices(3) if GameManager.has_hero() else []
 		GameManager.save_run()
 		_result_text = "VICTORY"
 		Sfx.play("win", -7.0)
@@ -1023,44 +1586,58 @@ func _on_campaign_continue() -> void:
 # resolution the outcome is reported via GameManager.duel_outcome and the map
 # (level_select) recruits the unit on a win.
 func _start_duel_fight() -> void:
-	_clear_units()
-	_unit_state.clear()
-	_feedback.clear()
-	_last_recap.clear()
+	_reset_battle_state()
 	var hero_card: Dictionary
 	if GameManager.has_hero():
-		var hd := GameManager.hero_data()
-		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
+		hero_card = _build_hero_card()
 	else:
-		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_fight_bonus_level(), "xp": 0, "hero": true}
+		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true}
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
+	# Modest baseline edge for the hero (the "duel" sway aptitude + the skill tree
+	# stack on top). Early duels are easy; later ones lean on hero investment.
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * 1.4)))
+	hero_unit.hp = hero_unit.max_hp
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * 1.25)))
 	if GameManager.hero_sway_aptitude("duel") > 0:
 		hero_unit.max_hp = maxi(1, int(round(hero_unit.max_hp * 1.25)))
 		hero_unit.hp = hero_unit.max_hp
 		hero_unit.damage_per_attack = maxi(1, int(round(hero_unit.damage_per_attack * 1.25)))
 		if hero_unit.has_method("_refresh_hp_bar"):
 			hero_unit.call("_refresh_hp_bar")
-	var fm := GameManager.hero_fight_mult()
-	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * fm)))
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * GameManager.hero_hp_mult_tree())))
 	hero_unit.hp = hero_unit.max_hp
-	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * fm)))
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+	hero_unit.attack_cooldown = maxf(0.2, hero_unit.attack_cooldown * GameManager.hero_attack_cooldown_mult())
 	if hero_unit.has_method("_refresh_hp_bar"):
 		hero_unit.call("_refresh_hp_bar")
 	player_units.append(hero_unit)
 	var recruit_pos := _formation_positions(1, 1)
-	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 1.0))
+	# Recruit power scales with how deep the run is: the first couple of nodes are
+	# ~always winnable, then duels get tough unless the hero is leveled/buffed via
+	# the skill tree. By the late run an un-invested hero will actually lose.
+	var recruit_mult := 0.6 + float(GameManager.current_tier) * 0.2
+	var rec := _spawn_unit(recruit_card, 1, recruit_pos[0], recruit_mult)
+	rec.damage_per_attack = maxi(1, int(round(float(rec.damage_per_attack) * recruit_mult)))
+	enemy_units.append(rec)
 	phase = Phase.FIGHT
+	Music.play("battle")   # duels skip prep — straight to combat track
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 	_rebuild_ui()
 
 func _conclude_duel(win: bool) -> void:
 	GameManager.duel_outcome = 1 if win else 0
-	_result_text = "DUEL WON" if win else "DUEL LOST"
+	if win:
+		_result_text = "DUEL WON"
+	else:
+		# The hero is the only fighter in a duel — losing means the hero fell, and a
+		# fallen hero ends the run (same rule as a campaign battle).
+		_result_text = "DEFEAT"
+		GameManager.clear_run()
 	phase = Phase.RESULT
 	Sfx.play("win" if win else "lose", -7.0)
 	_rebuild_ui()
@@ -1068,20 +1645,66 @@ func _conclude_duel(win: bool) -> void:
 func _on_duel_continue() -> void:
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
+# ---------------------------------------------------------------------------
+# Pit (roster-cap): a new recruit (team 1) duels one chosen roster unit (team 0)
+# to the death. The survivor keeps the slot; level_select applies the level-up +
+# upgrade-absorb on return (GameManager.resolve_pit).
+# ---------------------------------------------------------------------------
+func _start_pit_fight() -> void:
+	_reset_battle_state()
+	var roster: Array = GameManager.player_roster
+	var didx: int = GameManager.pit_defender_index
+	var def_type := "soldier"
+	var def_level := 1
+	if didx >= 0 and didx < roster.size():
+		def_type = String(roster[didx]["type"])
+		def_level = GameManager.unit_level(roster[didx])
+	var def_card := _campaign_card(def_type)
+	def_card["level"] = def_level
+	var recruit_card := _campaign_card(GameManager.pit_recruit_type)
+	player_units.append(_spawn_unit(def_card, 0, _formation_positions(1, 0)[0], 1.0))
+	enemy_units.append(_spawn_unit(recruit_card, 1, _formation_positions(1, 1)[0], 1.0))
+	phase = Phase.FIGHT
+	Music.play("battle")
+	_fight_intro_timer = FIGHT_INTRO_SECONDS
+	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 2.0
+	_rebuild_ui()
+
+func _conclude_pit(defender_won: bool) -> void:
+	GameManager.pit_outcome = 0 if defender_won else 1
+	_result_text = "CHAMPION" if defender_won else "USURPED"
+	phase = Phase.RESULT
+	Sfx.play("win" if defender_won else "lose", -7.0)
+	_rebuild_ui()
+
+func _on_pit_continue() -> void:
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
 func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
 	var u: RTUnit = RTUnit.new()
 	add_child(u)
 	var unit_id := _card_id(card)
 	var stats: Dictionary = UNIT_TYPES[unit_id].duplicate(true)
+	if card.has("sprite_key"):
+		stats["sprite_key"] = String(card["sprite_key"])   # hero uses its own sprite
 	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
-	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / float(stats.get("soldier_count", 1)))))
+	# Front-vs-front: a cosmetic squad of 10 sprites that cull one per ~10% HP
+	# lost (keeps the little-army animation), but combat HP is a single pool and
+	# the sprite count does NOT scale damage (see flat_damage below).
+	stats["soldier_count"] = 10
+	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / 10.0)))
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 18.0
 	if String(card.get("item", "")) == "drum":
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	stats["is_hero"] = card.get("hero", false)
+	stats["is_villain"] = card.get("villain", false)
+	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
 	u.setup(unit_id, team_id, pos, stats)
+	u.holding = true             # held until the front-vs-front controller engages the front
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
 	u.hp = u.max_hp
 	u.unit_name = "%s Lv %d" % [_unit_name(unit_id), int(card.get("level", 1))]
@@ -1129,18 +1752,31 @@ func _auto_target(delta: float) -> void:
 	if _ai_timer > 0.0:
 		return
 	_ai_timer = AI_RETARGET_PERIOD
-	_assign_targets(player_units, enemy_units)
-	_assign_targets(enemy_units, player_units)
+	# Branch B — front-vs-front: only each team's frontmost-alive unit fights;
+	# everyone else holds. When a front faints, the next in line steps up.
+	_front_engage(player_units, enemy_units)
+	_front_engage(enemy_units, player_units)
 
-func _assign_targets(attackers: Array, defenders: Array) -> void:
-	for u: RTUnit in attackers:
-		if not u.is_alive():
+# Frontmost still-alive unit of a team. Live arrays are kept in formation order
+# (index 0 = front) and compacted by _on_unit_died, so the first alive entry is
+# the current front.
+func _frontmost_alive(team: Array) -> RTUnit:
+	for u: RTUnit in team:
+		if is_instance_valid(u) and u.is_alive():
+			return u
+	return null
+
+func _front_engage(team: Array, foes: Array) -> void:
+	var front: RTUnit = _frontmost_alive(team)
+	var foe_front: RTUnit = _frontmost_alive(foes)
+	for u: RTUnit in team:
+		if not (is_instance_valid(u) and u.is_alive()):
 			continue
-		if u.order == RTUnit.Order.ATTACK and u.attack_target != null and u.attack_target.is_alive():
-			continue
-		var nearest := _nearest_enemy(u, defenders)
-		if nearest != null:
-			u.order_attack(nearest)
+		if u == front and foe_front != null:
+			u.holding = false
+			u.order_attack(foe_front)
+		else:
+			u.holding = true
 
 func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	if _unit_id_for(unit) == "archer":
@@ -1149,7 +1785,7 @@ func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	var best: RTUnit = null
 	var best_score: float = INF
 	for target: RTUnit in defenders:
-		if not target.is_alive():
+		if not target.is_alive() or _untargetable(target):
 			continue
 		var d := unit.position.distance_to(target.position)
 		var wounded: float = 1.0 - float(target.hp) / float(maxi(1, target.max_hp))
@@ -1165,7 +1801,7 @@ func _backline_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	var best: RTUnit = null
 	var best_x := -INF if team_id == 0 else INF
 	for target: RTUnit in defenders:
-		if not target.is_alive():
+		if not target.is_alive() or _untargetable(target):
 			continue
 		if team_id == 0 and target.position.x > best_x:
 			best = target
@@ -1194,12 +1830,18 @@ func _tick_unit(unit: RTUnit, delta: float, all_units: Array) -> void:
 		return
 	var damage: int = max(0, hp_before - target.hp)
 	damage = _apply_infantry_shield(target, damage)
-	if _unit_id_for(unit) == "healer" and _unit_id_for(target) == "scout" and target.is_alive():
-		var bonus := 6 + int(_unit_level_for(unit)) * 3
-		var bonus_dealt := _deal_damage(unit, target, bonus, Color(0.72, 1.0, 0.56), "Spear")
-		damage += bonus_dealt
-	else:
-		_add_feedback(unit.position, target.position, Color(1.0, 0.72, 0.36), "Hit")
+	# Feedback colour/label reflects the class wheel; the multiplier itself is
+	# applied once in RTUnit.tick (no extra flat bonus here, or it double-counts).
+	var adv := RTUnit.class_advantage(_unit_id_for(unit), _unit_id_for(target))
+	var hit_col := Color(1.0, 0.72, 0.36)
+	var hit_label := "Hit"
+	if adv > 1.0:
+		hit_col = Color(0.72, 1.0, 0.56)
+		hit_label = "Strong!"
+	elif adv < 1.0:
+		hit_col = Color(0.85, 0.58, 0.58)
+		hit_label = "Weak"
+	_add_feedback(unit.position, target.position, hit_col, hit_label)
 	Sfx.play("hit", -14.0)
 	_record_damage(unit, damage)
 
@@ -1278,9 +1920,16 @@ func _age_feedback(delta: float) -> void:
 func _check_fight_end() -> bool:
 	var p_alive := _any_alive(player_units)
 	var e_alive := _any_alive(enemy_units)
+	# Protect the general: in a campaign the hero dying ends the run immediately,
+	# even if troops are still standing (enemy archers can reach the backline).
+	if _campaign and _hero_unit != null and not (is_instance_valid(_hero_unit) and _hero_unit.is_alive()):
+		p_alive = false
 	if p_alive and e_alive:
 		return false
 	_build_recap(p_alive, e_alive)
+	if _pit:
+		_conclude_pit(p_alive and not e_alive)   # defender (team 0) survived?
+		return true
 	if _duel:
 		_conclude_duel(p_alive and not e_alive)
 		return true
@@ -1346,12 +1995,28 @@ func _on_unit_died(u: RTUnit) -> void:
 	if is_instance_valid(u):
 		_add_feedback(u.position, u.position, Color(0.95, 0.18, 0.14), "Down")
 		Sfx.play("death", -12.0)
+	# A player Troop falling fires armed ally_death traps once (Spec B).
+	if is_instance_valid(u) and u.team == 0 and not _armed_traps.is_empty():
+		var rest: Array = []
+		for trap in _armed_traps:
+			if String(trap.get("trigger", "")) == "ally_death":
+				_fire_trap(trap)
+			else:
+				rest.append(trap)
+		_armed_traps = rest
 	player_units.erase(u)
 	enemy_units.erase(u)
 	var t := get_tree().create_timer(1.0)
 	t.timeout.connect(func():
 		_free_node(u)
 	)
+
+# Clear the field + per-fight scratch state (shared prelude of every fight setup).
+func _reset_battle_state() -> void:
+	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
 
 func _clear_units() -> void:
 	for u: RTUnit in player_units:

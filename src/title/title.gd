@@ -2,41 +2,72 @@ extends Node2D
 
 func _ready() -> void:
 	Music.play("title")
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # crisp pixel-art preview
 	_build_ui()
 
 func _draw() -> void:
-	# Background gradient effect — two overlapping rects
 	draw_rect(Rect2(0.0, 0.0, 1280.0, 720.0), Color(0.05, 0.06, 0.09))
 	# Subtle decorative line under the title block
 	draw_line(Vector2(220.0, 124.0), Vector2(1060.0, 124.0), Color(0.20, 0.22, 0.30, 0.40), 1.0)
 
+# Selected-hero preview — two TextureRect nodes (reliable, nearest-filtered)
+# flanking the menu. Added FIRST in _build_ui so the buttons draw over them; no
+# negative z_index (that would sink them behind this Node2D's _draw background).
+func _add_hero_preview() -> void:
+	var hid := GameManager.resolved_menu_hero()
+	var sk := String(GameManager.HEROES.get(hid, {}).get("sprite_key", "soldier"))
+	var tex := load("res://assets/units/%s_player.png" % sk) as Texture2D
+	if tex == null:
+		return
+	for px in [96.0, 824.0]:
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.position = Vector2(px, 250.0)
+		tr.size = Vector2(360.0, 360.0)
+		tr.modulate = Color(1.0, 1.0, 1.0, 0.7)   # faint backdrop, not competing with the menu
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(tr)
+
 func _build_ui() -> void:
 	var has_save: bool = GameManager.has_saved_run()
 
+	_add_hero_preview()   # faint sprite backdrop, drawn under the menu
 	_add_centered_label("STRATEGY PROTOTYPE", 56, Color(0.95, 0.90, 0.60), 30.0)
 	_add_centered_label("Medieval strategy roguelite — build an army, auto-resolve the fights", 18,
 		Color(0.55, 0.55, 0.65), 96.0)
+	var hname: String = String(GameManager.HEROES.get(GameManager.resolved_menu_hero(), {}).get("name", "—"))
+	_add_centered_label("Selected hero: %s" % hname, 17, Color(0.90, 0.82, 0.55), 128.0)
 
-	# Continue an in-progress run.
+	# One tidy centred action column. Same width + rhythm for every button; the
+	# secondary actions (Choose Hero) sit at the bottom of the same column instead
+	# of floating in a corner.
+	const COL_X := 490.0
+	const COL_W := 300.0
+	const STRIDE := 68.0
+	var y := 200.0
 	if has_save:
-		_add_menu_button("Continue Run", Vector2(490.0, 200.0), Vector2(300.0, 56.0),
-			Color(0.20, 0.55, 0.32), _on_continue, 24)
-
-	# New campaign — pick a hero, then start an auto-battler roguelite run.
-	_add_menu_button("New Campaign", Vector2(490.0, 280.0), Vector2(300.0, 56.0),
-		Color(0.30, 0.50, 0.38), _on_new_campaign, 24,
+		_add_menu_button("Continue Run", Vector2(COL_X, y), Vector2(COL_W, 54.0),
+			Color(0.20, 0.55, 0.32), _on_continue, 23)
+		y += STRIDE
+	_add_menu_button("New Campaign", Vector2(COL_X, y), Vector2(COL_W, 54.0),
+		Color(0.30, 0.50, 0.38), _on_new_campaign, 23,
 		"Choose a hero, then your roster auto-resolves each fight. Strength comes from the army you've built.")
-
-	# Quick skirmish — a one-off auto battle, no campaign state touched.
-	_add_menu_button("Quick Auto Battle", Vector2(490.0, 356.0), Vector2(300.0, 50.0),
-		Color(0.28, 0.44, 0.34), _on_auto_battler, 20,
+	y += STRIDE
+	_add_menu_button("Quick Auto Battle", Vector2(COL_X, y), Vector2(COL_W, 54.0),
+		Color(0.28, 0.44, 0.34), _on_auto_battler, 21,
 		"A single auto-resolved fight — no campaign state touched.")
+	y += STRIDE
+	_add_menu_button("Choose Hero", Vector2(COL_X, y), Vector2(COL_W, 46.0),
+		Color(0.36, 0.31, 0.50), _on_choose_hero, 19, "Pick which hero leads your campaigns.")
 
-	_add_centered_label("H help · Esc back",
-		13, Color(0.40, 0.40, 0.45), 692.0)
-
+	_add_centered_label("H help · Esc back", 13, Color(0.40, 0.40, 0.45), 692.0)
 	_add_menu_button("Settings", Vector2(1120.0, 24.0), Vector2(140.0, 40.0),
 		Color(0.26, 0.28, 0.38), _show_settings, 16)
+	_add_menu_button("Difficulty: %s" % GameManager.difficulty.capitalize(), Vector2(24.0, 24.0), Vector2(230.0, 40.0),
+		Color(0.42, 0.34, 0.30), _on_cycle_difficulty, 16,
+		"Normal · Hard (skip the opening recruit stage) · Insane (every battle is elite). Click to cycle.")
 
 	if not has_save:
 		_build_meta_panel()
@@ -132,8 +163,21 @@ func _btn_style(color: Color) -> StyleBoxFlat:
 	return s
 
 func _on_new_campaign() -> void:
-	# Route to character select; the chosen hero kicks off the auto-battler run.
+	# Start the run with the menu-selected hero (Choose Hero changes it).
+	GameManager.clear_run()
+	GameManager.reset()
+	GameManager.battle_mode = "auto"
+	GameManager.select_hero(GameManager.resolved_menu_hero())
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
+func _on_choose_hero() -> void:
 	get_tree().change_scene_to_file("res://src/charselect/charselect.tscn")
+
+func _on_cycle_difficulty() -> void:
+	GameManager.cycle_difficulty()
+	for c in get_children():
+		c.queue_free()
+	_build_ui()
 
 func _on_continue() -> void:
 	if GameManager.load_run():

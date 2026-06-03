@@ -29,6 +29,8 @@ var unit_type: String = "soldier"
 var team: int = 0                       # 0 = player (blue), 1 = enemy (red)
 var unit_name: String = "Soldier"
 var is_hero: bool = false
+var is_villain: bool = false             # the recurring boss villain (single big sprite)
+var is_escaping: bool = false            # villain mid teleport-away (skip ticking it)
 
 var hp_per_soldier: int = 15
 var soldier_count: int = 9              # max soldier sprites at full HP
@@ -53,6 +55,16 @@ var order: int = Order.IDLE
 var move_target: Vector2 = Vector2.ZERO
 var attack_target: RTUnit = null
 
+# When true the unit stands completely inert — no move, no auto-engage, no
+# firing (it can still take damage). Branch B (front-vs-front) holds every
+# non-front unit so only the two fronts clash; the next steps up on a faint.
+var holding: bool = false
+
+# Front-vs-front: damage is a flat `damage_per_attack` regardless of how many
+# soldier sprites remain (the sprites are cosmetic, culled per ~10% HP). When
+# false (field melee) damage scales with the alive-soldier ratio.
+var flat_damage: bool = false
+
 var _cooldown: float = 0.0
 var _soldiers: Array = []               # Array[Soldier]
 var _ring: ColorRect                    # selection indicator (initially hidden)
@@ -75,8 +87,11 @@ func setup(type: String, p_team: int, world_pos: Vector2, stats: Dictionary) -> 
 	position         = world_pos
 	unit_name        = String(stats.get("name", type.capitalize()))
 	is_hero          = bool(stats.get("is_hero", false))
+	is_villain       = bool(stats.get("is_villain", false))
+	flat_damage      = bool(stats.get("flat_damage", false))
 	var base_soldier_count = int(stats.get("soldier_count", 9))
-	if is_hero:
+	if is_hero or is_villain:
+		# Hero / villain render as one larger sprite holding the whole HP pool.
 		soldier_count = 1
 		hp_per_soldier = base_soldier_count * int(stats.get("hp_per_soldier", 15))
 	else:
@@ -140,7 +155,7 @@ func _build_visuals(stats: Dictionary) -> void:
 		var s := Soldier.new()
 		var ox: float = 0.0
 		var oy: float = 0.0
-		if not is_hero:
+		if not (is_hero or is_villain):
 			var col: int = i % cols
 			var row: int = i / cols
 			# Centre the formation around (0,0). Add a small per-soldier jitter
@@ -159,7 +174,8 @@ func _build_visuals(stats: Dictionary) -> void:
 		s.sprite       = Sprite2D.new()
 		s.sprite.texture        = tex
 		s.sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		s.sprite.scale          = Vector2(1.3, 1.3) if is_hero else Vector2(0.9, 0.9)
+		s.sprite.scale          = (Vector2(1.5, 1.5) if is_villain
+				else (Vector2(1.3, 1.3) if is_hero else Vector2(0.9, 0.9)))
 		s.sprite.position       = s.offset
 		add_child(s.sprite)
 		_soldiers.append(s)
@@ -240,6 +256,46 @@ func clear_order() -> void:
 func is_alive() -> bool:
 	return hp > 0
 
+# Teleport-away animation for the villain when cornered: zip up-and-away with a
+# fade + spin, then free the node. The caller has already pulled it from play.
+func escape() -> void:
+	holding = true
+	is_escaping = true
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(self, "position", position + Vector2(46.0, -78.0), 0.5) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(self, "modulate", Color(1.5, 1.4, 1.9, 0.0), 0.5)
+	tw.tween_property(self, "rotation", 0.7, 0.5)
+	tw.chain().tween_callback(queue_free)
+
+# Apply a Card effect dict (Spec B) to this unit. Covers the phase-1 effect
+# kinds (existing levers); damage/heal route through normal HP so combat juice
+# still plays. Pure stat kinds are headless-safe (no tween).
+func apply_effect(effect: Dictionary) -> void:
+	var kind := String(effect.get("kind", ""))
+	var v := float(effect.get("value", 0.0))
+	match kind:
+		"hp_pct":
+			max_hp = maxi(1, int(round(float(max_hp) * (1.0 + v))))
+			hp = max_hp
+			_refresh_hp_bar()
+		"damage_pct":
+			damage_per_attack = maxi(1, int(round(float(damage_per_attack) * (1.0 + v))))
+		"cooldown_pct":
+			attack_cooldown = maxf(0.2, attack_cooldown * (1.0 + v))
+		"ranged":
+			attack_range_px = maxf(attack_range_px, 200.0)
+			is_ranged = true
+		"heal_pct":
+			hp = mini(max_hp, hp + int(round(float(max_hp) * v)))
+			_refresh_hp_bar()
+		"heal_full":
+			hp = max_hp
+			_refresh_hp_bar()
+		"damage":
+			take_damage(int(v))
+
 func alive_soldier_count() -> int:
 	var n := 0
 	for s: Soldier in _soldiers:
@@ -250,6 +306,29 @@ func alive_soldier_count() -> int:
 # How many soldier sprites should currently be alive given the remaining HP.
 func _expected_alive_count() -> int:
 	return int(ceil(float(hp) / float(hp_per_soldier)))
+
+# Class wheel (#strengths) — a four-way counter cycle. Internal keys map to the
+# in-game class names: soldier=Infantry, spearmen=Spearmen, scout=Cavalry,
+# archer=Archers. Infantry > Spearmen > Cavalry > Archers > Infantry.
+const _CLASS_BEATS := {"soldier": "spearmen", "spearmen": "scout", "scout": "archer", "archer": "soldier"}
+const _CLASS_NAME := {"soldier": "Infantry", "spearmen": "Spearmen", "scout": "Cavalry", "archer": "Archers"}
+static func class_advantage(atk_type: String, def_type: String) -> float:
+	if String(_CLASS_BEATS.get(atk_type, "")) == def_type:
+		return 1.5   # strong against
+	if String(_CLASS_BEATS.get(def_type, "")) == atk_type:
+		return 0.7   # weak against
+	return 1.0
+
+# "Strong vs Spearmen · Weak vs Archers" for the stat tooltip.
+static func class_matchup_text(t: String) -> String:
+	if not _CLASS_BEATS.has(t):
+		return ""
+	var beats := String(_CLASS_NAME.get(String(_CLASS_BEATS[t]), ""))
+	var weak := ""
+	for k in _CLASS_BEATS:
+		if String(_CLASS_BEATS[k]) == t:
+			weak = String(_CLASS_NAME.get(k, ""))
+	return "Strong vs %s · Weak vs %s" % [beats, weak]
 
 func take_damage(amount: int) -> void:
 	if hp <= 0:
@@ -305,6 +384,10 @@ func _kill_soldier(s: Soldier) -> void:
 func tick(delta: float, neighbours: Array) -> Dictionary:
 	var fired: Dictionary = {"fired": false}
 	if not is_alive():
+		return fired
+
+	# Held units (front-vs-front backline) stand inert this tick.
+	if holding:
 		return fired
 
 	if _cooldown > 0.0:
@@ -370,12 +453,17 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		var dist: float = position.distance_to(attack_target.position)
 		if dist <= attack_range_px + attack_target.radius and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
-			# Damage scales with how many soldiers we still have — a battered
-			# regiment hits weaker.
-			var scaled: int = max(1, int(round(
-				damage_per_attack
-				* (float(alive_soldier_count()) / float(soldier_count))
-			)))
+			# Field melee: damage scales with how many soldiers remain (a battered
+			# regiment hits weaker). Front-vs-front (flat_damage): always full —
+			# the soldier sprites are cosmetic, culled per ~10% HP for the visual.
+			var scaled: int = damage_per_attack
+			if not flat_damage:
+				scaled = max(1, int(round(
+					damage_per_attack * (float(alive_soldier_count()) / float(soldier_count))
+				)))
+			# Class triangle: a favourable matchup hits harder, an unfavourable one
+			# weaker (infantry > scout > archer > infantry; spearmen neutral).
+			scaled = max(1, int(round(float(scaled) * class_advantage(unit_type, attack_target.unit_type))))
 			attack_target.take_damage(scaled)
 			_play_attack_animation(attack_target)
 			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}

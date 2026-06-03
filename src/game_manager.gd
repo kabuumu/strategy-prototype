@@ -80,15 +80,15 @@ const UNIT_TYPES: Dictionary = {
 		"enrage_move_bonus": 1,
 		"enrage_range_bonus": 0,
 	},
-	"healer": {
-		"name": "Healer",
-		"max_hp": 65,
+	"spearmen": {
+		"name": "Spearmen",
+		"max_hp": 80,
 		"move_range": 3,
 		"attack_range": 1,
-		"damage": 10,
-		"color": Color(0.20, 0.82, 0.70),
-		# Field Heal: restore HP to a nearby ally
-		"ability": {"id": "heal_ally", "name": "Field Heal", "desc": "Heal a nearby ally for 35"}
+		"damage": 14,
+		"color": Color(0.55, 0.62, 0.78),
+		# Brace: reach + bulk; strong against Cavalry (class wheel)
+		"ability": {"id": "brace", "name": "Brace", "desc": "Reach and bulk — strong against Cavalry"}
 	},
 	# --- Advanced recruits (found via gain-unit nodes / the shop) -------------
 	# These reuse the boss sprite art (sprite_unit) and existing ability ids,
@@ -150,27 +150,13 @@ const UNIT_TYPES: Dictionary = {
 	}
 }
 
-# How much the Healer's Field Heal restores
-const HEAL_ABILITY_AMOUNT: int = 35
-
-# Action points per class per turn. A unit spends 1 AP per move, attack, or
-# ability, and may act in any order until its AP runs out. Scouts get an extra.
-const UNIT_AP: Dictionary = {
-	"soldier": 2, "archer": 2, "scout": 3, "healer": 2,
-	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
-	"knight": 3, "mage": 2, "guardian": 2, "berserker": 3, "marksman": 2,
-}
-
-func ap_for(unit_type: String) -> int:
-	return int(UNIT_AP.get(unit_type, 2))
-
 # Unit types the player can recruit/buy (excludes bosses).
 func recruitable_types() -> Array[String]:
-	var out: Array[String] = []
-	for k: String in UNIT_TYPES:
-		if not bool(UNIT_TYPES[k].get("is_boss", false)):
-			out.append(k)
-	return out
+	# Only the four base classes the campaign combat actually fields (each has a
+	# sprite + an autobattler stat block + a clear role); advanced/boss types are
+	# enemy-only flavour. Recruiting one of these means it shows up as itself in the
+	# battle pool, not flattened to a generic soldier.
+	return ["soldier", "archer", "scout", "spearmen"] as Array[String]
 
 # ---------------------------------------------------------------------------
 # Heroes — chosen at the start of a campaign on the character-select screen.
@@ -189,7 +175,7 @@ const HEROES: Dictionary = {
 	"knight_captain": {
 		"name": "Knight-Captain",
 		"blurb": "A frontline commander — joins the fight as a tough soldier.",
-		"sprite_key": "soldier",
+		"sprite_key": "knight_captain",
 		"fight_archetype": "soldier",
 		"fight_level": 3,
 		"buff": {"id": "aegis", "name": "Aegis", "desc": "Team +15% max HP", "cost": 4},
@@ -199,7 +185,7 @@ const HEROES: Dictionary = {
 	"bard": {
 		"name": "Bard",
 		"blurb": "A silver tongue — weak in a brawl, but inspires the army.",
-		"sprite_key": "scout",
+		"sprite_key": "bard",
 		"fight_archetype": "scout",
 		"fight_level": 1,
 		"buff": {"id": "march", "name": "Marching Song", "desc": "Team +15% damage", "cost": 4},
@@ -209,8 +195,8 @@ const HEROES: Dictionary = {
 	"merchant_prince": {
 		"name": "Merchant-Prince",
 		"blurb": "Coin opens doors — starts richer and buys loyalty cheaply.",
-		"sprite_key": "healer",
-		"fight_archetype": "healer",
+		"sprite_key": "merchant_prince",
+		"fight_archetype": "spearmen",
 		"fight_level": 2,
 		"buff": {"id": "warchest", "name": "War Chest", "desc": "Heal team 25%", "cost": 3},
 		"sway_aptitudes": {"dialogue": 0, "persuasion": 2, "duel": 0},
@@ -220,8 +206,8 @@ const HEROES: Dictionary = {
 	"warden": {
 		"name": "Warden",
 		"blurb": "An unbreakable shield — soaks hits so the army survives.",
-		"sprite_key": "healer",
-		"fight_archetype": "healer",
+		"sprite_key": "warden",
+		"fight_archetype": "spearmen",
 		"fight_level": 3,
 		"buff": {"id": "aegis", "name": "Bulwark", "desc": "Team +15% max HP", "cost": 3},
 		"sway_aptitudes": {"dialogue": 0, "persuasion": 1, "duel": 1},
@@ -230,7 +216,7 @@ const HEROES: Dictionary = {
 	"trickster": {
 		"name": "Trickster",
 		"blurb": "Fast and cunning — talks circles around recruits.",
-		"sprite_key": "scout",
+		"sprite_key": "trickster",
 		"fight_archetype": "scout",
 		"fight_level": 2,
 		"buff": {"id": "march", "name": "Feint", "desc": "Team +15% damage", "cost": 4},
@@ -240,7 +226,7 @@ const HEROES: Dictionary = {
 	"templar": {
 		"name": "Templar",
 		"blurb": "A holy duelist — strong alone, steadies the line.",
-		"sprite_key": "archer",
+		"sprite_key": "templar",
 		"fight_archetype": "archer",
 		"fight_level": 3,
 		"buff": {"id": "warchest", "name": "Benediction", "desc": "Heal team 25%", "cost": 4},
@@ -250,6 +236,29 @@ const HEROES: Dictionary = {
 }
 
 const HERO_IDS: Array[String] = ["knight_captain", "bard", "merchant_prince", "warden", "trickster", "templar"]
+
+# The recurring enemy villain — a sassy phantom that haunts every campaign battle,
+# teleporting away when cornered, until the final boss node where you fight it for
+# real. `archetype` sets its combat stat block for the boss fight.
+const VILLAIN: Dictionary = {
+	"name": "Vex",
+	"sprite_key": "villain",
+	"archetype": "soldier",   # combat stat block (must be a base UNIT_TYPES key)
+	"taunts": [
+		"Catch me if you can!",
+		"Too slow, mortals!",
+		"See you at the finish line!",
+		"That army? Adorable.",
+		"Ta-ta for now!",
+		"Not today, hero!",
+		"Missed me!",
+	],
+	"boss_taunts": [
+		"No more running. Let's dance.",
+		"You actually made it. Pity.",
+		"This is where your little journey ends!",
+	],
+}
 
 # Heroes not listed here are always unlocked (the three starters). Each entry:
 # the meta stat to check, the minimum value, and a hint shown on the locked card.
@@ -276,6 +285,16 @@ func is_hero_unlocked(id: String) -> bool:
 func hero_unlock_hint(id: String) -> String:
 	return String(HERO_UNLOCK.get(id, {}).get("hint", ""))
 
+# The hero a new campaign will start with (menu selection). Falls back to the
+# first unlocked hero if none is chosen or the chosen one is locked.
+func resolved_menu_hero() -> String:
+	if menu_hero != "" and HEROES.has(menu_hero) and is_hero_unlocked(menu_hero):
+		return menu_hero
+	for hid in HERO_IDS:
+		if is_hero_unlocked(hid):
+			return hid
+	return HERO_IDS[0]
+
 # Hero data for the active run ({} when no hero / standalone mode).
 func hero_data() -> Dictionary:
 	return HEROES.get(selected_hero, {})
@@ -289,9 +308,6 @@ func select_hero(id: String) -> void:
 	if not HEROES.has(id):
 		return
 	selected_hero = id
-	valor = 0
-	hero_battle_mode = "fight"
-	pending_hero_buff = ""
 	hero_level = 1
 	hero_xp = 0
 	hero_perks = []
@@ -300,15 +316,7 @@ func select_hero(id: String) -> void:
 	gold += int(bonus.get("gold", 0))
 	for t in bonus.get("units", []):
 		add_unit(str(t))
-
-func add_valor(n: int) -> void:
-	valor = max(0, valor + n)
-
-func spend_valor(n: int) -> bool:
-	if valor < n:
-		return false
-	valor -= n
-	return true
+	cards_init_run()   # Spec B: seed this run's Card deck + opening hand
 
 # Hero's aptitude for a sway type ("dialogue"/"persuasion"/"duel"); 0 if no hero.
 # The Silver Tongue perk lifts every aptitude by 1.
@@ -375,13 +383,385 @@ func hero_fight_mult() -> float:
 func hero_fight_bonus_level() -> int:
 	return 1 if has_perk("veteran_hero") else 0
 
-# Multiplier on the bonus portion of a team BUFF (level scaling + Inspiring).
-func hero_buff_mult() -> float:
-	return 1.0 + 0.05 * float(hero_level - 1) + (0.50 if has_perk("inspiring") else 0.0)
+# ---------------------------------------------------------------------------
+# Hero skill tree — permanent per-hero progression (Spec A). XP banks across
+# runs (hero_award_xp) and is spent BETWEEN runs to buy levels; each level grants
+# one skill point to place on a tree node (nodes land in a later slice). Mutators
+# change `hero_meta` in memory; callers persist via _save_meta(). All read paths
+# no-op to a neutral value when there is no hero.
+# ---------------------------------------------------------------------------
 
-# Valor cost of a buff after the Thrifty perk.
-func hero_buff_cost(base: int) -> int:
-	return maxi(0, base - (1 if has_perk("thrifty") else 0))
+# Get-or-create the meta record for a hero id.
+func _hero_meta(id: String) -> Dictionary:
+	if not hero_meta.has(id):
+		hero_meta[id] = {"xp": 0, "level": 1, "nodes": {}}
+	return hero_meta[id]
+
+# XP required to advance FROM `level` TO level+1. Escalating; uncapped.
+func hero_level_cost(level: int) -> int:
+	return 10 * level
+
+# Bank XP for the selected hero (permanent). No-op without a hero / non-positive.
+func hero_award_xp(amount: int) -> void:
+	if not has_hero() or amount <= 0:
+		return
+	var m := _hero_meta(selected_hero)
+	m["xp"] = int(m["xp"]) + amount
+
+func hero_banked_xp(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return int(_hero_meta(hid)["xp"])
+
+func hero_meta_level(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 1
+	return int(_hero_meta(hid)["level"])
+
+# Points spent on nodes (sum of node ranks) for a hero.
+func hero_spent_points(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	var spent := 0
+	for r in _hero_meta(hid)["nodes"].values():
+		spent += int(r)
+	return spent
+
+# Unspent skill points = (level-1 points granted) - points already placed.
+func hero_unspent_points(id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return maxi(0, hero_meta_level(hid) - 1 - hero_spent_points(hid))
+
+# Spend banked XP to buy the selected hero one level (+1 skill point). Returns
+# false if there's no hero or not enough XP.
+func hero_buy_level() -> bool:
+	if not has_hero():
+		return false
+	var m := _hero_meta(selected_hero)
+	var cost := hero_level_cost(int(m["level"]))
+	if int(m["xp"]) < cost:
+		return false
+	m["xp"] = int(m["xp"]) - cost
+	m["level"] = int(m["level"]) + 1
+	return true
+
+# Shared 4-section CK3 skeleton (Spec A §3a). Each node: section, the node that
+# must be owned first (`requires`, "" = a section root or capstone), max rank
+# (stat nodes are multi-rank), and an optional `gate` = minimum points spent in
+# the section before a capstone unlocks. 44 points fully clears the tree.
+const HERO_TREE: Dictionary = {
+	# Might — hero combat
+	"conditioning":  {"section": "might",   "requires": "",             "max_rank": 3},
+	"honed_blade":   {"section": "might",   "requires": "conditioning", "max_rank": 3},
+	"warlord":       {"section": "might",   "requires": "honed_blade",  "max_rank": 1},
+	"quickstep":     {"section": "might",   "requires": "conditioning", "max_rank": 3},
+	"veteran":       {"section": "might",   "requires": "quickstep",    "max_rank": 1},
+	"might_cap":     {"section": "might",   "requires": "",             "max_rank": 1, "gate": 3},
+	# Command — leader auras
+	"drillmaster":   {"section": "command", "requires": "",             "max_rank": 3},
+	"banneret":      {"section": "command", "requires": "drillmaster",  "max_rank": 2},
+	"inspiring":     {"section": "command", "requires": "banneret",     "max_rank": 1},
+	"quartermaster": {"section": "command", "requires": "drillmaster",  "max_rank": 2},
+	"thrifty":       {"section": "command", "requires": "quartermaster","max_rank": 1},
+	"command_sig":   {"section": "command", "requires": "",             "max_rank": 1, "gate": 3},
+	# Guile — sway / economy
+	"charisma":      {"section": "guile",   "requires": "",             "max_rank": 2},
+	"negotiator":    {"section": "guile",   "requires": "charisma",     "max_rank": 2},
+	"silver_tongue": {"section": "guile",   "requires": "negotiator",   "max_rank": 1},
+	"duelist":       {"section": "guile",   "requires": "charisma",     "max_rank": 2},
+	"war_chest":     {"section": "guile",   "requires": "duelist",      "max_rank": 3},
+	"guile_cap":     {"section": "guile",   "requires": "",             "max_rank": 1, "gate": 3},
+	# Tactics — the Card deck (Spec B)
+	"field_kit":     {"section": "tactics", "requires": "",             "max_rank": 2},
+	"bandolier":     {"section": "tactics", "requires": "field_kit",    "max_rank": 2},
+	"quick_draw":    {"section": "tactics", "requires": "bandolier",    "max_rank": 2},
+	"scout_ahead":   {"section": "tactics", "requires": "field_kit",    "max_rank": 2},
+	"reserves":      {"section": "tactics", "requires": "scout_ahead",  "max_rank": 2},
+	"tactics_cap":   {"section": "tactics", "requires": "",             "max_rank": 1, "gate": 3},
+}
+
+# Current rank of a node for a hero (0 = unowned).
+func hero_node_rank(node_id: String, id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	return int(_hero_meta(hid)["nodes"].get(node_id, 0))
+
+func hero_has_node(node_id: String, id: String = "") -> bool:
+	return hero_node_rank(node_id, id) >= 1
+
+# Total points placed in a section (for capstone gates).
+func hero_points_in_section(section: String, id: String = "") -> int:
+	var hid := id if id != "" else selected_hero
+	if hid == "":
+		return 0
+	var total := 0
+	var nodes: Dictionary = _hero_meta(hid)["nodes"]
+	for nid in nodes.keys():
+		if HERO_TREE.has(nid) and String(HERO_TREE[nid].get("section", "")) == section:
+			total += int(nodes[nid])
+	return total
+
+# Can the selected hero place a point on this node right now?
+func hero_can_buy_node(node_id: String) -> bool:
+	if not has_hero() or not HERO_TREE.has(node_id):
+		return false
+	if hero_unspent_points() < 1:
+		return false
+	var def: Dictionary = HERO_TREE[node_id]
+	if hero_node_rank(node_id) >= int(def.get("max_rank", 1)):
+		return false
+	var req := String(def.get("requires", ""))
+	if req != "" and not hero_has_node(req):
+		return false
+	var gate := int(def.get("gate", 0))
+	if gate > 0 and hero_points_in_section(String(def["section"])) < gate:
+		return false
+	return true
+
+# Place one point on a node (raise its rank). Returns false if not allowed.
+func hero_buy_node(node_id: String) -> bool:
+	if not hero_can_buy_node(node_id):
+		return false
+	var m := _hero_meta(selected_hero)
+	m["nodes"][node_id] = hero_node_rank(node_id) + 1
+	return true
+
+# Respec (Spec A) — permanently drops the hero one level (loses one point
+# forever) and clears all placed nodes. Cannot drop below level 1.
+func hero_respec() -> bool:
+	if not has_hero():
+		return false
+	var m := _hero_meta(selected_hero)
+	if int(m["level"]) <= 1:
+		return false
+	m["level"] = int(m["level"]) - 1
+	m["nodes"] = {}
+	return true
+
+# ---------------------------------------------------------------------------
+# Node-derived stat outputs (Spec A §7). Read the selected hero's purchased
+# nodes; return neutral values with no hero so consumers need no special-casing.
+# Numbers are tunable. (Wiring into combat + removing the old level/perk helpers
+# happens in a later slice — these coexist for now.)
+# ---------------------------------------------------------------------------
+
+# Hero unit HP multiplier (Might: Conditioning, +12% / rank).
+func hero_hp_mult_tree() -> float:
+	return 1.0 + 0.12 * float(hero_node_rank("conditioning"))
+
+# Hero unit damage multiplier (Might: Honed Blade +10% / rank, Warlord +20%).
+func hero_damage_mult_tree() -> float:
+	return 1.0 + 0.10 * float(hero_node_rank("honed_blade")) + 0.20 * float(hero_node_rank("warlord"))
+
+# Hero attack-cooldown multiplier (<1 = faster). Quickstep −6% / rank.
+func hero_attack_cooldown_mult() -> float:
+	return maxf(0.4, 1.0 - 0.06 * float(hero_node_rank("quickstep")))
+
+# Extra Troop-levels the hero unit fights at (Veteran).
+func hero_tree_bonus_level() -> int:
+	return hero_node_rank("veteran")
+
+# Leader-aura strength multiplier (Command: Drillmaster/Banneret +10% / rank, Inspiring +50%).
+func hero_aura_mult_tree() -> float:
+	return 1.0 + 0.10 * float(hero_node_rank("drillmaster")) \
+		+ 0.10 * float(hero_node_rank("banneret")) \
+		+ 0.50 * float(hero_node_rank("inspiring"))
+
+# Steadfast (Thrifty, repurposed): auras stay at full strength when the hero is
+# benched (else 50%). Consumed by Spec D's benched-aura factor.
+func hero_aura_benched_factor() -> float:
+	return 1.0 if hero_has_node("thrifty") else 0.5
+
+# Sway aptitude bonus from the Guile tree (on top of base aptitudes).
+func hero_tree_sway_bonus() -> int:
+	return hero_node_rank("charisma") + hero_node_rank("silver_tongue")
+
+# --- Deck caps consumed by Spec B (Tactics section) ---
+func hero_hand_cap() -> int:
+	return 5 + hero_node_rank("field_kit")
+
+func hero_trap_slots() -> int:
+	return 2 + hero_node_rank("bandolier")
+
+func hero_prep_budget() -> int:
+	return 1 + hero_node_rank("quick_draw")
+
+func hero_card_reward_bonus() -> int:
+	return hero_node_rank("scout_ahead")
+
+func hero_start_hand_bonus() -> int:
+	return hero_node_rank("reserves")
+
+# ---------------------------------------------------------------------------
+# Card deck (Spec B) — run-local, hero/campaign-only. A draw pile, a hand
+# (capped by the Tactics tree), and a graveyard. Cards are drawn at run start
+# and refilled each battle prep; played cards are one-use (-> graveyard).
+# Effects/traps and the prep UI are wired in later slices; this is the deck
+# economy + persistence.
+# ---------------------------------------------------------------------------
+const CARD_POOL: Array = [
+	# Equip — buff a Troop for the fight (includes the old upgrade-card).
+	{"id": "promotion",   "name": "Battlefield Promotion", "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "level", "value": 1}},
+	{"id": "whetstone",   "name": "Whetstone",             "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "damage_pct", "value": 0.5}},
+	{"id": "iron_hide",   "name": "Iron Hide",             "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "hp_pct", "value": 0.5}},
+	{"id": "swift_boots", "name": "Swift Boots",           "category": "equip",     "rarity": "common",   "target": "troop",       "effect": {"kind": "cooldown_pct", "value": -0.25}},
+	{"id": "longbow",     "name": "Longbow",               "category": "equip",     "rarity": "uncommon", "target": "troop",       "effect": {"kind": "ranged"}},
+	# Spell — immediate effect at fight start.
+	{"id": "firebolt",    "name": "Firebolt",              "category": "spell",     "rarity": "common",   "target": "enemy",       "effect": {"kind": "damage", "value": 20}},
+	# Trap — set ahead, fires on a combat event (phase-1 effects use existing levers).
+	{"id": "caltrops",    "name": "Caltrops",              "category": "trap",      "rarity": "common",   "target": "battlefield", "trigger": "combat_start",   "effect": {"kind": "damage", "value": 12}},
+	{"id": "second_wind", "name": "Second Wind",           "category": "trap",      "rarity": "common",   "target": "troop",       "trigger": "troop_below_50", "effect": {"kind": "heal_pct", "value": 0.3}},
+	{"id": "vengeance",   "name": "Vengeance",             "category": "trap",      "rarity": "uncommon", "target": "battlefield", "trigger": "ally_death",     "effect": {"kind": "team_damage_pct", "value": 0.15}},
+	# Aftermath — played post-battle on survivors.
+	{"id": "field_medic", "name": "Field Medic",           "category": "aftermath", "rarity": "common",   "target": "survivor",    "effect": {"kind": "heal_full"}},
+	{"id": "war_medal",   "name": "Battlefield Medal",     "category": "aftermath", "rarity": "uncommon", "target": "survivor",    "effect": {"kind": "level", "value": 1}},
+]
+
+var card_deck: Array = []        # draw pile (ids), drawn from the front
+var card_hand: Array = []        # current hand (ids)
+var card_graveyard: Array = []   # spent this run (ids)
+
+func card_def(id: String) -> Dictionary:
+	for c in CARD_POOL:
+		if String(c["id"]) == id:
+			return c
+	return {}
+
+# Human-readable one-line description of a card's effect, for tooltips/panels.
+func card_effect_text(cdef: Dictionary) -> String:
+	if cdef.is_empty():
+		return ""
+	var eff: Dictionary = cdef.get("effect", {})
+	var v: float = float(eff.get("value", 0))
+	var pct: String = "%+d%%" % int(round(v * 100.0))
+	var mag := ""
+	match String(eff.get("kind", "")):
+		"level":           mag = "+%d level (stronger stats)" % int(v)
+		"damage_pct":      mag = "%s attack damage" % pct
+		"hp_pct":          mag = "%s max HP" % pct
+		"cooldown_pct":    mag = "%s attack cooldown (attacks faster)" % pct
+		"ranged":          mag = "attacks at range"
+		"damage":          mag = "deal %d damage" % int(v)
+		"heal_pct":        mag = "heal %d%% of max HP" % int(round(v * 100.0))
+		"heal_full":       mag = "heal to full HP"
+		"team_damage_pct": mag = "the whole team gains %s damage" % pct
+		_:                 mag = String(eff.get("kind", ""))
+	match String(cdef.get("category", "")):
+		"equip":     return "Equip on one of your troops: %s." % mag
+		"spell":     return "Cast the moment the fight begins: %s to the front enemy." % mag
+		"trap":      return "Trap — when %s, %s." % [_card_trigger_text(String(cdef.get("trigger", ""))), mag]
+		"aftermath": return "After you win: %s, on a surviving troop." % mag
+	return mag
+
+func _card_trigger_text(trig: String) -> String:
+	match trig:
+		"combat_start":   return "the fight begins"
+		"troop_below_50": return "a troop drops below half HP"
+		"ally_death":     return "one of your units falls"
+	return trig
+
+# Rarity-weighted random pick from the pool (commons 3x, uncommon 2x, rare 1x).
+func _random_card_id(rng: RandomNumberGenerator) -> String:
+	var weighted: Array = []
+	for c in CARD_POOL:
+		var w := 3
+		match String(c.get("rarity", "common")):
+			"uncommon": w = 2
+			"rare": w = 1
+		for k in range(w):
+			weighted.append(String(c["id"]))
+	if weighted.is_empty():
+		return ""
+	return String(weighted[rng.randi() % weighted.size()])
+
+# Hand capacity (Tactics tree raises it; base 5 via hero_hand_cap()).
+func card_hand_cap() -> int:
+	return hero_hand_cap()
+
+# Seed the run's deck and draw an opening hand. Called from select_hero (after
+# reset() has set run_seed). No-op / cleared without a hero.
+func cards_init_run() -> void:
+	card_deck = []
+	card_hand = []
+	card_graveyard = []
+	if not has_hero():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed
+	# Seed the draw pile. Campaign battles draw from this each fight (draw 3,
+	# play 1) — there's no persistent hand. Reserves adds starting cards.
+	var start_count := 8 + hero_start_hand_bonus()
+	for i in range(start_count):
+		card_deck.append(_random_card_id(rng))
+
+# Draw up to n cards off the top of the draw pile (removed from the pile).
+func cards_draw(n: int) -> Array:
+	var out: Array = []
+	for i in range(n):
+		if card_deck.is_empty():
+			break
+		out.append(card_deck.pop_front())
+	return out
+
+# Return unplayed drawn cards to the bottom of the draw pile.
+func cards_return(ids: Array) -> void:
+	for id in ids:
+		card_deck.append(str(id))
+
+# Play the card at a hand index — moves it to the graveyard (one-use).
+func card_play(hand_index: int) -> String:
+	if hand_index < 0 or hand_index >= card_hand.size():
+		return ""
+	var id := String(card_hand[hand_index])
+	card_hand.remove_at(hand_index)
+	card_graveyard.append(id)
+	return id
+
+# Deterministic 3-card reward draft for a win (run_seed + battles_won).
+func card_reward_choices(n: int = 3) -> Array:
+	var out: Array = []
+	if not has_hero():
+		return out
+	var rng := RandomNumberGenerator.new()
+	rng.seed = run_seed * 131 + battles_won * 17 + 7
+	for i in range(n):
+		out.append(_random_card_id(rng))
+	return out
+
+# Add a drafted reward card to the draw pile.
+func card_take_reward(id: String) -> void:
+	if card_def(id).is_empty():
+		return
+	card_deck.append(id)
+
+# Permanently remove one copy of a card from the hand or draw pile (deck-prune).
+func card_prune(id: String) -> bool:
+	var i := card_hand.find(id)
+	if i >= 0:
+		card_hand.remove_at(i)
+		card_graveyard.append(id)
+		return true
+	i = card_deck.find(id)
+	if i >= 0:
+		card_deck.remove_at(i)
+		card_graveyard.append(id)
+		return true
+	return false
+
+# Grant one reward Card into the deck on a battle win (auto-draft; a 3-card pick
+# popup replaces this in the prep-UI slice). No-op without a hero.
+func card_grant_battle_reward() -> String:
+	var ch: Array = card_reward_choices(1)
+	if ch.is_empty():
+		return ""
+	card_take_reward(String(ch[0]))
+	return String(ch[0])
 
 # ---------------------------------------------------------------------------
 # Recruitment (Phase 2) — a gain_unit node offers 2-3 candidates, each with a
@@ -477,13 +857,6 @@ func hero_fight_power() -> float:
 	var lvl: int = int(hd.get("fight_level", 1)) + hero_fight_bonus_level()
 	return _unit_power(int(u["max_hp"]) * lvl, int(u["damage"]) * lvl) * hero_fight_mult()
 
-# Approximate army-power multiplier from a team buff.
-func buff_power_factor(buff_id: String) -> float:
-	var bonus: float = 0.15
-	if buff_id == "warchest":
-		bonus = 0.12
-	return 1.0 + bonus * hero_buff_mult()
-
 # ---------------------------------------------------------------------------
 # Elite modifiers — every elite_battle (and the boss) rolls a deterministic
 # modifier that buffs the enemy host. Applied to enemy units in the autobattler;
@@ -516,14 +889,10 @@ func enemy_power(tier: int, elite: bool) -> float:
 		total *= (float(m.get("hp", 1.0)) + float(m.get("dmg", 1.0))) * 0.5
 	return total
 
-# Army power under a given hero mode ("fight" adds the hero unit, "buff" scales).
-func army_power_for(mode: String) -> float:
-	var base: float = army_power_base()
-	if mode == "fight":
-		return base + hero_fight_power()
-	elif mode == "buff" and has_hero():
-		return base * buff_power_factor(String(hero_data().get("buff", {}).get("id", "")))
-	return base
+# Army power estimate for the odds heuristic. The hero always fights as a lineup
+# unit; `mode` is retained for existing battle_odds callers but no longer branches.
+func army_power_for(_mode: String) -> float:
+	return army_power_base() + hero_fight_power()
 
 func odds_label(ratio: float) -> String:
 	if ratio >= 1.35:
@@ -595,9 +964,6 @@ var curses: Array[String] = []   # afflictions (run-long negative passives)
 var battle_mode: String = "auto"   # campaign battles are auto-resolved by the auto-battler
 # --- Hero (chosen at the start of a campaign; see HEROES) -------------------
 var selected_hero: String = ""           # "" = no hero (standalone Quick Auto Battle)
-var valor: int = 0                        # buff-only resource; +2 per win (+1 elite)
-var hero_battle_mode: String = "fight"    # per-battle toggle: "fight" | "buff"
-var pending_hero_buff: String = ""        # buff id when hero_battle_mode == "buff"
 # --- Hero progression (levels from wins; perks chosen on level-up) ----------
 var hero_level: int = 1
 var hero_xp: int = 0                       # +1 per battle won; HERO_XP_PER_LEVEL per level
@@ -618,6 +984,21 @@ var best_streak_ever: int = 0   # persists across runs
 var best_tier_reached: int = 0  # persists across runs (1-based; 5 = boss cleared)
 var total_runs: int = 0         # persists across runs
 var runs_won: int = 0           # persists across runs (boss cleared) — gates hero unlocks
+# Permanent per-hero skill-tree progression (Spec A). Persists across runs in
+# meta.cfg, keyed by hero id: { id: {"xp":int, "level":int, "nodes":{node_id:rank}} }.
+# XP banks across runs and is spent between runs to buy levels (each level grants
+# one skill point) and place points on tree nodes. Survives reset()/select_hero().
+var hero_meta: Dictionary = {}
+var menu_hero: String = ""       # the hero chosen on the main menu for new campaigns
+# Difficulty (chosen on the title). hard = no opening recruit stage (tier 0 is
+# battles); insane = that PLUS every battle is elite. Persists in meta + run save.
+var difficulty: String = "normal"
+const DIFFICULTIES: Array[String] = ["normal", "hard", "insane"]
+func is_hard() -> bool: return difficulty == "hard" or difficulty == "insane"
+func is_insane() -> bool: return difficulty == "insane"
+func cycle_difficulty() -> void:
+	difficulty = DIFFICULTIES[(DIFFICULTIES.find(difficulty) + 1) % DIFFICULTIES.size()]
+	_save_meta()
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -695,9 +1076,6 @@ var pending_battle_tier: int = 0
 var pending_battle_elite: bool = false
 # When true, the campaign battle is auto-resolved by the auto-battler (set by level_select).
 var pending_autobattle: bool = false
-# Set by the non-hex campaign modes on a win so level_select offers an upgrade
-# pick (the hex battle has its own inline upgrade picker). Consumed on the map.
-var pending_upgrade_reward: bool = false
 
 # ---------------------------------------------------------------------------
 func _ready() -> void:
@@ -715,6 +1093,10 @@ func apply_audio() -> void:
 	var db: float = -60.0 if master_volume <= 0.001 else linear_to_db(master_volume)
 	AudioServer.set_bus_volume_db(0, db)
 
+# Per-run RNG seed, set once in reset() and persisted. Deterministic systems
+# (e.g. the planned Card deck draws) key off this so a reloaded run reproduces.
+var run_seed: int = 0
+
 func reset() -> void:
 	# Capture the just-ended run's stats so the title screen can show a recap.
 	# (Skipped on the very first call when no run has happened yet.)
@@ -729,11 +1111,14 @@ func reset() -> void:
 			best_tier_reached = last_run_tier_reached
 		_save_meta()
 	player_roster = []
-	for t: String in ["soldier", "soldier", "archer"]:
+	for t: String in ["soldier", "archer"]:
 		add_unit(t)
 	gold = 0
 	relics = []
 	curses = []
+	card_deck = []
+	card_hand = []
+	card_graveyard = []
 	current_tier = 0
 	last_chosen_index = -1
 	pending_battle_tier = 0
@@ -741,9 +1126,6 @@ func reset() -> void:
 	battles_won = 0
 	# Hero is chosen on the character-select screen AFTER reset() (select_hero).
 	selected_hero = ""
-	valor = 0
-	hero_battle_mode = "fight"
-	pending_hero_buff = ""
 	hero_level = 1
 	hero_xp = 0
 	hero_perks = []
@@ -754,20 +1136,28 @@ func reset() -> void:
 	# Pick this run's final boss and map length (long, varied path).
 	var brng := RandomNumberGenerator.new()
 	brng.randomize()
+	run_seed = brng.randi()   # per-run seed: deterministic deck draws / future seeded systems
 	boss_id = BOSS_IDS[brng.randi() % BOSS_IDS.size()]
 	MAP_TIERS = brng.randi_range(MAP_TIERS_RANGE.x, MAP_TIERS_RANGE.y)
 	_generate_map()
 
 # Called by battle on victory. Updates streak counters.
-func register_battle_won(_elite: bool) -> void:
+# XP awarded for winning a battle: base + tier scaling, more for elite/boss.
+# Banked into the selected hero's permanent skill tree (Spec A). Tunable.
+func hero_award_battle_xp(tier: int, elite: bool) -> void:
+	var amount := int(round(float(8 + 2 * tier) * (1.5 if elite else 1.0)))
+	hero_award_xp(amount)
+
+func register_battle_won(elite: bool) -> void:
 	battles_won += 1
 	# Surviving regiments gain battle experience (toward veterancy).
 	for entry: Dictionary in player_roster:
 		entry["xp"] = int(entry.get("xp", 0)) + 1
-	hero_gain_xp()   # hero levels up off battle wins too
+	hero_award_battle_xp(pending_battle_tier, elite)   # bank permanent skill-tree XP (Spec A)
+	# (Legacy per-run auto-level + perk pick removed — the permanent tree replaces it.)
 	if battles_won > best_streak_ever:
 		best_streak_ever = battles_won
-		_save_meta()
+	_save_meta()   # flush meta (streak + banked hero XP) on every win
 
 # ---------------------------------------------------------------------------
 # Meta-progression persistence
@@ -782,6 +1172,31 @@ func _load_meta() -> void:
 	runs_won          = int(cfg.get_value("meta", "runs_won",          0))
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
+	menu_hero         = str(cfg.get_value("meta", "menu_hero", ""))
+	difficulty        = str(cfg.get_value("meta", "difficulty", "normal"))
+	_load_hero_meta(cfg)
+
+# Sanitised load of the per-hero skill-tree records (Spec A). Coerces leaves to
+# the expected types so a hand-edited / older meta.cfg can't inject garbage.
+func _load_hero_meta(cfg: ConfigFile) -> void:
+	hero_meta = {}
+	var hm: Variant = cfg.get_value("meta", "hero_meta", {})
+	if not (hm is Dictionary):
+		return
+	for k in (hm as Dictionary).keys():
+		var e: Variant = hm[k]
+		if not (e is Dictionary):
+			continue
+		var nodes: Dictionary = {}
+		var raw_nodes: Variant = (e as Dictionary).get("nodes", {})
+		if raw_nodes is Dictionary:
+			for nk in (raw_nodes as Dictionary).keys():
+				nodes[str(nk)] = int(raw_nodes[nk])
+		hero_meta[str(k)] = {
+			"xp": maxi(0, int((e as Dictionary).get("xp", 0))),
+			"level": maxi(1, int((e as Dictionary).get("level", 1))),
+			"nodes": nodes,
+		}
 
 func _save_meta() -> void:
 	var cfg := ConfigFile.new()
@@ -791,6 +1206,9 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "runs_won",          runs_won)
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
+	cfg.set_value("meta", "menu_hero",         menu_hero)
+	cfg.set_value("meta", "difficulty",        difficulty)
+	cfg.set_value("meta", "hero_meta",         hero_meta)
 	cfg.save(META_PATH)
 
 # Mark the first-battle help as seen (persists so it won't auto-open again).
@@ -807,7 +1225,7 @@ func mark_tutorial_seen() -> void:
 const RUN_SAVE_PATH: String = "user://run_save.cfg"
 # Bump when the run-save schema changes incompatibly; older saves are discarded
 # on load instead of loading partial/garbage state.
-const SAVE_VERSION: int = 4
+const SAVE_VERSION: int = 5
 
 func has_saved_run() -> bool:
 	if not FileAccess.file_exists(RUN_SAVE_PATH):
@@ -820,6 +1238,10 @@ func has_saved_run() -> bool:
 func save_run() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("run", "version", SAVE_VERSION)
+	cfg.set_value("run", "run_seed", run_seed)
+	cfg.set_value("run", "card_deck", card_deck)
+	cfg.set_value("run", "card_hand", card_hand)
+	cfg.set_value("run", "card_graveyard", card_graveyard)
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
 	cfg.set_value("run", "relics", relics)
@@ -830,8 +1252,8 @@ func save_run() -> void:
 	cfg.set_value("run", "battles_won", battles_won)
 	cfg.set_value("run", "boss_id", boss_id)
 	cfg.set_value("run", "battle_mode", battle_mode)
+	cfg.set_value("run", "difficulty", difficulty)
 	cfg.set_value("run", "selected_hero", selected_hero)
-	cfg.set_value("run", "valor", valor)
 	cfg.set_value("run", "hero_level", hero_level)
 	cfg.set_value("run", "hero_xp", hero_xp)
 	cfg.set_value("run", "hero_perks", hero_perks)
@@ -860,6 +1282,17 @@ func load_run() -> bool:
 	curses = []
 	for c in cfg.get_value("run", "curses", []):
 		curses.append(str(c))
+	run_seed          = int(cfg.get_value("run", "run_seed", 0))
+	difficulty        = str(cfg.get_value("run", "difficulty", "normal"))
+	card_deck = []
+	for c in cfg.get_value("run", "card_deck", []):
+		card_deck.append(str(c))
+	card_hand = []
+	for c in cfg.get_value("run", "card_hand", []):
+		card_hand.append(str(c))
+	card_graveyard = []
+	for c in cfg.get_value("run", "card_graveyard", []):
+		card_graveyard.append(str(c))
 	gold              = int(cfg.get_value("run", "gold", 0))
 	current_tier      = int(cfg.get_value("run", "current_tier", 0))
 	last_chosen_index = int(cfg.get_value("run", "last_chosen_index", -1))
@@ -868,15 +1301,12 @@ func load_run() -> bool:
 	boss_id           = str(cfg.get_value("run", "boss_id", "warlord"))
 	battle_mode       = str(cfg.get_value("run", "battle_mode", "auto"))
 	selected_hero     = str(cfg.get_value("run", "selected_hero", ""))
-	valor             = int(cfg.get_value("run", "valor", 0))
 	hero_level        = int(cfg.get_value("run", "hero_level", 1))
 	hero_xp           = int(cfg.get_value("run", "hero_xp", 0))
 	hero_perks = []
 	for pk in cfg.get_value("run", "hero_perks", []):
 		hero_perks.append(str(pk))
 	pending_hero_perk = bool(cfg.get_value("run", "pending_hero_perk", false))
-	hero_battle_mode  = "fight"
-	pending_hero_buff = ""
 	pending_battle_tier = 0
 	pending_battle_elite = false
 	return true
@@ -896,18 +1326,18 @@ func _generate_map() -> void:
 	# Tier 0 has exactly 1 starting path; Tier 1 always branches into at least 2 different options (varying 2-5);
 	# remaining middle tiers vary 2-5; final tier is a single boss (1 node)
 	var sizes: Array = []
-	sizes.append(1)
+	sizes.append(rng.randi_range(2, 3))   # 2-3 starting nodes for early choice
 	sizes.append(rng.randi_range(2, 5))
 	for _t in range(MAP_TIERS - 3):
 		sizes.append(rng.randi_range(2, 5))
 	sizes.append(1)
 
-	# Create nodes (connections filled in next pass)
+	# Create nodes with placeholder types; _assign_node_types sets balanced types.
 	for tier in range(MAP_TIERS):
 		var nodes: Array = []
 		for i in range(sizes[tier]):
 			nodes.append({
-				"type": _pick_node_type(tier, rng),
+				"type": "elite_battle" if tier == MAP_TIERS - 1 else "battle",
 				"tier": tier,
 				"index": i,
 				"visited": false,
@@ -915,7 +1345,9 @@ func _generate_map() -> void:
 			})
 		map_data.append(nodes)
 
-	# The single starting node must always be a regular battle
+	_assign_node_types(rng)
+
+	# Every starting node is a recruit (overrides tier 0).
 	var start_types: Array = _starting_node_types(map_data[0].size(), rng)
 	for i in range(map_data[0].size()):
 		map_data[0][i]["type"] = start_types[i]
@@ -924,24 +1356,15 @@ func _generate_map() -> void:
 	for tier in range(MAP_TIERS - 1):
 		_generate_connections(tier, rng)
 
-# Types for starting nodes. If count is 1, always returns a single "battle" node.
-# Otherwise, falls back to the curated, varied spread.
+# Every tier-0 node is a recruit (`gain_unit`), so whichever opening the player
+# takes they pick up a unit before the first fight — you never start a run going
+# into battle alone.
 func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
-	if count == 1:
-		return ["battle"]
-	var out: Array = ["elite_battle"]
-	if count >= 3:
-		out.append("battle")
-	# Openers exclude "heal" (units start full) and "shop" (no gold yet) — both
-	# are pointless before the first battle. Gain-unit is the useful non-combat
-	# start.
-	var utility: Array = ["gain_unit"]
-	utility.shuffle()
-	var ui: int = 0
-	while out.size() < count:
-		out.append(utility[ui % utility.size()])
-		ui += 1
-	out.shuffle()
+	# Hard/insane drop the opening recruit stage — tier 0 is battles instead.
+	var t: String = "battle" if is_hard() else "gain_unit"
+	var out: Array = []
+	for _i in range(maxi(1, count)):
+		out.append(t)
 	return out
 
 func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
@@ -988,26 +1411,38 @@ func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
 			c.append(j)
 			map_data[tier][best_i]["connections"] = c
 
-func _pick_node_type(tier: int, rng: RandomNumberGenerator) -> String:
-	if tier == MAP_TIERS - 1:
-		return "elite_battle"
-	# Tier 0 is overwritten by _starting_node_types after generation; the value
-	# returned here is just a placeholder.
-	var roll := rng.randi() % 13
-	if roll < 4:
-		return "battle"
-	elif roll < 6:
-		return "elite_battle"
-	elif roll < 7:
-		return "gain_unit"
-	elif roll < 9:
-		return "shop"
-	elif roll < 11:
-		return "event"
-	elif roll < 12:
-		return "treasure"
-	else:
-		return "heal"
+# Assign middle-tier node types with balance (#12): mostly battles, with a few
+# spread-out specials. Shops and heals are budgeted and never placed in two
+# consecutive tiers, so paths can't be a boring shop -> shop -> rest chain.
+func _assign_node_types(rng: RandomNumberGenerator) -> void:
+	var last := MAP_TIERS - 1
+	var shop_budget := maxi(1, int(MAP_TIERS / 4))
+	var heal_budget := maxi(1, int(MAP_TIERS / 5))
+	var prev_econ := false   # the previous tier placed a shop or heal
+	for tier in range(1, last):
+		var nodes: Array = map_data[tier]
+		for nd in nodes:
+			nd["type"] = "battle"
+		var options: Array = ["elite_battle", "gain_unit", "event", "treasure"]
+		if not prev_econ:
+			if shop_budget > 0:
+				options.append("shop")
+			if heal_budget > 0:
+				options.append("heal")
+		var econ_here := false
+		if nodes.size() > 0 and rng.randf() < 0.6:
+			var sp := String(options[rng.randi() % options.size()])
+			nodes[rng.randi() % nodes.size()]["type"] = sp
+			if sp == "shop":
+				shop_budget -= 1
+				econ_here = true
+			elif sp == "heal":
+				heal_budget -= 1
+				econ_here = true
+		# A bigger tier may add an elite as a second special.
+		if nodes.size() >= 4 and rng.randf() < 0.3:
+			nodes[rng.randi() % nodes.size()]["type"] = "elite_battle"
+		prev_econ = econ_here
 
 # ---------------------------------------------------------------------------
 # Navigation
@@ -1041,14 +1476,16 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 	# Tougher unit types join the enemy pool as the run deepens, for variety.
 	var pool: Array[String] = ["soldier", "archer", "scout"]
 	if tier >= 2:
-		pool.append("healer")
+		pool.append("spearmen")
 		pool.append("knight")
 		pool.append("berserker")
 	if tier >= 3:
 		pool.append("mage")
 		pool.append("guardian")
 		pool.append("marksman")
-	var count: int = clampi(2 + tier + (1 if elite else 0), 2, 5)
+	# Enemy host grows slowly: ~2 for the first few nodes, +1 every ~3 tiers, so the
+	# opening battles are small (the villain also lurks at the back). Elite hosts add one.
+	var count: int = clampi(2 + tier / 3 + (1 if elite else 0), 2, 6)
 	var result: Array[String] = []
 	for _i in range(count):
 		result.append(pool[rng.randi() % pool.size()])
@@ -1073,6 +1510,41 @@ func add_unit(unit_type: String) -> void:
 		"upgrades": [] as Array,
 		"xp": 0,
 	})
+
+# Roster cap (#fightpit). When full, a new recruit must duel one of your units in
+# the pit (see autobattler `_start_pit_fight`); the survivor keeps the slot.
+const ROSTER_CAP: int = 8
+func roster_is_full() -> bool:
+	return player_roster.size() >= ROSTER_CAP
+
+# Pit (over-cap recruit fights one chosen unit to the death). Set by level_select
+# before launching the pit fight; the outcome is read on return.
+var pending_pit: bool = false
+var pit_recruit_type: String = ""
+var pit_defender_index: int = -1
+var pit_outcome: int = -1   # -1 none, 0 = defender won, 1 = recruit won
+
+# Resolve the pit: the winner takes the slot, gains +1 permanent level and absorbs
+# the loser's ✦ upgrades; the loser is gone. Roster size stays at the cap.
+func resolve_pit(defender_index: int, recruit_type: String, recruit_won: bool) -> void:
+	if defender_index < 0 or defender_index >= player_roster.size():
+		return
+	var defender: Dictionary = player_roster[defender_index]
+	var entry: Dictionary
+	if recruit_won:
+		# Recruit takes the slot; absorbs the fallen defender's upgrades.
+		entry = {
+			"type": recruit_type,
+			"upgrades": (defender.get("upgrades", []) as Array).duplicate(),
+			"xp": 3,   # +1 level (level = 1 + xp/3)
+			"hp": 0,
+		}
+	else:
+		# Defender survives and levels up (a fresh recruit carries no upgrades).
+		entry = defender.duplicate(true)
+		entry["xp"] = int(entry.get("xp", 0)) + 3
+	entry["hp"] = unit_effective_max_hp(entry)   # the champion is patched up to full
+	player_roster[defender_index] = entry
 
 # Veterancy: a regiment levels every 3 battles it survives (max level 4). Each
 # level past 1 grants +8 max HP and +2 damage (applied for the player team).
@@ -1144,6 +1616,22 @@ const EVENTS: Array = [
 		],
 	},
 	{
+		"title": "Bandit Ambush",
+		"text": "Cutthroats burst from the brush, blades flashing. They want coin — or blood.",
+		"choices": [
+			{"label": "Pay the toll (35g)", "cost": 35, "effect": {}},
+			{"label": "Fight them off (your weakest troop falls, +20g loot)", "effect": {"lose_unit": true, "gold": 20}},
+		],
+	},
+	{
+		"title": "The Sunken Hatch",
+		"text": "Half-buried in the hillside: a metal hatch from some fallen age, humming with old machine-light. Send someone in to scavenge — if they come back.",
+		"choices": [
+			{"label": "Send a volunteer in (risky)", "effect": {"explore": true}},
+			{"label": "Too dangerous — move on", "effect": {}},
+		],
+	},
+	{
 		"title": "Ancient Shrine",
 		"text": "A moss-covered shrine hums with old power. Do you honour it, or pry loose its gilding?",
 		"choices": [
@@ -1185,7 +1673,7 @@ const EVENTS: Array = [
 	},
 	{
 		"title": "Field Hospital",
-		"text": "A camp of healers tends the wounded of both armies.",
+		"text": "A camp of field medics tends the wounded of both armies.",
 		"choices": [
 			{"label": "Rest the party (heal fully)", "effect": {"heal_all": 9999}},
 			{"label": "Donate for a blessing (30g, +relic)", "cost": 30, "effect": {"add_relic": "random"}},
@@ -1420,14 +1908,47 @@ func apply_event_choice(choice: Dictionary) -> String:
 		if not ups.is_empty():
 			apply_upgrade(idx, ups[0])
 			parts.append("%s trained" % String(UNIT_TYPES[player_roster[idx]["type"]]["name"]))
-	if eff.has("lose_unit") and bool(eff["lose_unit"]) and not player_roster.is_empty():
+	if eff.has("lose_unit") and bool(eff["lose_unit"]) and player_roster.size() > 1:
+		# Take the weakest (lowest-HP) troop; never drop the last one.
 		var worst: int = 0
 		for i in range(player_roster.size()):
 			if int(player_roster[i]["hp"]) < int(player_roster[worst]["hp"]):
 				worst = i
 		var lost_name: String = String(UNIT_TYPES[player_roster[worst]["type"]]["name"])
 		player_roster.remove_at(worst)
-		parts.append("lost %s" % lost_name)
+		parts.append("%s was cut down" % lost_name)
+	if eff.has("explore"):
+		# Send a unit into the unknown: a chance it's lost forever, often nothing,
+		# ~30% a prize (relic / card / treasure).
+		var erng := RandomNumberGenerator.new()
+		erng.randomize()
+		var roll: float = erng.randf()
+		if roll < 0.25 and player_roster.size() > 1:
+			var idx: int = erng.randi() % player_roster.size()
+			var nm: String = String(UNIT_TYPES[player_roster[idx]["type"]]["name"])
+			player_roster.remove_at(idx)
+			parts.append("%s ventured in and was never seen again" % nm)
+		elif roll < 0.70:
+			parts.append("the explorer returns empty-handed")
+		else:
+			var prize: float = erng.randf()
+			if prize < 0.45:
+				var rid: String = grant_random_relic()
+				if rid != "":
+					parts.append("returns clutching %s!" % String(RELICS[rid]["name"]))
+				else:
+					gold += 45
+					parts.append("returns with a heavy pouch (+45 gold)")
+			elif prize < 0.80 and selected_hero != "":
+				var cid: String = card_grant_battle_reward()
+				if cid != "":
+					parts.append("returns with a strange card — %s!" % String(card_def(cid).get("name", cid)))
+				else:
+					gold += 45
+					parts.append("returns with a heavy pouch (+45 gold)")
+			else:
+				gold += 60
+				parts.append("returns laden with old-world treasure (+60 gold)")
 	if parts.is_empty():
 		return "You move on."
 	return ", ".join(parts).capitalize()

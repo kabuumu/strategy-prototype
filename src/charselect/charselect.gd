@@ -95,8 +95,8 @@ func _build_card(hero_id: String, pos: Vector2) -> void:
 		int(hero["fight_level"])], 14, blue,
 		Vector2(pos.x + 18.0, y), Vector2(CARD_W - 36.0, 22.0)))
 	y += 26.0
-	add_child(UITheme.label("Buff:  %s — %s (%d Valor)" % [str(buff["name"]),
-		str(buff["desc"]), int(buff["cost"])], 14, green,
+	add_child(UITheme.label("Aura:  %s — %s" % [str(buff["name"]),
+		str(buff["desc"])], 14, green,
 		Vector2(pos.x + 18.0, y), Vector2(CARD_W - 36.0, 40.0)))
 	y += 44.0
 	add_child(UITheme.label("Sways:  %s" % _best_sway(hero["sway_aptitudes"]), 14,
@@ -130,13 +130,11 @@ func _on_choose(hero_id: String) -> void:
 	# Guard: locked heroes are never selectable (button is disabled, but be safe).
 	if not GameManager.is_hero_unlocked(hero_id):
 		return
-	# Order matters: reset() must run before select_hero() so the roster/gold
-	# exist for the hero's start_bonus to add to.
-	GameManager.clear_run()
-	GameManager.reset()
-	GameManager.battle_mode = "auto"
-	GameManager.select_hero(hero_id)
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	# Set this as the menu's chosen hero and return to the title; New Campaign on
+	# the title starts the run with it.
+	GameManager.menu_hero = hero_id
+	GameManager._save_meta()
+	get_tree().change_scene_to_file("res://src/title/title.tscn")
 
 func _on_back() -> void:
 	get_tree().change_scene_to_file("res://src/title/title.tscn")

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dagfi3bj67bmp"
-path="res://.godot/imported/healer_player.png-9c34c68f46b81c14923c56317349a4de.ctex"
+uid="uid://cnfw4f1s1760s"
+path="res://.godot/imported/villain_enemy.png-48abebf6a3459bf8e44c9d58991d240b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/units/healer_player.png"
-dest_files=["res://.godot/imported/healer_player.png-9c34c68f46b81c14923c56317349a4de.ctex"]
+source_file="res://assets/units/villain_enemy.png"
+dest_files=["res://.godot/imported/villain_enemy.png-48abebf6a3459bf8e44c9d58991d240b.ctex"]
 
 [params]
 

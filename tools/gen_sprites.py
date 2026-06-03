@@ -121,7 +121,7 @@ def scout(d, p):
     rect(d, 13, 27, 16, 28, OUTLINE)         # trailing foot
 
 
-def healer(d, p):
+def spearmen(d, p):
     WHITE = (255, 255, 255, 255)
     # Rounded hood/head
     outline_box(d, 12, 5, 20, 12, p["armor"])
@@ -214,7 +214,7 @@ def juggernaut(d, p):
 
 
 DRAW = {
-    "soldier": soldier, "archer": archer, "scout": scout, "healer": healer,
+    "soldier": soldier, "archer": archer, "scout": scout, "spearmen": spearmen,
     "warlord": warlord, "pyromancer": pyromancer, "juggernaut": juggernaut,
 }
 

@@ -20,3 +20,6 @@ assets/models/*.png
 # (See tools/import_pixel_units.py and assets/models/README.md for re-download.)
 assets/incoming/
 
+
+# Visual brainstorming companion (local only)
+.superpowers/
