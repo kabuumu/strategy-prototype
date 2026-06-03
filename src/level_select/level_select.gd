@@ -119,7 +119,9 @@ func _ready() -> void:
 	else:
 		GameManager.clear_run()
 	# Small hint that Esc opens the menu
-	add_child(UITheme.label("Esc — Menu", 13, UITheme.TEXT_MUTED, Vector2(1150.0, 26.0), Vector2(110.0, 20.0)))
+	var esc_lbl := UITheme.label("Esc — Menu", 13, UITheme.TEXT_MUTED, Vector2(1078.0, 26.0), Vector2(116.0, 20.0))
+	esc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	add_child(esc_lbl)
 	_refresh()
 	# Surface the duel result (recruited / declined) now that the HUD exists.
 	if not _pending_recruit_toast.is_empty():
@@ -768,15 +770,19 @@ func _node_detail_text(tier: int, index: int) -> String:
 		var counts: Dictionary = {}
 		for k: String in roster:
 			counts[k] = int(counts.get(k, 0)) + 1
-		lines.append("")
-		lines.append("Enemy preview:")
+		# Compact: one line of enemies, one line of scaling/odds (keeps the box from
+		# spilling over the Legend below).
+		var parts: Array[String] = []
 		for k: String in counts.keys():
-			var udata: Dictionary = GameManager.UNIT_TYPES[k]
-			lines.append("%dx %s" % [counts[k], udata["name"]])
+			parts.append("%dx %s" % [counts[k], GameManager.UNIT_TYPES[k]["name"]])
+		lines.append("")
+		lines.append("Enemy: " + ", ".join(parts))
 		var hp_mult: float = GameManager.get_hp_multiplier(tier, elite)
+		var odds: String = GameManager.battle_odds(tier, elite, "fight")
 		if hp_mult > 1.001:
-			lines.append("HP scaling x%.2f" % hp_mult)
-		lines.append("Odds: %s" % GameManager.battle_odds(tier, elite, "fight"))
+			lines.append("Odds: %s   ·   HP x%.2f" % [odds, hp_mult])
+		else:
+			lines.append("Odds: %s" % odds)
 	elif type_key == "gain_unit":
 		lines.append("")
 		lines.append("Adds one recruit of your choice.")

@@ -25,6 +25,7 @@ var _below50_triggered: bool = false   # troop_below_50 traps fire once per figh
 var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (Spec B)
 var _upgrade_offer: Array = []         # 3 unit-upgrade choices on a campaign win
 var _upgrade_pick: String = ""         # chosen upgrade awaiting unit assignment ("" = none)
+var _reward_taken: bool = false        # a campaign-win reward (card OR upgrade) was claimed
 # Campaign PREP (#10): step 0 = pick a lineup from the pool; step 1 = draw 3, play 1.
 const LINEUP_CAP: int = 5
 var _prep_step: int = 0
@@ -111,7 +112,7 @@ var _freeze_mode: bool = false
 var _enemy_preview: Array = []
 var _reward_choices: Array = []
 var _reroll_discount_next: bool = false
-var _speed_scale: float = 1.0
+var _speed_scale: float = 2.0   # 2x by default — 1x standard felt too slow
 var _start_abilities_applied: bool = false
 var _unit_state: Dictionary = {}
 var _feedback: Array = []
@@ -214,10 +215,6 @@ func _check_below50_traps() -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(1280.0, 720.0)), Color(0.055, 0.065, 0.090))
-	# Combat-model A/B label (Quick Auto Battle is the comparison sandbox).
-	draw_string(ThemeDB.fallback_font, Vector2(44.0, 26.0),
-			"COMBAT B · FRONT-VS-FRONT (single pet)", HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
-			Color(0.55, 0.85, 0.95, 0.85))
 	draw_rect(FIELD_RECT, Color(0.15, 0.20, 0.16))
 	draw_line(Vector2(FIELD_RECT.get_center().x, FIELD_RECT.position.y),
 			Vector2(FIELD_RECT.get_center().x, FIELD_RECT.end.y), Color(0.90, 0.85, 0.45, 0.22), 2.0)
@@ -301,12 +298,9 @@ func _rebuild_ui() -> void:
 				if bx > 900.0:
 					break
 				var pcard: Dictionary = _pool[i]["card"]
-				var is_hero: bool = bool(_pool[i].get("hero", false))
 				var inlineup: bool = bool(_lineup_sel[i])
 				var bc: Color = UITheme.GREEN.darkened(0.1) if inlineup else Color(0.20, 0.22, 0.28)
-				if is_hero:
-					bc = UITheme.GOLD.darkened(0.2)
-				_add_button("%s%s\nLv%d · %s" % ["* " if is_hero else "", _unit_name(_card_id(pcard)),
+				_add_button("%s\nLv%d · %s" % [_unit_name(_card_id(pcard)),
 						int(pcard.get("level", 1)), "in" if inlineup else "bench"],
 						Vector2(bx, 574.0), Vector2(120.0, 72.0), bc, Callable(self, "_on_lineup_toggle").bind(i), 12)
 			_add_button("Deploy", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_deploy)
@@ -985,7 +979,7 @@ func _spawn_fight() -> void:
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 
 # ---------------------------------------------------------------------------
 # Campaign single-fight (battle_mode "auto")
@@ -1006,16 +1000,13 @@ func _start_campaign_fight() -> void:
 	var elite: bool = GameManager.pending_battle_elite
 	# Build the player POOL (hero + roster). The hero is always available; the
 	# player chooses a lineup (hotbar) from this pool in PREP (#10).
+	# The POOL is the roster troops only. The hero always deploys on TOP of the
+	# chosen lineup (it is not one of the selectable slots), so picking N troops
+	# fields N troops + the hero.
 	_pool = []
-	if GameManager.has_hero():
-		var hd := GameManager.hero_data()
-		_pool.append({
-			"card": {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true},
-			"entry": null, "hero": true,
-		})
 	for entry: Dictionary in GameManager.player_roster:
 		_pool.append({"card": _campaign_card(String(entry["type"])), "entry": entry, "hero": false})
-	# Default lineup: the first LINEUP_CAP pool entries (hero first).
+	# Default lineup: the first LINEUP_CAP troops.
 	_lineup_sel = []
 	for i in range(_pool.size()):
 		_lineup_sel.append(i < LINEUP_CAP)
@@ -1048,10 +1039,24 @@ func _start_campaign_fight() -> void:
 	Music.play("prebattle")   # campaign pre-fight: loop the intro until fight starts
 	_rebuild_ui()
 
-# Spawn the chosen lineup, apply mults + aura, then draw 3 cards for the play step.
+# The hero's combat card (archetype + level, scaled by the skill tree).
+func _build_hero_card() -> Dictionary:
+	var hd := GameManager.hero_data()
+	return {
+		"id": String(hd["fight_archetype"]),
+		"level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(),
+		"xp": 0, "hero": true,
+	}
+
+# Spawn the chosen lineup (hero + chosen troops), apply mults + aura, then draw 3
+# cards for the play step.
 func _deploy_lineup() -> void:
 	var sel_cards: Array = []
 	var sel_entries: Array = []
+	# The hero always deploys at the front, in addition to the chosen troops.
+	if GameManager.has_hero():
+		sel_cards.append(_build_hero_card())
+		sel_entries.append(null)
 	for i in range(_pool.size()):
 		if bool(_lineup_sel[i]):
 			sel_cards.append(_pool[i]["card"])
@@ -1095,14 +1100,12 @@ func _begin_fight() -> void:
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 	_rebuild_ui()
 
 func _on_lineup_toggle(i: int) -> void:
 	if _prep_step != 0 or i < 0 or i >= _lineup_sel.size():
 		return
-	if bool(_pool[i].get("hero", false)):
-		return   # the hero is always deployed
 	if not bool(_lineup_sel[i]):
 		var count := 0
 		for s in _lineup_sel:
@@ -1178,12 +1181,16 @@ func _on_pick_reward_card(i: int) -> void:
 		return
 	GameManager.card_take_reward(String(_card_reward_offer[i]))
 	GameManager.save_run()
+	# Reward claimed — the upgrade option is spent too (one reward per win).
 	_card_reward_offer = []
+	_upgrade_offer = []
+	_upgrade_pick = ""
+	_reward_taken = true
 	_rebuild_ui()
 
 # One consolidated VICTORY screen for a campaign win: result + gold/relic + recap,
-# then BOTH reward picks (a deck card and a unit upgrade), then Continue. Replaces
-# the old in-battle screen plus the separate map reward popup.
+# then the player claims ONE reward — a deck card OR a unit upgrade — then Continue.
+# Replaces the old in-battle screen plus the separate map reward popup.
 func _build_campaign_victory_ui() -> void:
 	var bg := ColorRect.new()
 	bg.position = Vector2(220.0, 70.0)
@@ -1207,40 +1214,41 @@ func _build_campaign_victory_ui() -> void:
 	if survivors != "":
 		_center_label(survivors, 13, UITheme.TEXT_MUTED, 180.0)
 
-	# Reward 1 — a deck card (Spec B).
-	_add_label("Add a card to your deck", 16, Color(0.70, 0.84, 0.72), Vector2(270.0, 224.0), Vector2(520.0, 22.0))
-	if _card_reward_offer.is_empty():
-		_add_label("✓ card added to your deck", 14, UITheme.GREEN, Vector2(270.0, 254.0), Vector2(520.0, 22.0))
-	else:
-		for ci in range(_card_reward_offer.size()):
-			var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
-			_add_button(String(cd.get("name", _card_reward_offer[ci])),
-					Vector2(270.0 + float(ci) * 246.0, 252.0), Vector2(228.0, 56.0),
-					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
-
-	# Reward 2 — a unit upgrade (pick, then assign to a survivor).
-	_add_label("Upgrade a unit", 16, Color(0.84, 0.78, 0.62), Vector2(270.0, 336.0), Vector2(520.0, 22.0))
-	if _upgrade_offer.is_empty() and _upgrade_pick == "":
-		_add_label("✓ upgrade applied", 14, UITheme.GREEN, Vector2(270.0, 366.0), Vector2(520.0, 22.0))
+	if _reward_taken:
+		_center_label("✓ reward claimed", 18, UITheme.GREEN, 350.0)
 	elif _upgrade_pick != "":
+		# Upgrade chosen — assign it to a surviving unit (or go Back).
 		var uname := String(GameManager.UPGRADE_TYPES[_upgrade_pick]["name"])
-		_add_label("Assign '%s' to which unit?" % uname, 14, UITheme.TEXT_MUTED,
-				Vector2(270.0, 364.0), Vector2(540.0, 20.0))
+		_center_label("Assign '%s' to a unit" % uname, 20, Color(0.92, 0.86, 0.66), 232.0)
 		var roster: Array = GameManager.player_roster
+		var first_row: int = mini(5, roster.size())
+		var start_x: float = (1280.0 - (float(first_row) * 150.0 - 10.0)) * 0.5
 		for i in range(roster.size()):
 			var entry: Dictionary = roster[i]
 			var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
 			_add_button("%s\nHP %d" % [String(udata["name"]), int(entry["hp"])],
-					Vector2(270.0 + float(i % 5) * 148.0, 392.0 + float(i / 5) * 72.0), Vector2(140.0, 64.0),
+					Vector2(start_x + float(i % 5) * 150.0, 296.0 + float(i / 5) * 76.0), Vector2(140.0, 66.0),
 					Color(udata["color"]).darkened(0.2), Callable(self, "_on_assign_upgrade").bind(i), 12)
-		_add_button("Skip upgrade", Vector2(540.0, 556.0), Vector2(200.0, 36.0),
-				Color(0.30, 0.30, 0.34), _on_skip_upgrade, 13)
+		_add_button("← Back", Vector2(560.0, 556.0), Vector2(160.0, 38.0),
+				Color(0.30, 0.30, 0.34), _on_skip_upgrade, 14)
 	else:
+		# The choice — claim ONE reward.
+		_center_label("Choose one reward", 19, UITheme.TEXT, 222.0)
+		# Option A — a deck card (Spec B).
+		_add_label("Add a card to your deck", 15, Color(0.70, 0.84, 0.72), Vector2(270.0, 258.0), Vector2(540.0, 20.0))
+		for ci in range(_card_reward_offer.size()):
+			var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
+			_add_button(String(cd.get("name", _card_reward_offer[ci])),
+					Vector2(270.0 + float(ci) * 246.0, 284.0), Vector2(228.0, 54.0),
+					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
+		_center_label("— or —", 14, UITheme.TEXT_MUTED, 354.0)
+		# Option B — a unit upgrade (pick, then assign).
+		_add_label("Upgrade a unit", 15, Color(0.84, 0.78, 0.62), Vector2(270.0, 384.0), Vector2(540.0, 20.0))
 		for i in range(_upgrade_offer.size()):
 			var uid := String(_upgrade_offer[i])
 			var data: Dictionary = GameManager.UPGRADE_TYPES[uid]
 			var ub := _add_button("%s\n%s" % [String(data["name"]), String(data["desc"])],
-					Vector2(270.0 + float(i) * 246.0, 392.0), Vector2(228.0, 92.0),
+					Vector2(270.0 + float(i) * 246.0, 410.0), Vector2(228.0, 92.0),
 					Color(data["color"]).darkened(0.35), Callable(self, "_on_pick_upgrade").bind(i), 13)
 			ub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
@@ -1262,12 +1270,15 @@ func _on_assign_upgrade(roster_index: int) -> void:
 		return
 	GameManager.apply_upgrade(roster_index, _upgrade_pick)
 	GameManager.save_run()
+	# Reward claimed — the deck-card option is spent too (one reward per win).
+	_card_reward_offer = []
 	_upgrade_offer = []
 	_upgrade_pick = ""
+	_reward_taken = true
 	_rebuild_ui()
 
+# Back out of the upgrade-assign step to the reward choice (nothing claimed yet).
 func _on_skip_upgrade() -> void:
-	_upgrade_offer = []
 	_upgrade_pick = ""
 	_rebuild_ui()
 
@@ -1327,9 +1338,11 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
-		# Both rewards now resolve on this one VICTORY screen (no map popup).
+		# One VICTORY screen; the player claims ONE reward — a deck card OR a unit
+		# upgrade (no map popup).
 		_upgrade_offer = GameManager.random_upgrade_choices(3)
 		_upgrade_pick = ""
+		_reward_taken = false
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
 		_card_reward_offer = GameManager.card_reward_choices(3) if GameManager.has_hero() else []
@@ -1386,7 +1399,7 @@ func _start_duel_fight() -> void:
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 1.0
+	_speed_scale = 2.0
 	_rebuild_ui()
 
 func _conclude_duel(win: bool) -> void:
