@@ -22,14 +22,12 @@ func _rebuild() -> void:
 	add_child(dim)
 	UITheme.panel(self, Vector2(240.0, 56.0), Vector2(800.0, 608.0), UITheme.PANEL, UITheme.LINE)
 	add_child(UITheme.label("YOUR DECK", 28, UITheme.GOLD, Vector2(264.0, 70.0), Vector2(500.0, 36.0)))
-	add_child(UITheme.label("Draw pile %d  ·  Hand %d  ·  Spent %d   —   remove cards to prune your deck" % [
-		GameManager.card_deck.size(), GameManager.card_hand.size(), GameManager.card_graveyard.size()],
+	add_child(UITheme.label("Draw pile %d  ·  Spent %d   —   remove cards to prune your deck" % [
+		GameManager.card_deck.size(), GameManager.card_graveyard.size()],
 		14, UITheme.TEXT_MUTED, Vector2(264.0, 110.0), Vector2(740.0, 22.0)))
 
-	# Combine hand + draw pile, counted by id.
+	# Cards in the draw pile, counted by id.
 	var counts: Dictionary = {}
-	for id in GameManager.card_hand:
-		counts[id] = int(counts.get(id, 0)) + 1
 	for id in GameManager.card_deck:
 		counts[id] = int(counts.get(id, 0)) + 1
 	var ids: Array = counts.keys()

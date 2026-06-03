@@ -33,7 +33,8 @@ var _pool: Array = []                  # [{card, entry}] — roster troops (NOT 
 var _lineup_sel: Array = []            # bool per pool index (deployed?); pool order = deploy order
 var _prep_sel: int = -1                # pool index selected for reorder/bench in PREP step 0
 var _hero_unit: RTUnit = null          # the deployed hero (campaign); its death ends the run
-var _prep_draw: Array = []             # up to 3 drawn card ids for the play step
+var _prep_draw: Array = []             # cards drawn for the PREP play step (hand cap)
+var _pending_aftermath: Array = []     # aftermath card effects to resolve after a win
 var _prep_equip_id: String = ""        # a drawn Equip card awaiting a unit tap
 
 const UNIT_TYPES: Dictionary = {
@@ -1199,6 +1200,7 @@ func _start_campaign_fight() -> void:
 
 	_armed_traps = []
 	_prep_draw = []
+	_pending_aftermath = []
 	_prep_equip_id = ""
 	_prep_step = 0
 	phase = Phase.PREP
@@ -1248,7 +1250,7 @@ func _deploy_lineup() -> void:
 		player_units.append(u)
 	if GameManager.has_hero():
 		_apply_hero_aura()
-	_prep_draw = GameManager.cards_draw(3)
+	_prep_draw = GameManager.cards_draw(GameManager.card_hand_cap())
 	_prep_step = 1
 	_rebuild_ui()
 
@@ -1346,8 +1348,11 @@ func _on_prep_draw(j: int) -> void:
 				e.apply_effect(cdef.get("effect", {}))
 		"trap":
 			_armed_traps.append(cdef)
+		"aftermath":
+			# Resolves on a survivor after the win (queued; see _conclude_campaign).
+			_pending_aftermath.append(cdef.get("effect", {}))
 		_:
-			pass   # aftermath has no prep target — just discards
+			pass
 	_consume_drawn(String(_prep_draw[j]))
 	_rebuild_ui()
 
@@ -1542,18 +1547,18 @@ func _conclude_campaign(win: bool) -> void:
 			var entry = _pool[i].get("entry", null)
 			if entry != null:
 				survivors.append(entry)
-		# Aftermath cards in hand auto-resolve on the survivors (Spec B): a
-		# "level" card promotes a survivor's roster entry. (v1 auto; a chooser
-		# is a later refinement.)
-		if GameManager.has_hero():
-			for hi in range(GameManager.card_hand.size() - 1, -1, -1):
-				var acd: Dictionary = GameManager.card_def(String(GameManager.card_hand[hi]))
-				if String(acd.get("category", "")) != "aftermath" or survivors.is_empty():
-					continue
-				var eff: Dictionary = acd.get("effect", {})
-				if String(eff.get("kind", "")) == "level":
-					survivors[0]["level"] = int(survivors[0].get("level", 1)) + int(eff.get("value", 1))
-				GameManager.card_play(hi)
+		# Resolve aftermath cards played during PREP on a surviving troop: heal to
+		# full, or +level via xp (unit_level = 1 + xp/3, so 3 xp == one level).
+		for eff: Dictionary in _pending_aftermath:
+			if survivors.is_empty():
+				break
+			var s: Dictionary = survivors[0]
+			match String(eff.get("kind", "")):
+				"heal_full":
+					s["hp"] = GameManager.unit_effective_max_hp(s)
+				"level":
+					s["xp"] = int(s.get("xp", 0)) + 3 * int(eff.get("value", 1))
+		_pending_aftermath = []
 		GameManager.set_roster(survivors)
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)

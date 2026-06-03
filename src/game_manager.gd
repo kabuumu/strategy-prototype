@@ -563,7 +563,6 @@ const CARD_POOL: Array = [
 ]
 
 var card_deck: Array = []        # draw pile (ids), drawn from the front
-var card_hand: Array = []        # current hand (ids)
 var card_graveyard: Array = []   # spent this run (ids)
 
 func card_def(id: String) -> Dictionary:
@@ -619,22 +618,22 @@ func _random_card_id(rng: RandomNumberGenerator) -> String:
 		return ""
 	return String(weighted[rng.randi() % weighted.size()])
 
-# Hand capacity (Tactics tree raises it; base 5 via hero_hand_cap()).
+# How many cards are drawn each battle for the PREP play step (base 5; the Tactics
+# `field_kit` tree node raises it).
 func card_hand_cap() -> int:
 	return hero_hand_cap()
 
-# Seed the run's deck and draw an opening hand. Called from select_hero (after
-# reset() has set run_seed). No-op / cleared without a hero.
+# Seed the run's draw pile. Called from select_hero (after reset() has set
+# run_seed). No-op / cleared without a hero.
 func cards_init_run() -> void:
 	card_deck = []
-	card_hand = []
 	card_graveyard = []
 	if not has_hero():
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = run_seed
-	# Seed the draw pile. Campaign battles draw from this each fight (draw 3,
-	# play 1) — there's no persistent hand. Reserves adds starting cards.
+	# Seed the draw pile. Each campaign battle draws `card_hand_cap()` cards in PREP
+	# and plays one; the rest return to the pile. Reserves adds starting cards.
 	var start_count := 8 + hero_start_hand_bonus()
 	for i in range(start_count):
 		card_deck.append(_random_card_id(rng))
@@ -653,15 +652,6 @@ func cards_return(ids: Array) -> void:
 	for id in ids:
 		card_deck.append(str(id))
 
-# Play the card at a hand index — moves it to the graveyard (one-use).
-func card_play(hand_index: int) -> String:
-	if hand_index < 0 or hand_index >= card_hand.size():
-		return ""
-	var id := String(card_hand[hand_index])
-	card_hand.remove_at(hand_index)
-	card_graveyard.append(id)
-	return id
-
 # Deterministic 3-card reward draft for a win (run_seed + battles_won).
 func card_reward_choices(n: int = 3) -> Array:
 	var out: Array = []
@@ -679,14 +669,9 @@ func card_take_reward(id: String) -> void:
 		return
 	card_deck.append(id)
 
-# Permanently remove one copy of a card from the hand or draw pile (deck-prune).
+# Permanently remove one copy of a card from the draw pile (deck-prune).
 func card_prune(id: String) -> bool:
-	var i := card_hand.find(id)
-	if i >= 0:
-		card_hand.remove_at(i)
-		card_graveyard.append(id)
-		return true
-	i = card_deck.find(id)
+	var i := card_deck.find(id)
 	if i >= 0:
 		card_deck.remove_at(i)
 		card_graveyard.append(id)
@@ -1055,7 +1040,6 @@ func reset() -> void:
 	relics = []
 	curses = []
 	card_deck = []
-	card_hand = []
 	card_graveyard = []
 	current_tier = 0
 	last_chosen_index = -1
@@ -1174,7 +1158,6 @@ func save_run() -> void:
 	cfg.set_value("run", "version", SAVE_VERSION)
 	cfg.set_value("run", "run_seed", run_seed)
 	cfg.set_value("run", "card_deck", card_deck)
-	cfg.set_value("run", "card_hand", card_hand)
 	cfg.set_value("run", "card_graveyard", card_graveyard)
 	cfg.set_value("run", "roster", player_roster)
 	cfg.set_value("run", "gold", gold)
@@ -1217,9 +1200,6 @@ func load_run() -> bool:
 	card_deck = []
 	for c in cfg.get_value("run", "card_deck", []):
 		card_deck.append(str(c))
-	card_hand = []
-	for c in cfg.get_value("run", "card_hand", []):
-		card_hand.append(str(c))
 	card_graveyard = []
 	for c in cfg.get_value("run", "card_graveyard", []):
 		card_graveyard.append(str(c))
