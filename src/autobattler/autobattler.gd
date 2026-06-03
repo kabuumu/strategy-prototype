@@ -240,7 +240,11 @@ func _check_below50_traps() -> void:
 # A unit the player can't target in a normal battle (only the boss villain is
 # fightable).
 func _untargetable(u: RTUnit) -> bool:
-	return u.is_villain and not _villain_boss
+	# The non-boss villain is unfightable. The reserve hero is shielded from enemy
+	# targeting (esp. archers' backline-seeking) until it's released into the melee.
+	if u.is_villain and not _villain_boss:
+		return true
+	return u == _hero_unit and u.holding
 
 # The villain bails when it would be fought (it's the frontmost-alive enemy), but
 # only in a normal battle; on the boss node it stands and fights.
@@ -1693,7 +1697,10 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 	stats["is_villain"] = card.get("villain", false)
 	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
 	u.setup(unit_id, team_id, pos, stats)
-	u.holding = true             # held until the front-vs-front controller engages the front
+	# All-at-once melee: troops + regular enemies engage immediately. The hero waits
+	# in reserve (released when it's the last player unit); the non-boss villain
+	# lurks (held + untargetable) until it flees. The boss villain fights normally.
+	u.holding = bool(card.get("hero", false)) or (bool(card.get("villain", false)) and not _villain_boss)
 	u.max_hp = int(round(float(u.max_hp) * hp_mult))
 	u.hp = u.max_hp
 	u.unit_name = "%s Lv %d" % [_unit_name(unit_id), int(card.get("level", 1))]
@@ -1741,31 +1748,45 @@ func _auto_target(delta: float) -> void:
 	if _ai_timer > 0.0:
 		return
 	_ai_timer = AI_RETARGET_PERIOD
-	# Branch B — front-vs-front: only each team's frontmost-alive unit fights;
-	# everyone else holds. When a front faints, the next in line steps up.
-	_front_engage(player_units, enemy_units)
-	_front_engage(enemy_units, player_units)
+	# All-at-once field melee: every un-held unit on both teams seeks the nearest
+	# targetable enemy and fights simultaneously. Release the reserve hero the
+	# moment it's the last player unit standing so the general fights its last stand.
+	if _hero_unit != null and is_instance_valid(_hero_unit) and _hero_unit.holding and _only_hero_left():
+		_hero_unit.holding = false
+	_assign_targets(player_units, enemy_units)
+	_assign_targets(enemy_units, player_units)
 
-# Frontmost still-alive unit of a team. Live arrays are kept in formation order
-# (index 0 = front) and compacted by _on_unit_died, so the first alive entry is
-# the current front.
+# Frontmost still-alive unit of a team (live arrays stay in formation order,
+# index 0 = front, compacted by _on_unit_died). Used by the villain-flee check.
 func _frontmost_alive(team: Array) -> RTUnit:
 	for u: RTUnit in team:
 		if is_instance_valid(u) and u.is_alive():
 			return u
 	return null
 
-func _front_engage(team: Array, foes: Array) -> void:
-	var front: RTUnit = _frontmost_alive(team)
-	var foe_front: RTUnit = _frontmost_alive(foes)
-	for u: RTUnit in team:
-		if not (is_instance_valid(u) and u.is_alive()):
+# True when no player unit other than the hero is still alive — the cue to release
+# the reserve hero into the fight.
+func _only_hero_left() -> bool:
+	for u: RTUnit in player_units:
+		if u == _hero_unit:
 			continue
-		if u == front and foe_front != null:
-			u.holding = false
-			u.order_attack(foe_front)
-		else:
-			u.holding = true
+		if is_instance_valid(u) and u.is_alive():
+			return false
+	return true
+
+# Assign every alive, un-held attacker to the nearest targetable enemy (archers
+# favour the backline via _nearest_enemy). Held units — the reserve hero, the
+# lurking villain — sit out and are skipped. An existing live attack order is kept
+# rather than thrashing every retarget tick.
+func _assign_targets(attackers: Array, defenders: Array) -> void:
+	for u: RTUnit in attackers:
+		if not (is_instance_valid(u) and u.is_alive()) or u.holding:
+			continue
+		if u.order == RTUnit.Order.ATTACK and u.attack_target != null and u.attack_target.is_alive():
+			continue
+		var nearest := _nearest_enemy(u, defenders)
+		if nearest != null:
+			u.order_attack(nearest)
 
 func _nearest_enemy(unit: RTUnit, defenders: Array) -> RTUnit:
 	if _unit_id_for(unit) == "archer":
