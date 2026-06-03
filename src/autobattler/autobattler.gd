@@ -439,8 +439,9 @@ func _rebuild_ui() -> void:
 					"trap": pc = Color(0.42, 0.26, 0.26)
 					"spell": pc = Color(0.36, 0.30, 0.44)
 					"aftermath": pc = Color(0.22, 0.26, 0.34)
-				_add_button("%s\n[%s]" % [String(cdef.get("name", _prep_draw[j])), cat],
+				var cbtn := _add_button("%s\n[%s]" % [String(cdef.get("name", _prep_draw[j])), cat],
 						Vector2(40.0 + float(j) * 200.0, 574.0), Vector2(180.0, 72.0), pc, Callable(self, "_on_prep_draw").bind(j), 13)
+				cbtn.tooltip_text = GameManager.card_effect_text(cdef)
 			_add_button("Fight", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_prep_fight)
 	elif phase == Phase.FIGHT:
 		var fight_text := "AUTO FIGHT"
@@ -1437,9 +1438,10 @@ func _build_campaign_victory_ui() -> void:
 		_add_label("Add a card to your deck", 15, Color(0.70, 0.84, 0.72), Vector2(270.0, 258.0), Vector2(540.0, 20.0))
 		for ci in range(_card_reward_offer.size()):
 			var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
-			_add_button(String(cd.get("name", _card_reward_offer[ci])),
+			var rbtn := _add_button(String(cd.get("name", _card_reward_offer[ci])),
 					Vector2(270.0 + float(ci) * 246.0, 284.0), Vector2(228.0, 54.0),
 					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
+			rbtn.tooltip_text = GameManager.card_effect_text(cd)
 		# Option B — a unit upgrade (pick, then assign). Only offered when troops
 		# survived; the hero isn't a roster unit, so a hero-only survival has nothing
 		# to upgrade and the card becomes the only reward.
@@ -1584,6 +1586,11 @@ func _start_duel_fight() -> void:
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
+	# Duels favour the hero by default — a loss ends the whole run, so it should be
+	# a rare upset, not a coin flip. (The "duel" sway aptitude stacks on top below.)
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * 1.7)))
+	hero_unit.hp = hero_unit.max_hp
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * 1.45)))
 	if GameManager.hero_sway_aptitude("duel") > 0:
 		hero_unit.max_hp = maxi(1, int(round(hero_unit.max_hp * 1.25)))
 		hero_unit.hp = hero_unit.max_hp
@@ -1598,7 +1605,7 @@ func _start_duel_fight() -> void:
 		hero_unit.call("_refresh_hp_bar")
 	player_units.append(hero_unit)
 	var recruit_pos := _formation_positions(1, 1)
-	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 1.0))
+	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 0.8))   # recruit is the underdog
 	phase = Phase.FIGHT
 	Music.play("battle")   # duels skip prep — straight to combat track
 	_fight_intro_timer = FIGHT_INTRO_SECONDS

@@ -647,6 +647,39 @@ func card_def(id: String) -> Dictionary:
 			return c
 	return {}
 
+# Human-readable one-line description of a card's effect, for tooltips/panels.
+func card_effect_text(cdef: Dictionary) -> String:
+	if cdef.is_empty():
+		return ""
+	var eff: Dictionary = cdef.get("effect", {})
+	var v: float = float(eff.get("value", 0))
+	var pct: String = "%+d%%" % int(round(v * 100.0))
+	var mag := ""
+	match String(eff.get("kind", "")):
+		"level":           mag = "+%d level (stronger stats)" % int(v)
+		"damage_pct":      mag = "%s attack damage" % pct
+		"hp_pct":          mag = "%s max HP" % pct
+		"cooldown_pct":    mag = "%s attack cooldown (attacks faster)" % pct
+		"ranged":          mag = "attacks at range"
+		"damage":          mag = "deal %d damage" % int(v)
+		"heal_pct":        mag = "heal %d%% of max HP" % int(round(v * 100.0))
+		"heal_full":       mag = "heal to full HP"
+		"team_damage_pct": mag = "the whole team gains %s damage" % pct
+		_:                 mag = String(eff.get("kind", ""))
+	match String(cdef.get("category", "")):
+		"equip":     return "Equip on one of your troops: %s." % mag
+		"spell":     return "Cast the moment the fight begins: %s to the front enemy." % mag
+		"trap":      return "Trap — when %s, %s." % [_card_trigger_text(String(cdef.get("trigger", ""))), mag]
+		"aftermath": return "After you win: %s, on a surviving troop." % mag
+	return mag
+
+func _card_trigger_text(trig: String) -> String:
+	match trig:
+		"combat_start":   return "the fight begins"
+		"troop_below_50": return "a troop drops below half HP"
+		"ally_death":     return "one of your units falls"
+	return trig
+
 # Rarity-weighted random pick from the pool (commons 3x, uncommon 2x, rare 1x).
 func _random_card_id(rng: RandomNumberGenerator) -> String:
 	var weighted: Array = []

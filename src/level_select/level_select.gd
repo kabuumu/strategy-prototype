@@ -529,28 +529,9 @@ func _w2s(world: Vector2) -> Vector2:
 # node reads at a glance (battle = crossed swords, elite = burst, shop = coin,
 # heal = cross, recruit = a figure).
 func _draw_node_icon(c: Vector2, type: String, visited: bool) -> void:
+	# Shared glyph routine so the map and the HUD legend never drift apart.
 	var w := Color(0.97, 0.97, 1.0, 0.40 if visited else 0.95)
-	var r := NODE_R * 0.55
-	match type:
-		"battle":
-			draw_line(c + Vector2(-r, -r), c + Vector2(r, r), w, 3.0)
-			draw_line(c + Vector2(-r, r), c + Vector2(r, -r), w, 3.0)
-		"elite_battle":
-			for k in range(4):
-				var a := float(k) * PI / 4.0
-				var d := Vector2(cos(a), sin(a)) * r
-				draw_line(c - d, c + d, w, 2.5)
-		"shop":
-			draw_arc(c, r, 0.0, TAU, 20, w, 3.0)
-			draw_string(ThemeDB.fallback_font, c + Vector2(-4.0, 5.0), "$", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, w)
-		"heal":
-			draw_line(c + Vector2(0.0, -r), c + Vector2(0.0, r), w, 4.0)
-			draw_line(c + Vector2(-r, 0.0), c + Vector2(r, 0.0), w, 4.0)
-		"gain_unit":
-			draw_circle(c + Vector2(0.0, -r * 0.45), r * 0.42, w)
-			draw_rect(Rect2(c + Vector2(-r * 0.55, r * 0.05), Vector2(r * 1.1, r * 0.8)), w)
-		_:
-			draw_circle(c, r * 0.5, w)
+	NodeIcon.draw_glyph(self, c, NODE_R * 0.55, type, w)
 
 # Bottom-left overview of the whole run: every node + connection scaled to fit,
 # with visited/current/reachable/selected markers and a box showing where the
@@ -836,15 +817,22 @@ func _build_hud() -> void:
 	_node_detail_label = UITheme.label("", 13, UITheme.TEXT, Vector2(18.0, 414.0), Vector2(292.0, 140.0))
 	side.add_child(_node_detail_label)
 
-	side.add_child(UITheme.label("Legend", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 562.0)))
-	var lx := 18.0
-	var ly := 584.0
-	for type_key: String in TYPE_COLORS.keys():
-		UITheme.chip(side, TYPE_LABELS[type_key], Vector2(lx, ly), TYPE_COLORS[type_key], 92.0)
-		lx += 100.0
-		if lx > 220.0:
-			lx = 18.0
-			ly += 30.0
+	# Legend — the actual node icon (shared with the map) + a plain-word label, two
+	# columns, so the key reads the same as what's drawn on the overworld.
+	side.add_child(UITheme.label("Legend", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 560.0)))
+	var legend: Array = [
+		["battle", "Battle"], ["elite_battle", "Elite boss"], ["gain_unit", "Recruit"],
+		["shop", "Shop"], ["heal", "Rest"], ["event", "Event"], ["treasure", "Loot"],
+	]
+	for k in range(legend.size()):
+		var et: String = String(legend[k][0])
+		var lx: float = 18.0 + float(k % 2) * 148.0
+		var ly: float = 580.0 + float(k / 2) * 24.0
+		var ni := NodeIcon.new(et, TYPE_COLORS.get(et, Color.GRAY))
+		ni.position = Vector2(lx, ly)
+		side.add_child(ni)
+		side.add_child(UITheme.label(String(legend[k][1]), 12, Color(0.80, 0.84, 0.90),
+				Vector2(lx + 28.0, ly + 3.0), Vector2(116.0, 18.0)))
 
 # ---------------------------------------------------------------------------
 # Refresh state
