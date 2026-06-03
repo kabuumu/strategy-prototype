@@ -189,7 +189,7 @@ const HEROES: Dictionary = {
 	"knight_captain": {
 		"name": "Knight-Captain",
 		"blurb": "A frontline commander — joins the fight as a tough soldier.",
-		"sprite_key": "soldier",
+		"sprite_key": "knight_captain",
 		"fight_archetype": "soldier",
 		"fight_level": 3,
 		"buff": {"id": "aegis", "name": "Aegis", "desc": "Team +15% max HP", "cost": 4},
@@ -199,7 +199,7 @@ const HEROES: Dictionary = {
 	"bard": {
 		"name": "Bard",
 		"blurb": "A silver tongue — weak in a brawl, but inspires the army.",
-		"sprite_key": "scout",
+		"sprite_key": "bard",
 		"fight_archetype": "scout",
 		"fight_level": 1,
 		"buff": {"id": "march", "name": "Marching Song", "desc": "Team +15% damage", "cost": 4},
@@ -209,7 +209,7 @@ const HEROES: Dictionary = {
 	"merchant_prince": {
 		"name": "Merchant-Prince",
 		"blurb": "Coin opens doors — starts richer and buys loyalty cheaply.",
-		"sprite_key": "healer",
+		"sprite_key": "merchant_prince",
 		"fight_archetype": "healer",
 		"fight_level": 2,
 		"buff": {"id": "warchest", "name": "War Chest", "desc": "Heal team 25%", "cost": 3},
@@ -220,7 +220,7 @@ const HEROES: Dictionary = {
 	"warden": {
 		"name": "Warden",
 		"blurb": "An unbreakable shield — soaks hits so the army survives.",
-		"sprite_key": "healer",
+		"sprite_key": "warden",
 		"fight_archetype": "healer",
 		"fight_level": 3,
 		"buff": {"id": "aegis", "name": "Bulwark", "desc": "Team +15% max HP", "cost": 3},
@@ -230,7 +230,7 @@ const HEROES: Dictionary = {
 	"trickster": {
 		"name": "Trickster",
 		"blurb": "Fast and cunning — talks circles around recruits.",
-		"sprite_key": "scout",
+		"sprite_key": "trickster",
 		"fight_archetype": "scout",
 		"fight_level": 2,
 		"buff": {"id": "march", "name": "Feint", "desc": "Team +15% damage", "cost": 4},
@@ -240,7 +240,7 @@ const HEROES: Dictionary = {
 	"templar": {
 		"name": "Templar",
 		"blurb": "A holy duelist — strong alone, steadies the line.",
-		"sprite_key": "archer",
+		"sprite_key": "templar",
 		"fight_archetype": "archer",
 		"fight_level": 3,
 		"buff": {"id": "warchest", "name": "Benediction", "desc": "Heal team 25%", "cost": 4},

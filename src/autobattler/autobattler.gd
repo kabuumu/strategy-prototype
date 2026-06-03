@@ -166,8 +166,12 @@ func _ready() -> void:
 	_refresh_enemy_preview()
 	_rebuild_ui()
 
+var _hover_unit: RTUnit = null   # unit under the cursor (stat tooltip in PREP/FIGHT)
+
 func _process(delta: float) -> void:
 	_age_feedback(delta)
+	if phase == Phase.PREP or phase == Phase.FIGHT:
+		_update_hover()
 	if phase != Phase.FIGHT:
 		queue_redraw()
 		return
@@ -222,18 +226,21 @@ func _draw() -> void:
 			Vector2(FIELD_RECT.get_center().x, FIELD_RECT.end.y), Color(0.90, 0.85, 0.45, 0.22), 2.0)
 	if phase == Phase.FIGHT and _fight_intro_timer > 0.0:
 		draw_rect(FIELD_RECT, Color(0.02, 0.03, 0.04, 0.22))
-	for i in range(TEAM_SIZE):
-		var slot_rect := Rect2(_slot_pos(i), _slot_size())
-		var slot_color := Color(0.10, 0.12, 0.16)
-		if selected_slot == i:
-			slot_color = Color(0.26, 0.36, 0.30)
-		draw_rect(slot_rect, slot_color, false, 2.0)
-	for i in range(SHOP_SIZE):
-		var shop_rect := Rect2(_shop_pos(i), _shop_size())
-		var shop_color := Color(0.14, 0.12, 0.16)
-		if selected_shop == i:
-			shop_color = Color(0.26, 0.22, 0.34)
-		draw_rect(shop_rect, shop_color, false, 2.0)
+	# The hotbar + shop slot outlines belong to the quick-battle SHOP only — drawing
+	# them in PREP/RESULT/REWARD leaves empty boxes bleeding under those screens.
+	if phase == Phase.SHOP:
+		for i in range(TEAM_SIZE):
+			var slot_rect := Rect2(_slot_pos(i), _slot_size())
+			var slot_color := Color(0.10, 0.12, 0.16)
+			if selected_slot == i:
+				slot_color = Color(0.26, 0.36, 0.30)
+			draw_rect(slot_rect, slot_color, false, 2.0)
+		for i in range(SHOP_SIZE):
+			var shop_rect := Rect2(_shop_pos(i), _shop_size())
+			var shop_color := Color(0.14, 0.12, 0.16)
+			if selected_shop == i:
+				shop_color = Color(0.26, 0.22, 0.34)
+			draw_rect(shop_rect, shop_color, false, 2.0)
 	for fx: Dictionary in _feedback:
 		var t: float = clamp(1.0 - float(fx.get("age", 0.0)) / float(fx.get("life", FEEDBACK_LIFETIME)), 0.0, 1.0)
 		var color: Color = fx.get("color", UITheme.GOLD)
@@ -243,6 +250,55 @@ func _draw() -> void:
 		if from != to:
 			draw_line(from, to, color, 3.0, true)
 		draw_circle(to, 8.0 + (1.0 - t) * 8.0, Color(color.r, color.g, color.b, color.a * 0.25))
+	if (phase == Phase.PREP or phase == Phase.FIGHT) \
+			and _hover_unit != null and is_instance_valid(_hover_unit) and _hover_unit.is_alive():
+		_draw_unit_tooltip(_hover_unit)
+
+# Track the unit under the cursor so PREP/FIGHT can show its stats on hover.
+func _update_hover() -> void:
+	var m := get_global_mouse_position()
+	var best: RTUnit = null
+	var best_d := 54.0
+	for u: RTUnit in player_units + enemy_units:
+		if not (is_instance_valid(u) and u.is_alive()):
+			continue
+		var d := m.distance_to(u.position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != _hover_unit:
+		_hover_unit = best
+		queue_redraw()
+
+# A small stats card above the hovered unit (enemy = red border, ally = blue).
+func _draw_unit_tooltip(u: RTUnit) -> void:
+	var font := ThemeDB.fallback_font
+	var is_enemy := enemy_units.has(u)
+	var lines: Array = [
+		u.unit_name,
+		"HP   %d / %d" % [maxi(0, u.hp), u.max_hp],
+		"ATK  %d  ·  every %.1fs" % [u.damage_per_attack, u.attack_cooldown],
+	]
+	var w := 150.0
+	for l: String in lines:
+		w = maxf(w, font.get_string_size(l, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 22.0)
+	var h := 16.0 + float(lines.size()) * 19.0
+	# Place the card to the side of the regiment (toward open mid-field) so it does
+	# not sit under the unit's own sprites, which render above this canvas draw.
+	var anchor: Vector2
+	if is_enemy:
+		anchor = Vector2(u.position.x - w - 58.0, u.position.y - h * 0.5)
+	else:
+		anchor = Vector2(u.position.x + 58.0, u.position.y - h * 0.5)
+	anchor.x = clampf(anchor.x, 6.0, 1280.0 - w - 6.0)
+	anchor.y = clampf(anchor.y, 70.0, 720.0 - h - 6.0)
+	var border := Color(0.86, 0.36, 0.36) if is_enemy else Color(0.46, 0.70, 0.96)
+	draw_rect(Rect2(anchor, Vector2(w, h)), Color(0.05, 0.06, 0.09, 0.96))
+	draw_rect(Rect2(anchor, Vector2(w, h)), border, false, 1.5)
+	draw_string(font, anchor + Vector2(11.0, 17.0), String(lines[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+			Color(0.99, 0.82, 0.82) if is_enemy else Color(0.86, 0.92, 1.0))
+	draw_string(font, anchor + Vector2(11.0, 36.0), String(lines[1]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.86, 0.92, 0.86))
+	draw_string(font, anchor + Vector2(11.0, 55.0), String(lines[2]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.84, 0.88, 0.92))
 
 func _rebuild_ui() -> void:
 	for n: Node in _ui_nodes:
@@ -1055,6 +1111,7 @@ func _build_hero_card() -> Dictionary:
 	var hd := GameManager.hero_data()
 	return {
 		"id": String(hd["fight_archetype"]),
+		"sprite_key": String(hd.get("sprite_key", hd["fight_archetype"])),
 		"level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(),
 		"xp": 0, "hero": true,
 	}
@@ -1298,16 +1355,23 @@ func _build_campaign_victory_ui() -> void:
 			_add_button(String(cd.get("name", _card_reward_offer[ci])),
 					Vector2(270.0 + float(ci) * 246.0, 284.0), Vector2(228.0, 54.0),
 					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
-		_center_label("— or —", 14, UITheme.TEXT_MUTED, 354.0)
-		# Option B — a unit upgrade (pick, then assign).
+		# Option B — a unit upgrade (pick, then assign). Only offered when troops
+		# survived; the hero isn't a roster unit, so a hero-only survival has nothing
+		# to upgrade and the card becomes the only reward.
+		var can_upgrade: bool = not GameManager.player_roster.is_empty()
 		_add_label("Upgrade a unit", 15, Color(0.84, 0.78, 0.62), Vector2(270.0, 384.0), Vector2(540.0, 20.0))
-		for i in range(_upgrade_offer.size()):
-			var uid := String(_upgrade_offer[i])
-			var data: Dictionary = GameManager.UPGRADE_TYPES[uid]
-			var ub := _add_button("%s\n%s" % [String(data["name"]), String(data["desc"])],
-					Vector2(270.0 + float(i) * 246.0, 410.0), Vector2(228.0, 92.0),
-					Color(data["color"]).darkened(0.35), Callable(self, "_on_pick_upgrade").bind(i), 13)
-			ub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		if can_upgrade:
+			_center_label("— or —", 14, UITheme.TEXT_MUTED, 354.0)
+			for i in range(_upgrade_offer.size()):
+				var uid := String(_upgrade_offer[i])
+				var data: Dictionary = GameManager.UPGRADE_TYPES[uid]
+				var ub := _add_button("%s\n%s" % [String(data["name"]), String(data["desc"])],
+						Vector2(270.0 + float(i) * 246.0, 410.0), Vector2(228.0, 92.0),
+						Color(data["color"]).darkened(0.35), Callable(self, "_on_pick_upgrade").bind(i), 13)
+				ub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		else:
+			_add_label("(no surviving troops to upgrade — take the card)", 13, UITheme.TEXT_MUTED,
+					Vector2(270.0, 412.0), Vector2(540.0, 20.0))
 
 	_add_button("Continue", Vector2(560.0, 638.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue, 18)
 
@@ -1429,8 +1493,7 @@ func _start_duel_fight() -> void:
 	_last_recap.clear()
 	var hero_card: Dictionary
 	if GameManager.has_hero():
-		var hd := GameManager.hero_data()
-		hero_card = {"id": String(hd["fight_archetype"]), "level": int(hd["fight_level"]) + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true}
+		hero_card = _build_hero_card()
 	else:
 		hero_card = {"id": "soldier", "level": 1 + GameManager.hero_tree_bonus_level(), "xp": 0, "hero": true}
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
@@ -1474,6 +1537,8 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 	add_child(u)
 	var unit_id := _card_id(card)
 	var stats: Dictionary = UNIT_TYPES[unit_id].duplicate(true)
+	if card.has("sprite_key"):
+		stats["sprite_key"] = String(card["sprite_key"])   # hero uses its own sprite
 	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
 	# Front-vs-front: a cosmetic squad of 10 sprites that cull one per ~10% HP

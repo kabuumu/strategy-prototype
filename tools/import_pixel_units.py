@@ -46,6 +46,18 @@ CLASS_TILE = {
     "juggernaut": 110,   # red heavy-armoured brute — tank
 }
 
+# hero id -> tile index. Distinct character tiles so a hero never looks like one
+# of the line troops (which use CLASS_TILE). Output <hero>_player/enemy.png, with a
+# gold grounding ring marking it as a leader.
+HERO_TILE = {
+    "knight_captain":  97,   # blue-tabard knight    — frontline commander
+    "bard":            100,  # flowing-hair figure   — silver tongue
+    "merchant_prince": 111,  # bearded sage/merchant — coin
+    "warden":          88,   # hooded druid-guardian
+    "trickster":       85,   # nimble adventurer     — rogue
+    "templar":         86,   # bald paladin/monk     — holy duelist
+}
+
 # Enemy recolour: blend toward crimson while preserving the sprite's detail
 # (a luminance-keeping lerp reads far cleaner than a flat multiply).
 ENEMY_CRIMSON = (196, 44, 44)
@@ -76,7 +88,7 @@ def _blend_enemy(tile: Image.Image) -> Image.Image:
     return out
 
 
-def _emit(tile: Image.Image, path: str) -> None:
+def _emit(tile: Image.Image, path: str, hero: bool = False) -> None:
     big = tile.resize((TILE * SCALE, TILE * SCALE), Image.NEAREST)
     size = TILE * SCALE
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -85,6 +97,13 @@ def _emit(tile: Image.Image, path: str) -> None:
     sd = ImageDraw.Draw(shadow)
     sd.ellipse([size * 0.22, size * 0.80, size * 0.78, size * 0.96], fill=(0, 0, 0, 90))
     canvas.alpha_composite(shadow)
+    if hero:
+        # Gold leader ring around the feet so a hero reads as special at a glance.
+        ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring)
+        rd.ellipse([size * 0.16, size * 0.78, size * 0.84, size * 0.98],
+                   outline=(245, 205, 70, 235), width=2)
+        canvas.alpha_composite(ring)
     canvas.alpha_composite(big)
     canvas.save(path)
 
@@ -119,7 +138,12 @@ def main() -> None:
         _emit(tile, os.path.join(OUT, f"{cls}_player.png"))
         _emit(_blend_enemy(tile), os.path.join(OUT, f"{cls}_enemy.png"))
         print(f"  {cls:<11} <- tile {idx}")
-    print(f"wrote {len(CLASS_TILE) * 2} sprites to assets/units/")
+    for hid, idx in HERO_TILE.items():
+        tile = _tile(tilemap, idx)
+        _emit(tile, os.path.join(OUT, f"{hid}_player.png"), hero=True)
+        _emit(_blend_enemy(tile), os.path.join(OUT, f"{hid}_enemy.png"), hero=True)
+        print(f"  hero {hid:<16} <- tile {idx}")
+    print(f"wrote {(len(CLASS_TILE) + len(HERO_TILE)) * 2} sprites to assets/units/")
 
 
 if __name__ == "__main__":
