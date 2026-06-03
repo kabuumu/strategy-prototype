@@ -303,6 +303,14 @@ func alive_soldier_count() -> int:
 			n += 1
 	return n
 
+# Damage one attack deals before the class-matchup multiplier. Flat units (hero,
+# villain, anything flagged flat_damage) always hit full; a regiment scales by the
+# fraction of its soldiers still alive, so a battered regiment hits weaker.
+func regiment_damage() -> int:
+	if flat_damage:
+		return damage_per_attack
+	return max(1, int(round(damage_per_attack * (float(alive_soldier_count()) / float(soldier_count)))))
+
 # How many soldier sprites should currently be alive given the remaining HP.
 func _expected_alive_count() -> int:
 	return int(ceil(float(hp) / float(hp_per_soldier)))
@@ -453,14 +461,9 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 		var dist: float = position.distance_to(attack_target.position)
 		if dist <= attack_range_px + attack_target.radius and _cooldown <= 0.0:
 			_cooldown = attack_cooldown
-			# Field melee: damage scales with how many soldiers remain (a battered
-			# regiment hits weaker). Front-vs-front (flat_damage): always full —
-			# the soldier sprites are cosmetic, culled per ~10% HP for the visual.
-			var scaled: int = damage_per_attack
-			if not flat_damage:
-				scaled = max(1, int(round(
-					damage_per_attack * (float(alive_soldier_count()) / float(soldier_count))
-				)))
+			# All-at-once melee: a battered regiment hits weaker (regiment_damage);
+			# flat units (hero/villain, single-sprite) always hit full.
+			var scaled: int = regiment_damage()
 			# Class triangle: a favourable matchup hits harder, an unfavourable one
 			# weaker (infantry > scout > archer > infantry; spearmen neutral).
 			scaled = max(1, int(round(float(scaled) * class_advantage(unit_type, attack_target.unit_type))))

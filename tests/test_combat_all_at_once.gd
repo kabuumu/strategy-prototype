@@ -75,3 +75,35 @@ func test_held_unit_does_nothing_on_tick(t) -> void:
 	var fired: Dictionary = u.tick(0.1, [])
 	t.eq(bool(fired.get("fired", false)), false, "held unit does not fire")
 	u.free()
+
+func test_wounded_regiment_hits_weaker(t) -> void:
+	var u := RTUnit.new()
+	(Engine.get_main_loop() as SceneTree).root.add_child(u)  # in-tree so cull tweens are legal
+	u.setup("soldier", 0, Vector2(100, 100), {
+		"name": "Soldier", "sprite_key": "soldier",
+		"soldier_count": 10, "hp_per_soldier": 12,
+		"damage_per_attack": 20, "attack_cooldown": 1.0,
+		"attack_range_px": 60.0, "move_speed_px": 60.0,
+		"flat_damage": false,
+	})
+	t.eq(u.regiment_damage(), 20, "full regiment hits full")
+	u.take_damage(72)   # 120 -> 48 hp, ~4/10 soldiers alive
+	t.ok(u.regiment_damage() < 20, "wounded regiment hits weaker")
+	t.ok(u.regiment_damage() >= 1, "damage never drops below 1")
+	u.free()
+
+func test_flat_unit_always_hits_full(t) -> void:
+	var u := RTUnit.new()
+	(Engine.get_main_loop() as SceneTree).root.add_child(u)
+	u.setup("soldier", 0, Vector2(100, 100), {
+		"name": "Hero", "sprite_key": "soldier", "is_hero": true,
+		"soldier_count": 10, "hp_per_soldier": 12,
+		"damage_per_attack": 20, "attack_cooldown": 1.0,
+		"attack_range_px": 60.0, "move_speed_px": 60.0,
+		"flat_damage": false,
+	})
+	t.eq(u.soldier_count, 1, "hero collapses to a single sprite")
+	t.eq(u.regiment_damage(), 20, "hero hits full")
+	u.take_damage(60)
+	t.eq(u.regiment_damage(), 20, "single-sprite hero still hits full when wounded")
+	u.free()

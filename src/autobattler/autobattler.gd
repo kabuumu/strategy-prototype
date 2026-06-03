@@ -1684,9 +1684,11 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 		stats["sprite_key"] = String(card["sprite_key"])   # hero uses its own sprite
 	var card_stats := _card_stats(card, synergy_counts)
 	stats["damage_per_attack"] = card_stats["damage"]
-	# Front-vs-front: a cosmetic squad of 10 sprites that cull one per ~10% HP
-	# lost (keeps the little-army animation), but combat HP is a single pool and
-	# the sprite count does NOT scale damage (see flat_damage below).
+	# A cosmetic squad of 10 sprites that cull one per ~10% HP lost (the little-army
+	# animation). Combat HP is a single pool; under the all-at-once melee, damage
+	# scales with the surviving-soldier fraction (RTUnit.regiment_damage), so a
+	# battered regiment hits weaker. Hero/villain are single-sprite (soldier_count
+	# forced to 1 in RTUnit), so their ratio is always 1.0 — they keep hitting full.
 	stats["soldier_count"] = 10
 	stats["hp_per_soldier"] = max(1, int(ceil(float(card_stats["hp"]) / 10.0)))
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
@@ -1695,7 +1697,7 @@ func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, s
 		stats["move_speed_px"] = float(stats.get("move_speed_px", 60.0)) + 12.0
 	stats["is_hero"] = card.get("hero", false)
 	stats["is_villain"] = card.get("villain", false)
-	stats["flat_damage"] = true  # Branch B: front-vs-front — a wounded unit still hits full
+	stats["flat_damage"] = false  # all-at-once melee: wounded regiments hit weaker
 	u.setup(unit_id, team_id, pos, stats)
 	# All-at-once melee: troops + regular enemies engage immediately. The hero waits
 	# in reserve (released when it's the last player unit); the non-boss villain
