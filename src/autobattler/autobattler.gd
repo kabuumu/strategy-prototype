@@ -1530,6 +1530,14 @@ func _conclude_campaign(win: bool) -> void:
 				var entry = st.get("roster_entry", null)
 				if entry != null:
 					survivors.append(entry)
+		# Benched troops (in the pool but not deployed) never fought, so they carry
+		# forward to the next battle's pool — only DEPLOYED units that fell are
+		# permakilled.
+		for i in range(_pool.size()):
+			if i < _lineup_sel.size() and not bool(_lineup_sel[i]):
+				var benched = _pool[i].get("entry", null)
+				if benched != null:
+					survivors.append(benched)
 		# Aftermath cards in hand auto-resolve on the survivors (Spec B): a
 		# "level" card promotes a survivor's roster entry. (v1 auto; a chooser
 		# is a later refinement.)
@@ -1586,11 +1594,11 @@ func _start_duel_fight() -> void:
 	var recruit_card := _campaign_card(GameManager.duel_recruit_type)
 	var hero_pos := _formation_positions(1, 0)
 	var hero_unit := _spawn_unit(hero_card, 0, hero_pos[0], 1.0)
-	# Duels favour the hero by default — a loss ends the whole run, so it should be
-	# a rare upset, not a coin flip. (The "duel" sway aptitude stacks on top below.)
-	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * 1.7)))
+	# Modest baseline edge for the hero (the "duel" sway aptitude + the skill tree
+	# stack on top). Early duels are easy; later ones lean on hero investment.
+	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * 1.4)))
 	hero_unit.hp = hero_unit.max_hp
-	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * 1.45)))
+	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * 1.25)))
 	if GameManager.hero_sway_aptitude("duel") > 0:
 		hero_unit.max_hp = maxi(1, int(round(hero_unit.max_hp * 1.25)))
 		hero_unit.hp = hero_unit.max_hp
@@ -1605,7 +1613,13 @@ func _start_duel_fight() -> void:
 		hero_unit.call("_refresh_hp_bar")
 	player_units.append(hero_unit)
 	var recruit_pos := _formation_positions(1, 1)
-	enemy_units.append(_spawn_unit(recruit_card, 1, recruit_pos[0], 0.8))   # recruit is the underdog
+	# Recruit power scales with how deep the run is: the first couple of nodes are
+	# ~always winnable, then duels get tough unless the hero is leveled/buffed via
+	# the skill tree. By the late run an un-invested hero will actually lose.
+	var recruit_mult := 0.6 + float(GameManager.current_tier) * 0.2
+	var rec := _spawn_unit(recruit_card, 1, recruit_pos[0], recruit_mult)
+	rec.damage_per_attack = maxi(1, int(round(float(rec.damage_per_attack) * recruit_mult)))
+	enemy_units.append(rec)
 	phase = Phase.FIGHT
 	Music.play("battle")   # duels skip prep — straight to combat track
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
