@@ -80,7 +80,7 @@ const UNIT_TYPES: Dictionary = {
 		"enrage_move_bonus": 1,
 		"enrage_range_bonus": 0,
 	},
-	"healer": {
+	"spearmen": {
 		"name": "Healer",
 		"max_hp": 65,
 		"move_range": 3,
@@ -156,7 +156,7 @@ const HEAL_ABILITY_AMOUNT: int = 35
 # Action points per class per turn. A unit spends 1 AP per move, attack, or
 # ability, and may act in any order until its AP runs out. Scouts get an extra.
 const UNIT_AP: Dictionary = {
-	"soldier": 2, "archer": 2, "scout": 3, "healer": 2,
+	"soldier": 2, "archer": 2, "scout": 3, "spearmen": 2,
 	"warlord": 3, "pyromancer": 2, "juggernaut": 2,
 	"knight": 3, "mage": 2, "guardian": 2, "berserker": 3, "marksman": 2,
 }
@@ -170,7 +170,7 @@ func recruitable_types() -> Array[String]:
 	# sprite + an autobattler stat block + a clear role); advanced/boss types are
 	# enemy-only flavour. Recruiting one of these means it shows up as itself in the
 	# battle pool, not flattened to a generic soldier.
-	return ["soldier", "archer", "scout", "healer"] as Array[String]
+	return ["soldier", "archer", "scout", "spearmen"] as Array[String]
 
 # ---------------------------------------------------------------------------
 # Heroes — chosen at the start of a campaign on the character-select screen.
@@ -210,7 +210,7 @@ const HEROES: Dictionary = {
 		"name": "Merchant-Prince",
 		"blurb": "Coin opens doors — starts richer and buys loyalty cheaply.",
 		"sprite_key": "merchant_prince",
-		"fight_archetype": "healer",
+		"fight_archetype": "spearmen",
 		"fight_level": 2,
 		"buff": {"id": "warchest", "name": "War Chest", "desc": "Heal team 25%", "cost": 3},
 		"sway_aptitudes": {"dialogue": 0, "persuasion": 2, "duel": 0},
@@ -221,7 +221,7 @@ const HEROES: Dictionary = {
 		"name": "Warden",
 		"blurb": "An unbreakable shield — soaks hits so the army survives.",
 		"sprite_key": "warden",
-		"fight_archetype": "healer",
+		"fight_archetype": "spearmen",
 		"fight_level": 3,
 		"buff": {"id": "aegis", "name": "Bulwark", "desc": "Team +15% max HP", "cost": 3},
 		"sway_aptitudes": {"dialogue": 0, "persuasion": 1, "duel": 1},
@@ -1504,7 +1504,7 @@ func get_battle_enemy_roster(tier: int, elite: bool) -> Array[String]:
 	# Tougher unit types join the enemy pool as the run deepens, for variety.
 	var pool: Array[String] = ["soldier", "archer", "scout"]
 	if tier >= 2:
-		pool.append("healer")
+		pool.append("spearmen")
 		pool.append("knight")
 		pool.append("berserker")
 	if tier >= 3:
@@ -1701,7 +1701,7 @@ const EVENTS: Array = [
 	},
 	{
 		"title": "Field Hospital",
-		"text": "A camp of healers tends the wounded of both armies.",
+		"text": "A camp of spearmens tends the wounded of both armies.",
 		"choices": [
 			{"label": "Rest the party (heal fully)", "effect": {"heal_all": 9999}},
 			{"label": "Donate for a blessing (30g, +relic)", "cost": 30, "effect": {"add_relic": "random"}},

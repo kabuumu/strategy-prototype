@@ -307,6 +307,29 @@ func alive_soldier_count() -> int:
 func _expected_alive_count() -> int:
 	return int(ceil(float(hp) / float(hp_per_soldier)))
 
+# Class wheel (#strengths) — a four-way counter cycle. Internal keys map to the
+# in-game class names: soldier=Infantry, spearmen=Spearmen, scout=Cavalry,
+# archer=Archers. Infantry > Spearmen > Cavalry > Archers > Infantry.
+const _CLASS_BEATS := {"soldier": "spearmen", "spearmen": "scout", "scout": "archer", "archer": "soldier"}
+const _CLASS_NAME := {"soldier": "Infantry", "spearmen": "Spearmen", "scout": "Cavalry", "archer": "Archers"}
+static func class_advantage(atk_type: String, def_type: String) -> float:
+	if String(_CLASS_BEATS.get(atk_type, "")) == def_type:
+		return 1.5   # strong against
+	if String(_CLASS_BEATS.get(def_type, "")) == atk_type:
+		return 0.7   # weak against
+	return 1.0
+
+# "Strong vs Spearmen · Weak vs Archers" for the stat tooltip.
+static func class_matchup_text(t: String) -> String:
+	if not _CLASS_BEATS.has(t):
+		return ""
+	var beats := String(_CLASS_NAME.get(String(_CLASS_BEATS[t]), ""))
+	var weak := ""
+	for k in _CLASS_BEATS:
+		if String(_CLASS_BEATS[k]) == t:
+			weak = String(_CLASS_NAME.get(k, ""))
+	return "Strong vs %s · Weak vs %s" % [beats, weak]
+
 func take_damage(amount: int) -> void:
 	if hp <= 0:
 		return
@@ -438,6 +461,9 @@ func tick(delta: float, neighbours: Array) -> Dictionary:
 				scaled = max(1, int(round(
 					damage_per_attack * (float(alive_soldier_count()) / float(soldier_count))
 				)))
+			# Class triangle: a favourable matchup hits harder, an unfavourable one
+			# weaker (infantry > scout > archer > infantry; spearmen neutral).
+			scaled = max(1, int(round(float(scaled) * class_advantage(unit_type, attack_target.unit_type))))
 			attack_target.take_damage(scaled)
 			_play_attack_animation(attack_target)
 			fired = {"fired": true, "target": attack_target, "ranged": is_ranged}

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dss5vnf08i7st"
-path="res://.godot/imported/healer_enemy.png-54fff2ba6d6a83cbf6011a0c19c28c05.ctex"
+uid="uid://g8qdv6lfvqr3"
+path="res://.godot/imported/spearmen_player.png-1ad8ebf8f23ae96c64bc9ee2bc9abcba.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/units/healer_enemy.png"
-dest_files=["res://.godot/imported/healer_enemy.png-54fff2ba6d6a83cbf6011a0c19c28c05.ctex"]
+source_file="res://assets/units/spearmen_player.png"
+dest_files=["res://.godot/imported/spearmen_player.png-1ad8ebf8f23ae96c64bc9ee2bc9abcba.ctex"]
 
 [params]
 

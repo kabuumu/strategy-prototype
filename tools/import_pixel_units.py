@@ -40,7 +40,7 @@ CLASS_TILE = {
     "soldier":    96,    # full-helm knight        — line infantry
     "archer":     112,   # green-headband ranger   — bow
     "scout":      98,    # light brown-tunic man   — fast skirmisher
-    "healer":     84,    # purple-robed wizard      — support caster
+    "spearmen":     84,    # purple-robed wizard      — support caster
     "pyromancer": 99,    # robed mage              — offensive caster
     "warlord":    87,    # horned-helm veteran     — commander
     "juggernaut": 110,   # red heavy-armoured brute — tank

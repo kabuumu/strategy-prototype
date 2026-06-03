@@ -70,10 +70,10 @@ const UNIT_TYPES: Dictionary = {
 		"attack_range_px": 58.0,
 		"move_speed_px": 96.0,
 	},
-	"healer": {
+	"spearmen": {
 		"name": "Spearmen",
 		"role": "Reach and bulk",
-		"sprite_key": "healer",
+		"sprite_key": "spearmen",
 		"soldier_count": 8,
 		"hp_per_soldier": 15,
 		"damage_per_attack": 9,
@@ -130,9 +130,9 @@ const HELP_BODY: String = "Auto-battler: build a team, then watch it fight on it
 # Campaign unit types are mapped onto the four auto-battler archetypes; the
 # advanced recruits / bosses fight as higher-level (stronger) cards.
 const CAMPAIGN_CARD_MAP: Dictionary = {
-	"soldier": "soldier", "archer": "archer", "scout": "scout", "healer": "healer",
-	"knight": "soldier", "guardian": "healer", "mage": "archer",
-	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "healer",
+	"soldier": "soldier", "archer": "archer", "scout": "scout", "spearmen": "spearmen",
+	"knight": "soldier", "guardian": "spearmen", "mage": "archer",
+	"warlord": "soldier", "pyromancer": "archer", "juggernaut": "spearmen",
 }
 const CAMPAIGN_CARD_LEVEL: Dictionary = {
 	"knight": 2, "guardian": 2, "mage": 2,
@@ -341,6 +341,9 @@ func _draw_unit_tooltip(u: RTUnit) -> void:
 		"HP   %d / %d" % [maxi(0, u.hp), u.max_hp],
 		"ATK  %d  ·  every %.1fs" % [u.damage_per_attack, u.attack_cooldown],
 	]
+	var matchup := RTUnit.class_matchup_text(u.unit_type)
+	if matchup != "":
+		lines.append(matchup)
 	var w := 150.0
 	for l: String in lines:
 		w = maxf(w, font.get_string_size(l, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 22.0)
@@ -359,8 +362,10 @@ func _draw_unit_tooltip(u: RTUnit) -> void:
 	draw_rect(Rect2(anchor, Vector2(w, h)), border, false, 1.5)
 	draw_string(font, anchor + Vector2(11.0, 17.0), String(lines[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
 			Color(0.99, 0.82, 0.82) if is_enemy else Color(0.86, 0.92, 1.0))
-	draw_string(font, anchor + Vector2(11.0, 36.0), String(lines[1]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.86, 0.92, 0.86))
-	draw_string(font, anchor + Vector2(11.0, 55.0), String(lines[2]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.84, 0.88, 0.92))
+	for i in range(1, lines.size()):
+		var lc := Color(0.92, 0.84, 0.55) if (matchup != "" and i == lines.size() - 1) else Color(0.85, 0.90, 0.90)
+		draw_string(font, anchor + Vector2(11.0, 17.0 + float(i) * 19.0), String(lines[i]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lc)
 
 func _rebuild_ui() -> void:
 	for n: Node in _ui_nodes:
@@ -1015,7 +1020,7 @@ func _active_synergy_names() -> Array:
 		out.append("2 Archers: ranged damage")
 	if int(counts.get("scout", 0)) >= 2:
 		out.append("2 Cavalry: charge damage")
-	if int(counts.get("healer", 0)) >= 2:
+	if int(counts.get("spearmen", 0)) >= 2:
 		out.append("2 Spearmen: team grit")
 	return out
 
@@ -1072,7 +1077,7 @@ func _card_stats(card: Dictionary, synergy_counts: Dictionary = {}) -> Dictionar
 		damage += 3
 	if synergy_counts.get("scout", 0) >= 2 and unit_id == "scout":
 		damage += 2
-	if synergy_counts.get("healer", 0) >= 2:
+	if synergy_counts.get("spearmen", 0) >= 2:
 		hp += 10
 	return {
 		"hp": hp,
@@ -1849,7 +1854,7 @@ func _tick_unit(unit: RTUnit, delta: float, all_units: Array) -> void:
 		return
 	var damage: int = max(0, hp_before - target.hp)
 	damage = _apply_infantry_shield(target, damage)
-	if _unit_id_for(unit) == "healer" and _unit_id_for(target) == "scout" and target.is_alive():
+	if _unit_id_for(unit) == "spearmen" and _unit_id_for(target) == "scout" and target.is_alive():
 		var bonus := 6 + int(_unit_level_for(unit)) * 3
 		var bonus_dealt := _deal_damage(unit, target, bonus, Color(0.72, 1.0, 0.56), "Spear")
 		damage += bonus_dealt
