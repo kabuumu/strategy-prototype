@@ -1258,9 +1258,9 @@ func _build_hero_card() -> Dictionary:
 # Spawn the chosen lineup (hero + chosen troops), apply mults + aura, then draw 3
 # cards for the play step.
 func _deploy_lineup() -> void:
-	# Chosen troops in player order (pool order), then the hero appended LAST so it
-	# engages last (front-vs-front steps up by array order) — the general fights
-	# only once its screen of troops has fallen.
+	# Chosen troops in player order (pool order) form the wedge front-to-back; the
+	# hero is appended LAST and held in reserve (untargetable) until its troops fall,
+	# then released — the general fights only once its screen of troops is gone.
 	var deploy_cards: Array = []
 	for i in range(_pool.size()):
 		if bool(_lineup_sel[i]):
@@ -1290,8 +1290,9 @@ func _deploy_lineup() -> void:
 	_rebuild_ui()
 
 # Player team start positions: `troop_count` troops in a forward defensive wedge
-# (front-of-order troop is the spearhead), then the hero centred well behind them.
-# Returns one Vector2 per deployed unit, troops first then the hero (if any).
+# (front-of-order troop is the spearhead, so PREP ordering = spatial placement —
+# front troops make contact first and tank while ranged troops stay back), then the
+# hero centred well behind them. One Vector2 per unit, troops first then the hero.
 func _player_deploy_positions(troop_count: int, has_hero: bool) -> Array:
 	var cy := FIELD_RECT.position.y + FIELD_RECT.size.y * 0.5
 	var front_x := 500.0
