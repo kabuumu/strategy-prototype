@@ -5,6 +5,8 @@ const RTUnit := preload("res://src/rtbattle/rt_unit.gd")
 
 const FIELD_RECT: Rect2 = Rect2(40.0, 72.0, 1200.0, 410.0)
 const TEAM_SIZE: int = 5
+const TITLE_SCENE := "res://src/title/title.tscn"
+const LEVEL_SELECT_SCENE := "res://src/level_select/level_select.tscn"
 const SHOP_SIZE: int = 3
 const BUY_COST: int = 3
 const ROLL_COST: int = 1
@@ -859,7 +861,7 @@ func _on_restart() -> void:
 	get_tree().reload_current_scene()
 
 func _on_menu() -> void:
-	get_tree().change_scene_to_file("res://src/title/title.tscn")
+	get_tree().change_scene_to_file(TITLE_SCENE)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
@@ -1246,10 +1248,7 @@ func _deploy_lineup() -> void:
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
 		if bool(deploy_cards[i].get("hero", false)):
-			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
-			u.hp = u.max_hp
-			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
-			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
+			_apply_hero_tree_mults(u)
 			_hero_unit = u
 		player_units.append(u)
 	if GameManager.has_hero():
@@ -1287,13 +1286,7 @@ func _begin_fight() -> void:
 	_armed_traps = rest
 	_below50_triggered = false
 	_prep_equip_id = ""
-	phase = Phase.FIGHT
-	Music.play("battle")
-	_fight_intro_timer = FIGHT_INTRO_SECONDS
-	_ai_timer = 0.0
-	_start_abilities_applied = false
-	_speed_scale = 2.0
-	_rebuild_ui()
+	_enter_fight_phase()
 
 func _on_prep_select(i: int) -> void:
 	if _prep_step != 0 or i < 0 or i >= _pool.size():
@@ -1586,7 +1579,7 @@ func _conclude_campaign(win: bool) -> void:
 	_rebuild_ui()
 
 func _on_campaign_continue() -> void:
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	get_tree().change_scene_to_file(LEVEL_SELECT_SCENE)
 
 # ---------------------------------------------------------------------------
 # Duel (sway recruiting — battle_mode "auto", pending_duel)
@@ -1615,12 +1608,7 @@ func _start_duel_fight() -> void:
 		hero_unit.damage_per_attack = maxi(1, int(round(hero_unit.damage_per_attack * 1.25)))
 		if hero_unit.has_method("_refresh_hp_bar"):
 			hero_unit.call("_refresh_hp_bar")
-	hero_unit.max_hp = maxi(1, int(round(float(hero_unit.max_hp) * GameManager.hero_hp_mult_tree())))
-	hero_unit.hp = hero_unit.max_hp
-	hero_unit.damage_per_attack = maxi(1, int(round(float(hero_unit.damage_per_attack) * GameManager.hero_damage_mult_tree())))
-	hero_unit.attack_cooldown = maxf(0.2, hero_unit.attack_cooldown * GameManager.hero_attack_cooldown_mult())
-	if hero_unit.has_method("_refresh_hp_bar"):
-		hero_unit.call("_refresh_hp_bar")
+	_apply_hero_tree_mults(hero_unit)
 	player_units.append(hero_unit)
 	var recruit_pos := _formation_positions(1, 1)
 	# Recruit power scales with how deep the run is: the first couple of nodes are
@@ -1630,13 +1618,7 @@ func _start_duel_fight() -> void:
 	var rec := _spawn_unit(recruit_card, 1, recruit_pos[0], recruit_mult)
 	rec.damage_per_attack = maxi(1, int(round(float(rec.damage_per_attack) * recruit_mult)))
 	enemy_units.append(rec)
-	phase = Phase.FIGHT
-	Music.play("battle")   # duels skip prep — straight to combat track
-	_fight_intro_timer = FIGHT_INTRO_SECONDS
-	_ai_timer = 0.0
-	_start_abilities_applied = false
-	_speed_scale = 2.0
-	_rebuild_ui()
+	_enter_fight_phase()   # duels skip prep — straight to combat
 
 func _conclude_duel(hero_alive: bool, recruit_alive: bool) -> void:
 	var won := hero_alive and not recruit_alive
@@ -1656,7 +1638,7 @@ func _conclude_duel(hero_alive: bool, recruit_alive: bool) -> void:
 	_rebuild_ui()
 
 func _on_duel_continue() -> void:
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	get_tree().change_scene_to_file(LEVEL_SELECT_SCENE)
 
 # ---------------------------------------------------------------------------
 # Pit (roster-cap): a new recruit (team 1) duels one chosen roster unit (team 0)
@@ -1677,13 +1659,7 @@ func _start_pit_fight() -> void:
 	var recruit_card := _campaign_card(GameManager.pit_recruit_type)
 	player_units.append(_spawn_unit(def_card, 0, _formation_positions(1, 0)[0], 1.0))
 	enemy_units.append(_spawn_unit(recruit_card, 1, _formation_positions(1, 1)[0], 1.0))
-	phase = Phase.FIGHT
-	Music.play("battle")
-	_fight_intro_timer = FIGHT_INTRO_SECONDS
-	_ai_timer = 0.0
-	_start_abilities_applied = false
-	_speed_scale = 2.0
-	_rebuild_ui()
+	_enter_fight_phase()
 
 func _conclude_pit(defender_won: bool) -> void:
 	GameManager.pit_outcome = 0 if defender_won else 1
@@ -1693,7 +1669,7 @@ func _conclude_pit(defender_won: bool) -> void:
 	_rebuild_ui()
 
 func _on_pit_continue() -> void:
-	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+	get_tree().change_scene_to_file(LEVEL_SELECT_SCENE)
 
 func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
 	var u: RTUnit = RTUnit.new()
@@ -2030,6 +2006,25 @@ func _reset_battle_state() -> void:
 	_unit_state.clear()
 	_feedback.clear()
 	_last_recap.clear()
+
+# Shared FIGHT-start epilogue (campaign / duel / pit): start the fight at 2x.
+func _enter_fight_phase() -> void:
+	phase = Phase.FIGHT
+	Music.play("battle")
+	_fight_intro_timer = FIGHT_INTRO_SECONDS
+	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 2.0
+	_rebuild_ui()
+
+# Scale a spawned hero unit by its permanent skill tree (HP / damage / cooldown).
+func _apply_hero_tree_mults(u: RTUnit) -> void:
+	u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
+	u.hp = u.max_hp
+	u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
+	u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
+	if u.has_method("_refresh_hp_bar"):
+		u.call("_refresh_hp_bar")
 
 func _clear_units() -> void:
 	for u: RTUnit in player_units:

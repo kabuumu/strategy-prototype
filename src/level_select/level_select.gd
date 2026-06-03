@@ -1,6 +1,9 @@
 extends Node2D
 
 const UITheme := preload("res://src/ui/ui_theme.gd")
+const TITLE_SCENE := "res://src/title/title.tscn"
+const AUTOBATTLER_SCENE := "res://src/autobattler/autobattler.tscn"
+const LEVEL_SELECT_SCENE := "res://src/level_select/level_select.tscn"
 
 # ---------------------------------------------------------------------------
 # Layout constants
@@ -157,7 +160,7 @@ func _ready() -> void:
 func _on_exit_to_menu() -> void:
 	if GameManager.current_tier < GameManager.MAP_TIERS:
 		GameManager.save_run()   # keep the run resumable
-	get_tree().change_scene_to_file("res://src/title/title.tscn")
+	get_tree().change_scene_to_file(TITLE_SCENE)
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Mouse/touch: drag pans the camera; a press-release without a drag clicks a
@@ -232,25 +235,27 @@ func _try_click_travel(screen_pos: Vector2) -> void:
 # Click/tap a reachable node on the bottom-left minimap to travel (Spec C).
 # Returns true if the click was inside the minimap (consumed), so the main-map
 # hit-test is skipped.
-func _try_minimap_travel(pos: Vector2) -> bool:
+# Shared minimap node position (drawn AND click-hit-tested via this, so they can't
+# drift apart). Derives the layout from MINIMAP_RECT.
+func _minimap_node_pos(tier: int, idx: int) -> Vector2:
 	var rect := MINIMAP_RECT
-	if not rect.has_point(pos):
-		return false
-	if _input_blocked() or _nav != Nav.AT_NODE:
-		return true
 	var last: int = maxi(1, GameManager.MAP_TIERS - 1)
 	var inner_x: float = rect.position.x + 20.0
 	var inner_w: float = rect.size.x - 32.0
 	var cy: float = rect.position.y + rect.size.y * 0.58
 	var lane: float = minf(16.0, (rect.size.y * 0.5 - 14.0) / 2.5)
+	var count: int = GameManager.map_data[tier].size()
+	return Vector2(inner_x + (float(tier) / float(last)) * inner_w,
+			cy + (float(idx) - float(count - 1) * 0.5) * lane)
+
+func _try_minimap_travel(pos: Vector2) -> bool:
+	if not MINIMAP_RECT.has_point(pos):
+		return false
+	if _input_blocked() or _nav != Nav.AT_NODE:
+		return true
 	for k in range(_targets.size()):
 		var tgt: Dictionary = _targets[k]
-		var tier: int = int(tgt["tier"])
-		var idx: int = int(tgt["index"])
-		var count: int = GameManager.map_data[tier].size()
-		var mp := Vector2(inner_x + (float(tier) / float(last)) * inner_w,
-				cy + (float(idx) - float(count - 1) * 0.5) * lane)
-		if pos.distance_to(mp) <= 8.0:
+		if pos.distance_to(_minimap_node_pos(int(tgt["tier"]), int(tgt["index"]))) <= 8.0:
 			_sel = k
 			_begin_travel(true)
 			return true
@@ -504,23 +509,15 @@ func _draw_minimap() -> void:
 	draw_rect(rect, Color(0.30, 0.32, 0.44, 0.9), false, 1.0)
 	draw_string(font, rect.position + Vector2(8.0, 16.0), "Map", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.60, 0.63, 0.72))
 
-	var last: int = maxi(1, GameManager.MAP_TIERS - 1)
 	var inner_x: float = rect.position.x + 20.0
 	var inner_w: float = rect.size.x - 32.0
-	var cy: float = rect.position.y + rect.size.y * 0.58
-	var lane: float = minf(16.0, (rect.size.y * 0.5 - 14.0) / 2.5)
-	var mm := func(tier: int, idx: int) -> Vector2:
-		var count: int = GameManager.map_data[tier].size()
-		return Vector2(
-			inner_x + (float(tier) / float(last)) * inner_w,
-			cy + (float(idx) - float(count - 1) * 0.5) * lane)
 
 	# Connections.
 	for tier in range(GameManager.MAP_TIERS - 1):
 		for i in range(GameManager.map_data[tier].size()):
-			var a: Vector2 = mm.call(tier, i)
+			var a: Vector2 = _minimap_node_pos(tier, i)
 			for j in GameManager.map_data[tier][i]["connections"]:
-				draw_line(a, mm.call(tier + 1, int(j)), Color(0.32, 0.34, 0.46, 0.5), 1.0)
+				draw_line(a, _minimap_node_pos(tier + 1, int(j)), Color(0.32, 0.34, 0.46, 0.5), 1.0)
 
 	# Camera viewport indicator (which slice of the world is on screen).
 	var vx0: float = inner_x + (_cam_x / maxf(1.0, _world_w)) * inner_w
@@ -537,7 +534,7 @@ func _draw_minimap() -> void:
 			var col: Color = TYPE_COLORS.get(nd["type"], Color.GRAY)
 			if bool(nd.get("visited", false)):
 				col = col.darkened(0.5)
-			var p: Vector2 = mm.call(tier, i)
+			var p: Vector2 = _minimap_node_pos(tier, i)
 			draw_circle(p, 3.5, col)
 			if tier == GameManager.current_tier and i in reach:
 				draw_arc(p, 5.0 + pulse * 2.0, 0.0, TAU, 16, Color(0.95, 0.85, 0.35, 0.6), 1.5)
@@ -545,9 +542,9 @@ func _draw_minimap() -> void:
 	# Selected fork + current position.
 	if _nav == Nav.AT_NODE and _sel < _targets.size():
 		var t: Dictionary = _targets[_sel]
-		draw_arc(mm.call(int(t["tier"]), int(t["index"])), 6.0, 0.0, TAU, 16, Color(1.0, 1.0, 1.0, 0.9), 1.5)
+		draw_arc(_minimap_node_pos(int(t["tier"]), int(t["index"])), 6.0, 0.0, TAU, 16, Color(1.0, 1.0, 1.0, 0.9), 1.5)
 	if not _at_start:
-		draw_circle(mm.call(_cur_tier, _cur_index), 4.5, Color(0.95, 0.95, 1.0))
+		draw_circle(_minimap_node_pos(_cur_tier, _cur_index), 4.5, Color(0.95, 0.95, 1.0))
 
 # ---------------------------------------------------------------------------
 # World layout + navigation
@@ -911,7 +908,7 @@ func _launch_autobattle(tier: int, elite: bool) -> void:
 	GameManager.pending_battle_tier  = tier
 	GameManager.pending_battle_elite = elite
 	GameManager.pending_autobattle = true
-	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+	get_tree().change_scene_to_file(AUTOBATTLER_SCENE)
 
 # ---------------------------------------------------------------------------
 # Recruitment popup (Phase 2) — "meet & sway". A gain_unit node offers 2-3
@@ -1011,7 +1008,7 @@ func _approach_candidate(tier: int, index: int, cand: Dictionary) -> void:
 			if _popup != null:
 				_popup.queue_free()
 				_popup = null
-			get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+			get_tree().change_scene_to_file(AUTOBATTLER_SCENE)
 
 # Swap the popup body for the dialogue sub-screen (keeps the same _popup panel).
 func _show_dialogue_resolver(cand: Dictionary) -> void:
@@ -1148,7 +1145,7 @@ func _on_pit_pick(type: String, defender_index: int) -> void:
 	if _popup != null:
 		_popup.queue_free()
 		_popup = null
-	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+	get_tree().change_scene_to_file(AUTOBATTLER_SCENE)
 
 func _on_pit_decline(type: String) -> void:
 	if _popup != null:
@@ -1396,6 +1393,6 @@ func _show_victory() -> void:
 	btn.add_theme_font_size_override("font_size", 20)
 	btn.pressed.connect(func() -> void:
 		GameManager.reset()
-		get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+		get_tree().change_scene_to_file(LEVEL_SELECT_SCENE)
 	)
 	panel.add_child(btn)
