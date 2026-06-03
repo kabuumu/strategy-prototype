@@ -19,6 +19,9 @@ const MARGIN_X: float = 120.0          # world x of tier 0
 const LANE_GAP: float = 104.0          # vertical gap between nodes in a tier
 const WALK_SPEED: float = 165.0        # px/sec the avatar travels along an edge
 const CENTER_Y: float = (PLAY_TOP + PLAY_BOTTOM) * 0.5
+# Bottom-left overview map. One source of truth shared by the renderer and the
+# click hit-test. Docked low so the tier-0 start nodes don't poke over its edge.
+const MINIMAP_RECT: Rect2 = Rect2(14.0, 558.0, 262.0, 122.0)
 
 enum Nav { AT_NODE, TRAVELING }
 var _nav: int = Nav.AT_NODE
@@ -341,7 +344,7 @@ func _try_click_travel(screen_pos: Vector2) -> void:
 # Returns true if the click was inside the minimap (consumed), so the main-map
 # hit-test is skipped.
 func _try_minimap_travel(pos: Vector2) -> bool:
-	var rect := Rect2(14.0, 498.0, 300.0, 184.0)
+	var rect := MINIMAP_RECT
 	if not rect.has_point(pos):
 		return false
 	if _input_blocked() or _nav != Nav.AT_NODE:
@@ -523,7 +526,7 @@ func _draw() -> void:
 					continue
 				var lit: bool = not _at_start and tier == _cur_tier and i == _cur_index \
 					and not sel_target.is_empty() and int(sel_target["tier"]) == tier + 1 and int(sel_target["index"]) == int(j)
-				draw_line(from, to, Color(0.95, 0.85, 0.40, 0.9) if lit else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit else 2.0)
+				draw_line(from, to, Color(0.95, 0.85, 0.40, 0.95) if lit else Color(0.44, 0.47, 0.62, 0.72), 3.5 if lit else 2.5)
 
 	# Path from the (virtual) start node to its targets.
 	if _at_start:
@@ -531,7 +534,7 @@ func _draw() -> void:
 		for tgt: Dictionary in _targets:
 			var sto := _w2s(_node_world_pos(int(tgt["tier"]), int(tgt["index"])))
 			var lit2: bool = not sel_target.is_empty() and tgt == sel_target
-			draw_line(sfrom, sto, Color(0.95, 0.85, 0.40, 0.9) if lit2 else Color(0.34, 0.36, 0.48, 0.55), 3.0 if lit2 else 2.0)
+			draw_line(sfrom, sto, Color(0.95, 0.85, 0.40, 0.95) if lit2 else Color(0.44, 0.47, 0.62, 0.72), 3.5 if lit2 else 2.5)
 
 	# Pickups on the current edge.
 	for p: Dictionary in _edge_pickups:
@@ -566,8 +569,14 @@ func _draw() -> void:
 				draw_arc(c, NODE_R + 5.0 + pulse * 4.0, 0.0, TAU, 36, Color(0.95, 0.85, 0.35, 0.35 + pulse * 0.4), 3.0)
 			if not sel_target.is_empty() and int(sel_target["tier"]) == tier and int(sel_target["index"]) == i:
 				draw_arc(c, NODE_R + 3.0, 0.0, TAU, 32, Color(1.0, 1.0, 1.0, 0.95), 3.0)
+			# Label on a dark pill so it stays legible over the connector lines.
 			var lbl: String = TYPE_LABELS.get(nd["type"], "?")
-			draw_string(font, c + Vector2(-NODE_R, NODE_R + 14.0), lbl, HORIZONTAL_ALIGNMENT_CENTER, NODE_R * 2.0, 12, Color(0.85, 0.88, 0.94))
+			var lsize := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+			var lbase := c + Vector2(0.0, NODE_R + 17.0)
+			draw_rect(Rect2(lbase - Vector2(lsize.x * 0.5 + 5.0, 11.0), Vector2(lsize.x + 10.0, 16.0)),
+				Color(0.05, 0.06, 0.09, 0.78))
+			draw_string(font, lbase - Vector2(lsize.x * 0.5, 0.0), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Color(0.90, 0.93, 0.98) if not bool(nd.get("visited", false)) else Color(0.60, 0.63, 0.72))
 
 	# Avatar (hero sprite).
 	var ascr := _w2s(_avatar)
@@ -620,7 +629,7 @@ func _draw_node_icon(c: Vector2, type: String, visited: bool) -> void:
 # the side-scroll view loses.
 func _draw_minimap() -> void:
 	var font := ThemeDB.fallback_font
-	var rect := Rect2(14.0, 498.0, 300.0, 184.0)
+	var rect := MINIMAP_RECT
 	draw_rect(rect, Color(0.06, 0.07, 0.11, 0.88))
 	draw_rect(rect, Color(0.30, 0.32, 0.44, 0.9), false, 1.0)
 	draw_string(font, rect.position + Vector2(8.0, 16.0), "Map", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.60, 0.63, 0.72))
@@ -864,36 +873,39 @@ func _circle_style(color: Color, radius: float) -> StyleBoxFlat:
 
 func _build_hud() -> void:
 	var side := UITheme.panel(self, Vector2(SIDE_X, 24.0), Vector2(328.0, 652.0), UITheme.PANEL, Color(0.34, 0.36, 0.46))
-	side.add_child(UITheme.label("Run", 24, UITheme.GOLD, Vector2(18.0, 14.0)))
+	side.add_child(UITheme.label("Run", 24, UITheme.GOLD, Vector2(18.0, 12.0)))
 
-	_depth_label = UITheme.label("", 14, UITheme.TEXT_MUTED, Vector2(18.0, 48.0), Vector2(286.0, 22.0))
+	# Header stat lines, each on its own row (no overlap with the action buttons).
+	_depth_label = UITheme.label("", 13, UITheme.TEXT_MUTED, Vector2(18.0, 50.0), Vector2(292.0, 20.0))
 	side.add_child(_depth_label)
-	_gold_label = UITheme.label("", 18, UITheme.GOLD, Vector2(18.0, 80.0), Vector2(286.0, 24.0))
+	_gold_label = UITheme.label("", 18, UITheme.GOLD, Vector2(18.0, 72.0), Vector2(292.0, 24.0))
 	side.add_child(_gold_label)
-	_hero_label = UITheme.label("", 14, Color(0.78, 0.84, 0.98), Vector2(18.0, 104.0), Vector2(286.0, 22.0))
+	_hero_label = UITheme.label("", 14, Color(0.78, 0.84, 0.98), Vector2(18.0, 100.0), Vector2(292.0, 20.0))
 	side.add_child(_hero_label)
-	side.add_child(UITheme.button("Skill Tree  [T]", Vector2(176.0, 96.0), Vector2(140.0, 26.0),
-		Color(0.34, 0.28, 0.46), _toggle_hero_tree, 12))
-	side.add_child(UITheme.button("Deck  [C]", Vector2(18.0, 96.0), Vector2(140.0, 26.0),
-		Color(0.26, 0.34, 0.42), _toggle_deck, 12))
 
-	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 130.0)))
-	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 144.0), Vector2(292.0, 112.0))
+	# Action buttons on their own row, below the header.
+	side.add_child(UITheme.button("Deck  [C]", Vector2(18.0, 128.0), Vector2(143.0, 28.0),
+		Color(0.26, 0.34, 0.42), _toggle_deck, 13))
+	side.add_child(UITheme.button("Skill Tree  [T]", Vector2(167.0, 128.0), Vector2(143.0, 28.0),
+		Color(0.34, 0.28, 0.46), _toggle_hero_tree, 13))
+
+	side.add_child(UITheme.label("Roster", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 170.0)))
+	_roster_label = UITheme.label("", 13, Color(0.90, 0.85, 0.70), Vector2(18.0, 188.0), Vector2(292.0, 96.0))
 	side.add_child(_roster_label)
 
-	side.add_child(UITheme.label("Relics", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 272.0)))
-	side.add_child(UITheme.button("Inventory  [I]", Vector2(176.0, 266.0), Vector2(140.0, 26.0),
-		Color(0.28, 0.30, 0.42), _toggle_inventory, 12))
-	_relics_label = UITheme.label("", 12, Color(0.75, 0.85, 0.95), Vector2(18.0, 292.0), Vector2(292.0, 82.0))
+	side.add_child(UITheme.label("Relics", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 292.0)))
+	side.add_child(UITheme.button("Inventory  [I]", Vector2(167.0, 286.0), Vector2(143.0, 28.0),
+		Color(0.28, 0.30, 0.42), _toggle_inventory, 13))
+	_relics_label = UITheme.label("", 12, Color(0.75, 0.85, 0.95), Vector2(18.0, 320.0), Vector2(292.0, 66.0))
 	side.add_child(_relics_label)
 
-	side.add_child(UITheme.label("Node", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 396.0)))
-	_node_detail_label = UITheme.label("", 13, UITheme.TEXT, Vector2(18.0, 418.0), Vector2(292.0, 132.0))
+	side.add_child(UITheme.label("Node", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 394.0)))
+	_node_detail_label = UITheme.label("", 13, UITheme.TEXT, Vector2(18.0, 414.0), Vector2(292.0, 140.0))
 	side.add_child(_node_detail_label)
 
-	side.add_child(UITheme.label("Legend", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 570.0)))
+	side.add_child(UITheme.label("Legend", 13, Color(0.58, 0.61, 0.68), Vector2(18.0, 562.0)))
 	var lx := 18.0
-	var ly := 594.0
+	var ly := 584.0
 	for type_key: String in TYPE_COLORS.keys():
 		UITheme.chip(side, TYPE_LABELS[type_key], Vector2(lx, ly), TYPE_COLORS[type_key], 92.0)
 		lx += 100.0

@@ -40,12 +40,12 @@ static func label(text: String, font_size: int, color: Color, pos: Vector2, size
 	lbl.modulate = color
 	lbl.position = pos
 	if size != Vector2.ZERO:
-		# Order matters: enable autowrap and pin the width via custom_minimum_size
-		# BEFORE setting size, or the label clamps to its full single-line content
-		# width and never wraps (free Labels ignore `size` for wrap width).
+		# Free Labels wrap at custom_minimum_size.x ONLY if `size` is left alone —
+		# setting `.size` lets the control grow to its full single-line content
+		# width (overriding the floor), so the text never wraps. Pin the box via
+		# custom_minimum_size and let autowrap settle the width.
 		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		lbl.custom_minimum_size = size
-		lbl.size = size
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return lbl
 
