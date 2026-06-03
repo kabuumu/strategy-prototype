@@ -1642,6 +1642,14 @@ const EVENTS: Array = [
 		],
 	},
 	{
+		"title": "Bandit Ambush",
+		"text": "Cutthroats burst from the brush, blades flashing. They want coin — or blood.",
+		"choices": [
+			{"label": "Pay the toll (35g)", "cost": 35, "effect": {}},
+			{"label": "Fight them off (your weakest troop falls, +20g loot)", "effect": {"lose_unit": true, "gold": 20}},
+		],
+	},
+	{
 		"title": "Ancient Shrine",
 		"text": "A moss-covered shrine hums with old power. Do you honour it, or pry loose its gilding?",
 		"choices": [
@@ -1918,14 +1926,15 @@ func apply_event_choice(choice: Dictionary) -> String:
 		if not ups.is_empty():
 			apply_upgrade(idx, ups[0])
 			parts.append("%s trained" % String(UNIT_TYPES[player_roster[idx]["type"]]["name"]))
-	if eff.has("lose_unit") and bool(eff["lose_unit"]) and not player_roster.is_empty():
+	if eff.has("lose_unit") and bool(eff["lose_unit"]) and player_roster.size() > 1:
+		# Take the weakest (lowest-HP) troop; never drop the last one.
 		var worst: int = 0
 		for i in range(player_roster.size()):
 			if int(player_roster[i]["hp"]) < int(player_roster[worst]["hp"]):
 				worst = i
 		var lost_name: String = String(UNIT_TYPES[player_roster[worst]["type"]]["name"])
 		player_roster.remove_at(worst)
-		parts.append("lost %s" % lost_name)
+		parts.append("%s was cut down" % lost_name)
 	if parts.is_empty():
 		return "You move on."
 	return ", ".join(parts).capitalize()
