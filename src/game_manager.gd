@@ -1650,6 +1650,14 @@ const EVENTS: Array = [
 		],
 	},
 	{
+		"title": "The Sunken Hatch",
+		"text": "Half-buried in the hillside: a metal hatch from some fallen age, humming with old machine-light. Send someone in to scavenge — if they come back.",
+		"choices": [
+			{"label": "Send a volunteer in (risky)", "effect": {"explore": true}},
+			{"label": "Too dangerous — move on", "effect": {}},
+		],
+	},
+	{
 		"title": "Ancient Shrine",
 		"text": "A moss-covered shrine hums with old power. Do you honour it, or pry loose its gilding?",
 		"choices": [
@@ -1935,6 +1943,38 @@ func apply_event_choice(choice: Dictionary) -> String:
 		var lost_name: String = String(UNIT_TYPES[player_roster[worst]["type"]]["name"])
 		player_roster.remove_at(worst)
 		parts.append("%s was cut down" % lost_name)
+	if eff.has("explore"):
+		# Send a unit into the unknown: a chance it's lost forever, often nothing,
+		# ~30% a prize (relic / card / treasure).
+		var erng := RandomNumberGenerator.new()
+		erng.randomize()
+		var roll: float = erng.randf()
+		if roll < 0.25 and player_roster.size() > 1:
+			var idx: int = erng.randi() % player_roster.size()
+			var nm: String = String(UNIT_TYPES[player_roster[idx]["type"]]["name"])
+			player_roster.remove_at(idx)
+			parts.append("%s ventured in and was never seen again" % nm)
+		elif roll < 0.70:
+			parts.append("the explorer returns empty-handed")
+		else:
+			var prize: float = erng.randf()
+			if prize < 0.45:
+				var rid: String = grant_random_relic()
+				if rid != "":
+					parts.append("returns clutching %s!" % String(RELICS[rid]["name"]))
+				else:
+					gold += 45
+					parts.append("returns with a heavy pouch (+45 gold)")
+			elif prize < 0.80 and selected_hero != "":
+				var cid: String = card_grant_battle_reward()
+				if cid != "":
+					parts.append("returns with a strange card — %s!" % String(card_def(cid).get("name", cid)))
+				else:
+					gold += 45
+					parts.append("returns with a heavy pouch (+45 gold)")
+			else:
+				gold += 60
+				parts.append("returns laden with old-world treasure (+60 gold)")
 	if parts.is_empty():
 		return "You move on."
 	return ", ".join(parts).capitalize()

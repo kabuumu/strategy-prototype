@@ -47,6 +47,40 @@ func test_hero_perk_helpers(t) -> void:
 	gm.grant_hero_perk("thrifty")
 	t.ok(gm.has_perk("thrifty"), "thrifty granted")
 
+# --- events / roster -------------------------------------------------------
+
+func test_event_lose_unit_keeps_last(t) -> void:
+	var gm := _fresh()
+	while gm.player_roster.size() > 1:
+		gm.player_roster.remove_at(0)
+	gm.apply_event_choice({"effect": {"lose_unit": true}})
+	t.eq(gm.player_roster.size(), 1, "lose_unit never drops the last troop")
+
+func test_event_lose_unit_takes_weakest(t) -> void:
+	var gm := _fresh()
+	var before: int = gm.player_roster.size()
+	gm.player_roster[1]["hp"] = 1   # make slot 1 the weakest
+	gm.apply_event_choice({"effect": {"lose_unit": true}})
+	t.eq(gm.player_roster.size(), before - 1, "lose_unit removes one troop")
+
+func test_event_explore_resolves(t) -> void:
+	var gm := _fresh()
+	var before: int = gm.player_roster.size()
+	var msg: String = gm.apply_event_choice({"effect": {"explore": true}})
+	t.ne(msg, "", "explore returns a result message")
+	t.ok(gm.player_roster.size() <= before, "explore never grows the roster")
+
+func test_pit_resolve_keeps_cap_and_levels(t) -> void:
+	var gm := _fresh()
+	gm.player_roster[0]["type"] = "soldier"
+	gm.player_roster[0]["upgrades"] = ["veteran"]
+	var size_before: int = gm.player_roster.size()
+	gm.resolve_pit(0, "archer", true)   # recruit wins
+	t.eq(gm.player_roster.size(), size_before, "pit keeps the roster size (one in, one out)")
+	t.eq(String(gm.player_roster[0]["type"]), "archer", "winner (recruit) takes the slot")
+	t.eq(gm.unit_level(gm.player_roster[0]), 2, "survivor gains a level")
+	t.ok((gm.player_roster[0]["upgrades"] as Array).has("veteran"), "survivor absorbs the loser's upgrades")
+
 # --- map generation --------------------------------------------------------
 
 func test_map_structure(t) -> void:
