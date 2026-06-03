@@ -108,6 +108,11 @@ func test_flat_unit_always_hits_full(t) -> void:
 	t.eq(u.regiment_damage(), 20, "single-sprite hero still hits full when wounded")
 	u.free()
 
+func test_default_speed_is_1x(t) -> void:
+	var ab = AB.new()
+	t.approx(ab._speed_scale, 1.0, 0.001, "fights default to 1x speed")
+	ab.free()
+
 func _villain_node() -> RTUnit:
 	var v := _unit(200); v.is_villain = true
 	return v

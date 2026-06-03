@@ -118,7 +118,7 @@ var _freeze_mode: bool = false
 var _enemy_preview: Array = []
 var _reward_choices: Array = []
 var _reroll_discount_next: bool = false
-var _speed_scale: float = 2.0   # 2x by default — 1x standard felt too slow
+var _speed_scale: float = 1.0   # 1x default; all-at-once melee resolves fast enough (toggle to 2x in the HUD)
 var _start_abilities_applied: bool = false
 var _unit_state: Dictionary = {}
 var _feedback: Array = []
@@ -1152,7 +1152,7 @@ func _spawn_fight() -> void:
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 2.0
+	_speed_scale = 1.0
 
 # ---------------------------------------------------------------------------
 # Campaign single-fight (battle_mode "auto")
@@ -2058,14 +2058,14 @@ func _reset_battle_state() -> void:
 	_feedback.clear()
 	_last_recap.clear()
 
-# Shared FIGHT-start epilogue (campaign / duel / pit): start the fight at 2x.
+# Shared FIGHT-start epilogue (campaign / duel / pit): start the fight at 1x.
 func _enter_fight_phase() -> void:
 	phase = Phase.FIGHT
 	Music.play("battle")
 	_fight_intro_timer = FIGHT_INTRO_SECONDS
 	_ai_timer = 0.0
 	_start_abilities_applied = false
-	_speed_scale = 2.0
+	_speed_scale = 1.0
 	_rebuild_ui()
 
 # Scale a spawned hero unit by its permanent skill tree (HP / damage / cooldown).
