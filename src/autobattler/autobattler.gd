@@ -143,12 +143,18 @@ var _campaign_lost: bool = false
 var _campaign_relic: String = ""
 var _campaign_gold: int = 0
 var _duel: bool = false
+var _pit: bool = false   # roster-cap pit: a recruit duels one chosen unit to the death
 
 func _ready() -> void:
 	# Music is set per phase: pre-fight phases (quick-battle SHOP, campaign PREP)
 	# loop the "Ceramic War Rite" intro; FIGHT swaps to the full battle track.
 	# Duels skip prep, so they go straight to the battle track.
 	_rng.randomize()
+	if GameManager.pending_pit:
+		GameManager.pending_pit = false
+		_pit = true
+		_start_pit_fight()
+		return
 	if GameManager.pending_duel:
 		GameManager.pending_duel = false
 		_duel = true
@@ -458,7 +464,13 @@ func _rebuild_ui() -> void:
 			_build_campaign_victory_ui()
 		else:
 			_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 520.0), Vector2(560.0, 56.0))
-			if _duel:
+			if _pit:
+				var rn := _unit_name(GameManager.pit_recruit_type) if UNIT_TYPES.has(GameManager.pit_recruit_type) else String(GameManager.pit_recruit_type).capitalize()
+				var pmsg := ("Your champion held its place — gains a level." if GameManager.pit_outcome == 0
+						else "%s won the pit and takes a slot — gains a level + the loser's upgrades." % rn)
+				_add_label(pmsg, 16, UITheme.TEXT_MUTED, Vector2(300.0, 592.0), Vector2(680.0, 24.0))
+				_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_pit_continue)
+			elif _duel:
 				var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
 				if GameManager.duel_outcome == 1:
 					_add_label("%s joins your army!" % recruit_name, 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
@@ -1639,6 +1651,46 @@ func _conclude_duel(win: bool) -> void:
 func _on_duel_continue() -> void:
 	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
 
+# ---------------------------------------------------------------------------
+# Pit (roster-cap): a new recruit (team 1) duels one chosen roster unit (team 0)
+# to the death. The survivor keeps the slot; level_select applies the level-up +
+# upgrade-absorb on return (GameManager.resolve_pit).
+# ---------------------------------------------------------------------------
+func _start_pit_fight() -> void:
+	_clear_units()
+	_unit_state.clear()
+	_feedback.clear()
+	_last_recap.clear()
+	var roster: Array = GameManager.player_roster
+	var didx: int = GameManager.pit_defender_index
+	var def_type := "soldier"
+	var def_level := 1
+	if didx >= 0 and didx < roster.size():
+		def_type = String(roster[didx]["type"])
+		def_level = GameManager.unit_level(roster[didx])
+	var def_card := _campaign_card(def_type)
+	def_card["level"] = def_level
+	var recruit_card := _campaign_card(GameManager.pit_recruit_type)
+	player_units.append(_spawn_unit(def_card, 0, _formation_positions(1, 0)[0], 1.0))
+	enemy_units.append(_spawn_unit(recruit_card, 1, _formation_positions(1, 1)[0], 1.0))
+	phase = Phase.FIGHT
+	Music.play("battle")
+	_fight_intro_timer = FIGHT_INTRO_SECONDS
+	_ai_timer = 0.0
+	_start_abilities_applied = false
+	_speed_scale = 2.0
+	_rebuild_ui()
+
+func _conclude_pit(defender_won: bool) -> void:
+	GameManager.pit_outcome = 0 if defender_won else 1
+	_result_text = "CHAMPION" if defender_won else "USURPED"
+	phase = Phase.RESULT
+	Sfx.play("win" if defender_won else "lose", -7.0)
+	_rebuild_ui()
+
+func _on_pit_continue() -> void:
+	get_tree().change_scene_to_file("res://src/level_select/level_select.tscn")
+
 func _spawn_unit(card: Dictionary, team_id: int, pos: Vector2, hp_mult: float, synergy_counts: Dictionary = {}) -> RTUnit:
 	var u: RTUnit = RTUnit.new()
 	add_child(u)
@@ -1888,6 +1940,9 @@ func _check_fight_end() -> bool:
 	if p_alive and e_alive:
 		return false
 	_build_recap(p_alive, e_alive)
+	if _pit:
+		_conclude_pit(p_alive and not e_alive)   # defender (team 0) survived?
+		return true
 	if _duel:
 		_conclude_duel(p_alive and not e_alive)
 		return true

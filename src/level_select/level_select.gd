@@ -92,6 +92,7 @@ var _tree_panel: Control = null   # hero skill-tree overlay (Spec A)
 var _deck_panel: Control = null   # card deck overlay (Spec B)
 var _shop_relic_offer: String = ""
 var _pending_recruit_toast: Dictionary = {}
+var _pending_pit_toast: Dictionary = {}
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,15 @@ func _ready() -> void:
 		GameManager.pending_duel = false
 		GameManager.duel_recruit_type = ""
 		_pending_recruit_toast = {"win": dwin, "type": dtype}
+	# Consume a pending pit result (over-cap recruit fought a chosen unit).
+	if GameManager.pit_outcome != -1:
+		var recruit_won := GameManager.pit_outcome == 1
+		_pending_pit_toast = {"recruit_won": recruit_won, "type": GameManager.pit_recruit_type}
+		GameManager.resolve_pit(GameManager.pit_defender_index, GameManager.pit_recruit_type, recruit_won)
+		GameManager.pit_outcome = -1
+		GameManager.pending_pit = false
+		GameManager.pit_recruit_type = ""
+		GameManager.pit_defender_index = -1
 	_build_world()
 	_anchor_to_current()
 	_build_hud()
@@ -134,6 +144,15 @@ func _ready() -> void:
 				_show_toast("%s joined your army!" % rname, GameManager.UNIT_TYPES[rtype]["color"])
 			else:
 				_show_toast("%s bested you and walked away." % rname, Color(0.7, 0.6, 0.5))
+	if not _pending_pit_toast.is_empty():
+		var pt := _pending_pit_toast
+		_pending_pit_toast = {}
+		var ptype: String = String(pt.get("type", ""))
+		var pname: String = GameManager.UNIT_TYPES[ptype]["name"] if GameManager.UNIT_TYPES.has(ptype) else ptype
+		if bool(pt.get("recruit_won", false)):
+			_show_toast("%s won the pit and earned its place!" % pname, Color(0.95, 0.82, 0.40))
+		else:
+			_show_toast("Your champion won the pit — %s was cut down." % pname, Color(0.62, 0.90, 0.62))
 	# Offer the hero perk pick on a level-up. Battle rewards (gold/relic, deck card,
 	# unit upgrade) are all resolved on the in-battle VICTORY screen now.
 	call_deferred("_show_pending_rewards")
@@ -1132,13 +1151,70 @@ func _on_persuasion_pay(cand: Dictionary, cost: int) -> void:
 		_recruit_decline(String(cand["type"]))
 
 func _recruit_succeed(type: String) -> void:
-	GameManager.add_unit(type)
 	if _popup != null:
 		_popup.queue_free()
 		_popup = null
+	_gain_recruit(type)
+
+# Add a recruit, or — if the roster is at the cap — make it earn its place in the
+# pit (a fight to the death against one chosen unit).
+func _gain_recruit(type: String) -> void:
+	if GameManager.roster_is_full():
+		_show_pit_picker(type)
+		return
+	GameManager.add_unit(type)
 	Sfx.play("heal")
 	_show_toast("%s joined your army!" % GameManager.UNIT_TYPES[type]["name"],
 		GameManager.UNIT_TYPES[type]["color"])
+	_refresh()
+
+# Roster-full pit: pick which unit defends its slot against the new recruit.
+func _show_pit_picker(type: String) -> void:
+	if _popup != null:
+		_popup.queue_free()
+	var rname: String = GameManager.UNIT_TYPES[type]["name"]
+	_popup = UITheme.panel(self, Vector2(210.0, 150.0), Vector2(860.0, 420.0),
+		Color(0.13, 0.08, 0.08, 0.99), Color(0.74, 0.42, 0.40))
+	_popup.add_child(UITheme.label("Roster Full — Trial by Combat", 26, Color(1.0, 0.85, 0.6),
+		Vector2(28.0, 18.0), Vector2(804.0, 32.0)))
+	_popup.add_child(UITheme.label(
+		"Your ranks are full (%d). The new %s must duel one of your units for its place — the winner survives, gains a level and inherits the loser's upgrades. Choose its challenger:" % [GameManager.ROSTER_CAP, rname],
+		14, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(804.0, 48.0)))
+	var roster := GameManager.player_roster
+	for i in range(roster.size()):
+		var entry: Dictionary = roster[i]
+		var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
+		var lvl := GameManager.unit_level(entry)
+		var ups: int = (entry.get("upgrades", []) as Array).size()
+		var label := String(udata["name"])
+		if lvl > 1:
+			label += " Lv%d" % lvl
+		if ups > 0:
+			label += "  ✦%d" % ups
+		_popup.add_child(UITheme.button(label,
+			Vector2(40.0 + float(i % 4) * 200.0, 118.0 + float(i / 4) * 72.0), Vector2(190.0, 62.0),
+			Color(udata["color"]).darkened(0.3), _on_pit_pick.bind(type, i), 15))
+	_popup.add_child(UITheme.button("Turn them away", Vector2(330.0, 510.0), Vector2(220.0, 44.0),
+		Color(0.30, 0.30, 0.34), _on_pit_decline.bind(type)))
+
+func _on_pit_pick(type: String, defender_index: int) -> void:
+	_leaving = true
+	GameManager.pending_pit = true
+	GameManager.pit_recruit_type = type
+	GameManager.pit_defender_index = defender_index
+	GameManager.pit_outcome = -1
+	GameManager.save_run()
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	get_tree().change_scene_to_file("res://src/autobattler/autobattler.tscn")
+
+func _on_pit_decline(type: String) -> void:
+	if _popup != null:
+		_popup.queue_free()
+		_popup = null
+	_show_toast("Turned %s away — the ranks are full." % GameManager.UNIT_TYPES[type]["name"],
+		Color(0.7, 0.6, 0.5))
 	_refresh()
 
 func _recruit_decline(type: String) -> void:
@@ -1315,6 +1391,9 @@ func _on_shop_heal() -> void:
 		_populate_shop()
 
 func _on_shop_buy_unit(unit_type: String) -> void:
+	if GameManager.roster_is_full():
+		_show_toast("Roster full (%d) — no room to buy." % GameManager.ROSTER_CAP, Color(0.85, 0.6, 0.4))
+		return
 	if GameManager.spend_gold(GameManager.SHOP_UNIT_COST):
 		GameManager.add_unit(unit_type)
 		Sfx.play("gold")
