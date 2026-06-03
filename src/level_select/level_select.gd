@@ -761,7 +761,7 @@ func _node_detail_text(tier: int, index: int) -> String:
 	var title: String = TYPE_LABELS.get(type_key, "Node")
 	var lines: Array[String] = [title, TYPE_DESC.get(type_key, "")]
 	if type_key in ["battle", "elite_battle"]:
-		var elite := type_key == "elite_battle"
+		var elite := type_key == "elite_battle" or GameManager.is_insane()
 		if elite:
 			var m := GameManager.elite_modifier_data(tier)
 			if not m.is_empty():
@@ -932,7 +932,7 @@ func _trigger_node(tier: int, index: int) -> void:
 	match node_data["type"]:
 		"battle", "elite_battle":
 			# Straight into the fight — no role popup (the hero always fights).
-			_launch_autobattle(tier, node_data["type"] == "elite_battle")
+			_launch_autobattle(tier, node_data["type"] == "elite_battle" or GameManager.is_insane())
 		"gain_unit":
 			_show_recruit_popup(tier, index)
 		"shop":

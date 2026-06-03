@@ -1009,6 +1009,15 @@ var runs_won: int = 0           # persists across runs (boss cleared) — gates 
 # one skill point) and place points on tree nodes. Survives reset()/select_hero().
 var hero_meta: Dictionary = {}
 var menu_hero: String = ""       # the hero chosen on the main menu for new campaigns
+# Difficulty (chosen on the title). hard = no opening recruit stage (tier 0 is
+# battles); insane = that PLUS every battle is elite. Persists in meta + run save.
+var difficulty: String = "normal"
+const DIFFICULTIES: Array[String] = ["normal", "hard", "insane"]
+func is_hard() -> bool: return difficulty == "hard" or difficulty == "insane"
+func is_insane() -> bool: return difficulty == "insane"
+func cycle_difficulty() -> void:
+	difficulty = DIFFICULTIES[(DIFFICULTIES.find(difficulty) + 1) % DIFFICULTIES.size()]
+	_save_meta()
 var tutorial_seen: bool = false # persists; first-battle help auto-shows once
 var last_run_battles_won: int = 0  # snapshot of the run that just ended (in-memory only)
 var last_run_tier_reached: int = 0
@@ -1186,6 +1195,7 @@ func _load_meta() -> void:
 	tutorial_seen     = bool(cfg.get_value("meta", "tutorial_seen",    false))
 	master_volume     = float(cfg.get_value("meta", "master_volume",   0.8))
 	menu_hero         = str(cfg.get_value("meta", "menu_hero", ""))
+	difficulty        = str(cfg.get_value("meta", "difficulty", "normal"))
 	_load_hero_meta(cfg)
 
 # Sanitised load of the per-hero skill-tree records (Spec A). Coerces leaves to
@@ -1219,6 +1229,7 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "tutorial_seen",     tutorial_seen)
 	cfg.set_value("meta", "master_volume",     master_volume)
 	cfg.set_value("meta", "menu_hero",         menu_hero)
+	cfg.set_value("meta", "difficulty",        difficulty)
 	cfg.set_value("meta", "hero_meta",         hero_meta)
 	cfg.save(META_PATH)
 
@@ -1263,6 +1274,7 @@ func save_run() -> void:
 	cfg.set_value("run", "battles_won", battles_won)
 	cfg.set_value("run", "boss_id", boss_id)
 	cfg.set_value("run", "battle_mode", battle_mode)
+	cfg.set_value("run", "difficulty", difficulty)
 	cfg.set_value("run", "selected_hero", selected_hero)
 	cfg.set_value("run", "hero_level", hero_level)
 	cfg.set_value("run", "hero_xp", hero_xp)
@@ -1293,6 +1305,7 @@ func load_run() -> bool:
 	for c in cfg.get_value("run", "curses", []):
 		curses.append(str(c))
 	run_seed          = int(cfg.get_value("run", "run_seed", 0))
+	difficulty        = str(cfg.get_value("run", "difficulty", "normal"))
 	card_deck = []
 	for c in cfg.get_value("run", "card_deck", []):
 		card_deck.append(str(c))
@@ -1369,9 +1382,11 @@ func _generate_map() -> void:
 # takes they pick up a unit before the first fight — you never start a run going
 # into battle alone.
 func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
+	# Hard/insane drop the opening recruit stage — tier 0 is battles instead.
+	var t: String = "battle" if is_hard() else "gain_unit"
 	var out: Array = []
 	for _i in range(maxi(1, count)):
-		out.append("gain_unit")
+		out.append(t)
 	return out
 
 func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:
