@@ -1523,21 +1523,16 @@ func _conclude_campaign(win: bool) -> void:
 	_campaign_gold = 0
 	if win:
 		# Survivors carry forward (permadeath drops the fallen regiments).
+		# No troop permadeath: every unit in the pool — deployed (alive OR fallen) and
+		# benched — carries forward to the next battle. Losing a battle still ends the
+		# run, but winning never costs you a troop (you can only recruit one at a
+		# time, so attrition made the run impossible). The pit (roster cap) is the
+		# only thing that retires a unit.
 		var survivors: Array[Dictionary] = []
-		for u: RTUnit in player_units:
-			if is_instance_valid(u) and u.is_alive():
-				var st: Dictionary = _unit_state.get(u.get_instance_id(), {})
-				var entry = st.get("roster_entry", null)
-				if entry != null:
-					survivors.append(entry)
-		# Benched troops (in the pool but not deployed) never fought, so they carry
-		# forward to the next battle's pool — only DEPLOYED units that fell are
-		# permakilled.
 		for i in range(_pool.size()):
-			if i < _lineup_sel.size() and not bool(_lineup_sel[i]):
-				var benched = _pool[i].get("entry", null)
-				if benched != null:
-					survivors.append(benched)
+			var entry = _pool[i].get("entry", null)
+			if entry != null:
+				survivors.append(entry)
 		# Aftermath cards in hand auto-resolve on the survivors (Spec B): a
 		# "level" card promotes a survivor's roster entry. (v1 auto; a chooser
 		# is a later refinement.)

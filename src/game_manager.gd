@@ -1537,6 +1537,41 @@ func add_unit(unit_type: String) -> void:
 		"xp": 0,
 	})
 
+# Roster cap (#fightpit). When full, a new recruit must duel one of your units in
+# the pit (see autobattler `_start_pit_fight`); the survivor keeps the slot.
+const ROSTER_CAP: int = 8
+func roster_is_full() -> bool:
+	return player_roster.size() >= ROSTER_CAP
+
+# Pit (over-cap recruit fights one chosen unit to the death). Set by level_select
+# before launching the pit fight; the outcome is read on return.
+var pending_pit: bool = false
+var pit_recruit_type: String = ""
+var pit_defender_index: int = -1
+var pit_outcome: int = -1   # -1 none, 0 = defender won, 1 = recruit won
+
+# Resolve the pit: the winner takes the slot, gains +1 permanent level and absorbs
+# the loser's ✦ upgrades; the loser is gone. Roster size stays at the cap.
+func resolve_pit(defender_index: int, recruit_type: String, recruit_won: bool) -> void:
+	if defender_index < 0 or defender_index >= player_roster.size():
+		return
+	var defender: Dictionary = player_roster[defender_index]
+	var entry: Dictionary
+	if recruit_won:
+		# Recruit takes the slot; absorbs the fallen defender's upgrades.
+		entry = {
+			"type": recruit_type,
+			"upgrades": (defender.get("upgrades", []) as Array).duplicate(),
+			"xp": 3,   # +1 level (level = 1 + xp/3)
+			"hp": 0,
+		}
+	else:
+		# Defender survives and levels up (a fresh recruit carries no upgrades).
+		entry = defender.duplicate(true)
+		entry["xp"] = int(entry.get("xp", 0)) + 3
+	entry["hp"] = unit_effective_max_hp(entry)   # the champion is patched up to full
+	player_roster[defender_index] = entry
+
 # Veterancy: a regiment levels every 3 battles it survives (max level 4). Each
 # level past 1 grants +8 max HP and +2 damage (applied for the player team).
 func unit_level(entry: Dictionary) -> int:
