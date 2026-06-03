@@ -400,21 +400,24 @@ func _rebuild_ui() -> void:
 			# One consolidated VICTORY screen: gold/relic + deck card + unit upgrade.
 			_build_campaign_victory_ui()
 		else:
-			_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
-			_add_recap_panel()
+			_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 520.0), Vector2(560.0, 56.0))
 			if _duel:
 				var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
-				var won := GameManager.duel_outcome == 1
-				var fate := "%s joins your army!" % recruit_name if won else "%s walks away." % recruit_name
-				_add_label(fate, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-				_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+				if GameManager.duel_outcome == 1:
+					_add_label("%s joins your army!" % recruit_name, 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+					_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+				else:
+					# Hero fell — the run is over (cleared in _conclude_duel).
+					_add_label("Your hero fell in the duel — the run ends here.", 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+					_add_button("To Title", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
 			elif _campaign:
 				# Campaign loss — permadeath, the run ends here.
 				_add_label("Your army was wiped out — the run ends here.", 16, UITheme.TEXT_MUTED,
-						Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-				_add_button("To Title", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
+						Vector2(360.0, 592.0), Vector2(560.0, 24.0))
+				_add_button("To Title", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
 			else:
-				_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
+				_add_recap_panel()
+				_add_button("Next Shop", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
 	elif phase == Phase.REWARD:
 		_add_label("PICK A REWARD", 34, UITheme.GOLD, Vector2(420.0, 505.0), Vector2(440.0, 46.0))
 		_add_recap_panel(Vector2(330.0, 552.0))
@@ -1524,7 +1527,13 @@ func _start_duel_fight() -> void:
 
 func _conclude_duel(win: bool) -> void:
 	GameManager.duel_outcome = 1 if win else 0
-	_result_text = "DUEL WON" if win else "DUEL LOST"
+	if win:
+		_result_text = "DUEL WON"
+	else:
+		# The hero is the only fighter in a duel — losing means the hero fell, and a
+		# fallen hero ends the run (same rule as a campaign battle).
+		_result_text = "DEFEAT"
+		GameManager.clear_run()
 	phase = Phase.RESULT
 	Sfx.play("win" if win else "lose", -7.0)
 	_rebuild_ui()
