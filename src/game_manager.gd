@@ -1300,7 +1300,7 @@ func _generate_map() -> void:
 
 	_assign_node_types(rng)
 
-	# Starting nodes offer a fight + a recruit (overrides tier 0).
+	# Every starting node is a recruit (overrides tier 0).
 	var start_types: Array = _starting_node_types(map_data[0].size(), rng)
 	for i in range(map_data[0].size()):
 		map_data[0][i]["type"] = start_types[i]
@@ -1309,18 +1309,13 @@ func _generate_map() -> void:
 	for tier in range(MAP_TIERS - 1):
 		_generate_connections(tier, rng)
 
-# Types for starting nodes. If count is 1, always returns a single "battle" node.
-# Otherwise, falls back to the curated, varied spread.
-func _starting_node_types(count: int, rng: RandomNumberGenerator) -> Array:
-	if count == 1:
-		return ["battle"]
-	# Always offer a fight AND a recruit at the start so the player can build an
-	# army before fighting alone. Fill extra slots with more of either. No elite /
-	# heal / shop openers (pointless before the first battle).
-	var out: Array = ["battle", "gain_unit"]
-	while out.size() < count:
-		out.append("battle" if rng.randf() < 0.5 else "gain_unit")
-	out.shuffle()
+# Every tier-0 node is a recruit (`gain_unit`), so whichever opening the player
+# takes they pick up a unit before the first fight — you never start a run going
+# into battle alone.
+func _starting_node_types(count: int, _rng: RandomNumberGenerator) -> Array:
+	var out: Array = []
+	for _i in range(maxi(1, count)):
+		out.append("gain_unit")
 	return out
 
 func _generate_connections(tier: int, rng: RandomNumberGenerator) -> void:

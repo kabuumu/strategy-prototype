@@ -54,6 +54,8 @@ func test_map_structure(t) -> void:
 	var gm := _fresh()
 	t.between(gm.map_data.size(), 12, 15, "12-15 tiers")
 	t.between(gm.map_data[0].size(), 2, 3, "tier 0 has 2-3 starting nodes")
+	for nd in gm.map_data[0]:
+		t.eq(String(nd["type"]), "gain_unit", "every tier-0 node is a recruit (never open a fight alone)")
 	var last: int = gm.map_data.size() - 1
 	t.eq(gm.map_data[last].size(), 1, "final tier is a single boss")
 	t.eq(String(gm.map_data[last][0]["type"]), "elite_battle", "boss node is elite_battle")
