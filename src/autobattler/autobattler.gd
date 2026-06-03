@@ -23,6 +23,8 @@ enum Phase { SHOP, PREP, FIGHT, RESULT, REWARD, GAME_OVER }
 var _armed_traps: Array = []
 var _below50_triggered: bool = false   # troop_below_50 traps fire once per fight
 var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (Spec B)
+var _upgrade_offer: Array = []         # 3 unit-upgrade choices on a campaign win
+var _upgrade_pick: String = ""         # chosen upgrade awaiting unit assignment ("" = none)
 # Campaign PREP (#10): step 0 = pick a lineup from the pool; step 1 = draw 3, play 1.
 const LINEUP_CAP: int = 5
 var _prep_step: int = 0
@@ -335,37 +337,25 @@ func _rebuild_ui() -> void:
 		_add_button("2x", Vector2(526.0, 590.0), Vector2(70.0, 38.0), Color(0.22, 0.28, 0.40), _on_speed_2)
 		_add_button("Skip", Vector2(606.0, 590.0), Vector2(92.0, 38.0), Color(0.34, 0.25, 0.22), _on_skip_fight)
 	elif phase == Phase.RESULT:
-		_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
-		_add_recap_panel()
-		if _duel:
-			var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
-			var won := GameManager.duel_outcome == 1
-			var fate := "%s joins your army!" % recruit_name if won else "%s walks away." % recruit_name
-			_add_label(fate, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-			_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
-		elif _campaign:
-			var msg: String = ""
-			if _campaign_lost:
-				msg = "Your army was wiped out — the run ends here."
-			else:
-				msg = "+%d gold" % _campaign_gold
-				if _campaign_relic != "":
-					msg += "   ·   Relic found: %s" % String(GameManager.RELICS[_campaign_relic]["name"])
-			_add_label(msg, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
-			if _campaign_lost:
+		if _campaign and not _campaign_lost:
+			# One consolidated VICTORY screen: gold/relic + deck card + unit upgrade.
+			_build_campaign_victory_ui()
+		else:
+			_add_label(_result_text, 42, UITheme.GOLD, Vector2(360.0, 530.0), Vector2(560.0, 56.0))
+			_add_recap_panel()
+			if _duel:
+				var recruit_name := _unit_name(GameManager.duel_recruit_type) if UNIT_TYPES.has(GameManager.duel_recruit_type) else String(GameManager.duel_recruit_type).capitalize()
+				var won := GameManager.duel_outcome == 1
+				var fate := "%s joins your army!" % recruit_name if won else "%s walks away." % recruit_name
+				_add_label(fate, 16, UITheme.TEXT_MUTED, Vector2(360.0, 586.0), Vector2(560.0, 24.0))
+				_add_button("Continue", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+			elif _campaign:
+				# Campaign loss — permadeath, the run ends here.
+				_add_label("Your army was wiped out — the run ends here.", 16, UITheme.TEXT_MUTED,
+						Vector2(360.0, 586.0), Vector2(560.0, 24.0))
 				_add_button("To Title", Vector2(560.0, 620.0), Vector2(160.0, 46.0), UITheme.RED, _on_menu)
 			else:
-				if not _card_reward_offer.is_empty():
-					_add_label("Add a card to your deck (or Continue to skip):", 14, UITheme.TEXT_MUTED,
-							Vector2(300.0, 604.0), Vector2(680.0, 20.0))
-					for ci in range(_card_reward_offer.size()):
-						var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
-						_add_button(String(cd.get("name", _card_reward_offer[ci])),
-								Vector2(300.0 + float(ci) * 200.0, 628.0), Vector2(188.0, 42.0),
-								Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
-				_add_button("Continue", Vector2(560.0, 678.0), Vector2(160.0, 40.0), UITheme.GREEN, _on_campaign_continue)
-		else:
-			_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
+				_add_button("Next Shop", Vector2(560.0, 610.0), Vector2(160.0, 46.0), UITheme.BLUE, _on_next_shop)
 	elif phase == Phase.REWARD:
 		_add_label("PICK A REWARD", 34, UITheme.GOLD, Vector2(420.0, 505.0), Vector2(440.0, 46.0))
 		_add_recap_panel(Vector2(330.0, 552.0))
@@ -1191,6 +1181,96 @@ func _on_pick_reward_card(i: int) -> void:
 	_card_reward_offer = []
 	_rebuild_ui()
 
+# One consolidated VICTORY screen for a campaign win: result + gold/relic + recap,
+# then BOTH reward picks (a deck card and a unit upgrade), then Continue. Replaces
+# the old in-battle screen plus the separate map reward popup.
+func _build_campaign_victory_ui() -> void:
+	var bg := ColorRect.new()
+	bg.position = Vector2(220.0, 70.0)
+	bg.size = Vector2(840.0, 628.0)
+	bg.color = Color(0.07, 0.09, 0.07, 0.97)
+	add_child(bg)
+	_ui_nodes.append(bg)
+	var accent := ColorRect.new()
+	accent.position = Vector2(220.0, 70.0)
+	accent.size = Vector2(840.0, 3.0)
+	accent.color = Color(0.55, 0.70, 0.40)
+	add_child(accent)
+	_ui_nodes.append(accent)
+
+	_center_label("VICTORY", 44, UITheme.GOLD, 92.0)
+	var sub := "+%d gold" % _campaign_gold
+	if _campaign_relic != "":
+		sub += "   ·   Relic found: %s" % String(GameManager.RELICS[_campaign_relic]["name"])
+	_center_label(sub, 17, Color(0.85, 0.88, 0.72), 152.0)
+	var survivors := String(_last_recap.get("survivors", ""))
+	if survivors != "":
+		_center_label(survivors, 13, UITheme.TEXT_MUTED, 180.0)
+
+	# Reward 1 — a deck card (Spec B).
+	_add_label("Add a card to your deck", 16, Color(0.70, 0.84, 0.72), Vector2(270.0, 224.0), Vector2(520.0, 22.0))
+	if _card_reward_offer.is_empty():
+		_add_label("✓ card added to your deck", 14, UITheme.GREEN, Vector2(270.0, 254.0), Vector2(520.0, 22.0))
+	else:
+		for ci in range(_card_reward_offer.size()):
+			var cd: Dictionary = GameManager.card_def(String(_card_reward_offer[ci]))
+			_add_button(String(cd.get("name", _card_reward_offer[ci])),
+					Vector2(270.0 + float(ci) * 246.0, 252.0), Vector2(228.0, 56.0),
+					Color(0.25, 0.34, 0.30), Callable(self, "_on_pick_reward_card").bind(ci), 13)
+
+	# Reward 2 — a unit upgrade (pick, then assign to a survivor).
+	_add_label("Upgrade a unit", 16, Color(0.84, 0.78, 0.62), Vector2(270.0, 336.0), Vector2(520.0, 22.0))
+	if _upgrade_offer.is_empty() and _upgrade_pick == "":
+		_add_label("✓ upgrade applied", 14, UITheme.GREEN, Vector2(270.0, 366.0), Vector2(520.0, 22.0))
+	elif _upgrade_pick != "":
+		var uname := String(GameManager.UPGRADE_TYPES[_upgrade_pick]["name"])
+		_add_label("Assign '%s' to which unit?" % uname, 14, UITheme.TEXT_MUTED,
+				Vector2(270.0, 364.0), Vector2(540.0, 20.0))
+		var roster: Array = GameManager.player_roster
+		for i in range(roster.size()):
+			var entry: Dictionary = roster[i]
+			var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
+			_add_button("%s\nHP %d" % [String(udata["name"]), int(entry["hp"])],
+					Vector2(270.0 + float(i % 5) * 148.0, 392.0 + float(i / 5) * 72.0), Vector2(140.0, 64.0),
+					Color(udata["color"]).darkened(0.2), Callable(self, "_on_assign_upgrade").bind(i), 12)
+		_add_button("Skip upgrade", Vector2(540.0, 556.0), Vector2(200.0, 36.0),
+				Color(0.30, 0.30, 0.34), _on_skip_upgrade, 13)
+	else:
+		for i in range(_upgrade_offer.size()):
+			var uid := String(_upgrade_offer[i])
+			var data: Dictionary = GameManager.UPGRADE_TYPES[uid]
+			var ub := _add_button("%s\n%s" % [String(data["name"]), String(data["desc"])],
+					Vector2(270.0 + float(i) * 246.0, 392.0), Vector2(228.0, 92.0),
+					Color(data["color"]).darkened(0.35), Callable(self, "_on_pick_upgrade").bind(i), 13)
+			ub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	_add_button("Continue", Vector2(560.0, 638.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_campaign_continue, 18)
+
+# Centred label across the victory panel (220..1060).
+func _center_label(text: String, fs: int, color: Color, y: float) -> void:
+	var l := _add_label(text, fs, color, Vector2(220.0, y), Vector2(840.0, float(fs) + 10.0))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+func _on_pick_upgrade(i: int) -> void:
+	if i < 0 or i >= _upgrade_offer.size():
+		return
+	_upgrade_pick = String(_upgrade_offer[i])
+	_rebuild_ui()
+
+func _on_assign_upgrade(roster_index: int) -> void:
+	if _upgrade_pick == "" or roster_index < 0 or roster_index >= GameManager.player_roster.size():
+		return
+	GameManager.apply_upgrade(roster_index, _upgrade_pick)
+	GameManager.save_run()
+	_upgrade_offer = []
+	_upgrade_pick = ""
+	_rebuild_ui()
+
+func _on_skip_upgrade() -> void:
+	_upgrade_offer = []
+	_upgrade_pick = ""
+	_rebuild_ui()
+
 # Command leader aura (Spec A): when the hero fights in the lineup it buffs the
 # whole team at battle start, scaled by the Command tree (hero_aura_mult_tree).
 # The aura family is the hero's own buff id (aegis=+HP, march=+dmg, warchest=heal).
@@ -1247,7 +1327,9 @@ func _conclude_campaign(win: bool) -> void:
 		_campaign_gold = GameManager.battle_gold_reward(tier, elite)
 		GameManager.add_gold(_campaign_gold)
 		GameManager.register_battle_won(elite)
-		GameManager.pending_upgrade_reward = true
+		# Both rewards now resolve on this one VICTORY screen (no map popup).
+		_upgrade_offer = GameManager.random_upgrade_choices(3)
+		_upgrade_pick = ""
 		if elite:
 			_campaign_relic = GameManager.grant_random_relic()
 		_card_reward_offer = GameManager.card_reward_choices(3) if GameManager.has_hero() else []

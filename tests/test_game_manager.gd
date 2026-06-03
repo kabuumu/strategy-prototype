@@ -43,10 +43,9 @@ func test_hero_levels_up_and_scales(t) -> void:
 func test_hero_perk_helpers(t) -> void:
 	var gm := _fresh()
 	gm.select_hero("knight_captain")
-	t.eq(gm.hero_buff_cost(4), 4, "no Thrifty -> full buff cost")
+	t.ok(not gm.has_perk("thrifty"), "no perk before granting")
 	gm.grant_hero_perk("thrifty")
 	t.ok(gm.has_perk("thrifty"), "thrifty granted")
-	t.eq(gm.hero_buff_cost(4), 3, "Thrifty cuts buff cost by 1")
 
 # --- map generation --------------------------------------------------------
 

@@ -132,23 +132,17 @@ func _ready() -> void:
 				_show_toast("%s joined your army!" % rname, GameManager.UNIT_TYPES[rtype]["color"])
 			else:
 				_show_toast("%s bested you and walked away." % rname, Color(0.7, 0.6, 0.5))
-	# Offer any pending post-battle rewards (hero perk pick, then upgrade card).
+	# Offer the hero perk pick on a level-up. Battle rewards (gold/relic, deck card,
+	# unit upgrade) are all resolved on the in-battle VICTORY screen now.
 	call_deferred("_show_pending_rewards")
 
-# Chains the post-battle popups so a perk pick and an upgrade reward don't both
-# try to grab _popup. The hero perk popup (if any) runs first and re-invokes
-# this on close; the upgrade reward is always last.
+# The hero level-up perk pick is the only popup chained on map arrival now.
 func _show_pending_rewards() -> void:
 	if _popup != null:
 		return
 	if GameManager.pending_hero_perk and GameManager.has_hero():
 		GameManager.pending_hero_perk = false
 		_show_hero_perk_popup()
-		return
-	if GameManager.pending_upgrade_reward and not GameManager.player_roster.is_empty() \
-			and GameManager.current_tier < GameManager.MAP_TIERS:
-		GameManager.pending_upgrade_reward = false
-		_show_reward_popup()
 
 # ---------------------------------------------------------------------------
 # Hero level-up perk pick. Mirrors the upgrade reward popup's card layout.
@@ -197,73 +191,6 @@ func _on_hero_perk_pick(id: String) -> void:
 		_show_toast("%s — %s" % [String(data["name"]), String(data["desc"])], Color(0.75, 0.9, 1.0))
 	_refresh()
 	call_deferred("_show_pending_rewards")
-
-# ---------------------------------------------------------------------------
-# Post-battle upgrade reward (parity with the hex battle's upgrade picker).
-# Step 1: pick one of 3 upgrade cards. Step 2: assign it to a surviving unit.
-# ---------------------------------------------------------------------------
-func _show_reward_popup() -> void:
-	if _popup != null:
-		return
-	_popup = UITheme.panel(self, Vector2(220.0, 200.0), Vector2(840.0, 300.0),
-		Color(0.10, 0.12, 0.08, 0.99), Color(0.55, 0.70, 0.40))
-	_popup.add_child(UITheme.label("Victory! Choose a Reward", 26, Color(0.95, 0.95, 0.65), Vector2(28.0, 18.0), Vector2(784.0, 32.0)))
-	_popup.add_child(UITheme.label("Pick an upgrade card, then assign it to a surviving unit.",
-		14, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(784.0, 22.0)))
-	var choices := GameManager.random_upgrade_choices(3)
-	for i in range(choices.size()):
-		var id: String = choices[i]
-		var data: Dictionary = GameManager.UPGRADE_TYPES[id]
-		var btn := Button.new()
-		btn.position = Vector2(40.0 + i * 260.0, 92.0)
-		btn.size = Vector2(240.0, 120.0)
-		btn.text = "%s\n\n%s" % [String(data["name"]), String(data["desc"])]
-		btn.add_theme_font_size_override("font_size", 15)
-		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		var col: Color = data["color"].darkened(0.35)
-		btn.add_theme_stylebox_override("normal",  _circle_style(col, 8))
-		btn.add_theme_stylebox_override("hover",   _circle_style(col.lightened(0.18), 8))
-		btn.add_theme_stylebox_override("pressed", _circle_style(col.darkened(0.2), 8))
-		btn.pressed.connect(_on_reward_card.bind(id))
-		_popup.add_child(btn)
-	var skip := UITheme.button("Skip", Vector2(360.0, 236.0), Vector2(200.0, 44.0), Color(0.30, 0.30, 0.34), _close_reward)
-	_popup.add_child(skip)
-
-func _on_reward_card(upgrade_id: String) -> void:
-	for c in _popup.get_children():
-		c.queue_free()
-	var data: Dictionary = GameManager.UPGRADE_TYPES[upgrade_id]
-	_popup.add_child(UITheme.label("Assign '%s' to which unit?" % String(data["name"]),
-		22, Color(0.95, 0.95, 0.65), Vector2(28.0, 18.0), Vector2(784.0, 30.0)))
-	var roster := GameManager.player_roster
-	for i in range(roster.size()):
-		var entry: Dictionary = roster[i]
-		var udata: Dictionary = GameManager.UNIT_TYPES[entry["type"]]
-		var col := i % 5
-		var row := i / 5
-		var btn := Button.new()
-		btn.position = Vector2(36.0 + col * 158.0, 70.0 + row * 86.0)
-		btn.size = Vector2(150.0, 78.0)
-		btn.text = "%s\nHP %d" % [String(udata["name"]), int(entry["hp"])]
-		btn.add_theme_font_size_override("font_size", 13)
-		var bc: Color = udata["color"].darkened(0.2)
-		btn.add_theme_stylebox_override("normal",  _circle_style(bc, 8))
-		btn.add_theme_stylebox_override("hover",   _circle_style(bc.lightened(0.18), 8))
-		btn.pressed.connect(_on_reward_assign.bind(i, upgrade_id))
-		_popup.add_child(btn)
-
-func _on_reward_assign(roster_index: int, upgrade_id: String) -> void:
-	GameManager.apply_upgrade(roster_index, upgrade_id)
-	var nm: String = GameManager.UPGRADE_TYPES[upgrade_id]["name"]
-	_close_reward()
-	GameManager.save_run()
-	_show_toast("%s applied!" % nm, Color(0.65, 0.95, 0.55))
-
-func _close_reward() -> void:
-	if _popup != null:
-		_popup.queue_free()
-		_popup = null
-	_refresh()
 
 func _on_exit_to_menu() -> void:
 	if GameManager.current_tier < GameManager.MAP_TIERS:
