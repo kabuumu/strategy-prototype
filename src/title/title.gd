@@ -65,9 +65,15 @@ func _build_ui() -> void:
 	_add_centered_label("H help · Esc back", 13, Color(0.40, 0.40, 0.45), 692.0)
 	_add_menu_button("Settings", Vector2(1120.0, 24.0), Vector2(140.0, 40.0),
 		Color(0.26, 0.28, 0.38), _show_settings, 16)
-	_add_menu_button("Difficulty: %s" % GameManager.difficulty.capitalize(), Vector2(24.0, 24.0), Vector2(230.0, 40.0),
-		Color(0.42, 0.34, 0.30), _on_cycle_difficulty, 16,
-		"Normal · Hard (skip the opening recruit stage) · Insane (every battle is elite). Click to cycle.")
+	if has_save:
+		# A run is in progress — its difficulty is locked; don't let the title button
+		# mutate the shared value out from under the saved run.
+		_add_menu_button("Difficulty: %s  (locked)" % GameManager.difficulty.capitalize(), Vector2(24.0, 24.0), Vector2(260.0, 40.0),
+			Color(0.22, 0.22, 0.25), _noop, 14, "Difficulty is locked while a run is in progress.")
+	else:
+		_add_menu_button("Difficulty: %s" % GameManager.difficulty.capitalize(), Vector2(24.0, 24.0), Vector2(230.0, 40.0),
+			Color(0.42, 0.34, 0.30), _on_cycle_difficulty, 16,
+			"Normal · Hard (skip the opening recruit stage) · Insane (every battle is elite). Click to cycle.")
 
 	if not has_save:
 		_build_meta_panel()
@@ -172,6 +178,9 @@ func _on_new_campaign() -> void:
 
 func _on_choose_hero() -> void:
 	get_tree().change_scene_to_file("res://src/charselect/charselect.tscn")
+
+func _noop() -> void:
+	pass
 
 func _on_cycle_difficulty() -> void:
 	GameManager.cycle_difficulty()

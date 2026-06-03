@@ -483,6 +483,10 @@ func _rebuild_ui() -> void:
 				if GameManager.duel_outcome == 1:
 					_add_label("%s joins your army!" % recruit_name, 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
 					_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
+				elif _result_text == "DRAW":
+					# Mutual KO — recruit declined, but the run continues.
+					_add_label("Both fighters fell — %s doesn't join, but the run goes on." % recruit_name, 16, UITheme.TEXT_MUTED, Vector2(300.0, 592.0), Vector2(680.0, 24.0))
+					_add_button("Continue", Vector2(560.0, 628.0), Vector2(160.0, 46.0), UITheme.GREEN, _on_duel_continue)
 				else:
 					# Hero fell — the run is over (cleared in _conclude_duel).
 					_add_label("Your hero fell in the duel — the run ends here.", 16, UITheme.TEXT_MUTED, Vector2(360.0, 592.0), Vector2(560.0, 24.0))
@@ -1634,17 +1638,21 @@ func _start_duel_fight() -> void:
 	_speed_scale = 2.0
 	_rebuild_ui()
 
-func _conclude_duel(win: bool) -> void:
-	GameManager.duel_outcome = 1 if win else 0
-	if win:
+func _conclude_duel(hero_alive: bool, recruit_alive: bool) -> void:
+	var won := hero_alive and not recruit_alive
+	GameManager.duel_outcome = 1 if won else 0
+	if won:
 		_result_text = "DUEL WON"
-	else:
-		# The hero is the only fighter in a duel — losing means the hero fell, and a
-		# fallen hero ends the run (same rule as a campaign battle).
+	elif not hero_alive and recruit_alive:
+		# Hero fell, the recruit lived — a fallen hero ends the run.
 		_result_text = "DEFEAT"
 		GameManager.clear_run()
+	else:
+		# Mutual KO — the recruit doesn't join, but the hero's death was traded, so
+		# the run continues.
+		_result_text = "DRAW"
 	phase = Phase.RESULT
-	Sfx.play("win" if win else "lose", -7.0)
+	Sfx.play("win" if won else "lose", -7.0)
 	_rebuild_ui()
 
 func _on_duel_continue() -> void:
@@ -1933,10 +1941,10 @@ func _check_fight_end() -> bool:
 		return false
 	_build_recap(p_alive, e_alive)
 	if _pit:
-		_conclude_pit(p_alive and not e_alive)   # defender (team 0) survived?
+		_conclude_pit(not e_alive)   # recruit down? defender keeps the slot (incl. a tie)
 		return true
 	if _duel:
-		_conclude_duel(p_alive and not e_alive)
+		_conclude_duel(p_alive, e_alive)
 		return true
 	if _campaign:
 		_conclude_campaign(p_alive and not e_alive)
