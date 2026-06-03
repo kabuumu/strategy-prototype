@@ -15,6 +15,7 @@ const GOLD_PER_ROUND: int = 10
 const MAX_WINS: int = 5
 const START_HEARTS: int = 3
 const AI_RETARGET_PERIOD: float = 0.45
+const VILLAIN_FLEE_HP_FRAC := 0.25  # non-boss villain flees when its host drops below this HP fraction
 const MAX_LEVEL: int = 3
 const FIGHT_INTRO_SECONDS: float = 0.75
 const FEEDBACK_LIFETIME: float = 0.55
@@ -180,6 +181,7 @@ func _ready() -> void:
 var _hover_unit: RTUnit = null   # unit under the cursor (stat tooltip in PREP/FIGHT)
 var _villain_unit: RTUnit = null # the lurking/boss villain in a campaign battle
 var _villain_boss: bool = false  # final-tier node: the villain fights for real
+var _enemy_army_start_hp: int = 0  # summed max_hp of the non-villain enemy host (villain flee check)
 var _villain_taunt_timer: float = 0.0
 var _villain_taunt_idx: int = 0
 
@@ -246,15 +248,34 @@ func _untargetable(u: RTUnit) -> bool:
 		return true
 	return u == _hero_unit and u.holding
 
-# The villain bails when it would be fought (it's the frontmost-alive enemy), but
-# only in a normal battle; on the boss node it stands and fights.
+# The villain bails when its side is collapsing (normal battles only); the boss
+# villain stands and fights.
 func _check_villain_escape() -> void:
-	if _villain_boss or _villain_unit == null:
+	if _villain_unit == null or _villain_unit.is_escaping:
 		return
-	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()) or _villain_unit.is_escaping:
+	if not (is_instance_valid(_villain_unit) and _villain_unit.is_alive()):
 		return
-	if _frontmost_alive(enemy_units) == _villain_unit:
+	if _villain_should_flee():
 		_villain_do_escape()
+
+# The non-boss villain flees when, whichever comes first, no non-villain enemy
+# remains (it's the last one standing) OR the host's remaining HP has dropped below
+# VILLAIN_FLEE_HP_FRAC of its starting total. The boss villain never flees.
+func _villain_should_flee() -> bool:
+	if _villain_boss or _villain_unit == null:
+		return false
+	var others_alive: int = 0
+	var live_hp: int = 0
+	for e: RTUnit in enemy_units:
+		if e == _villain_unit or not (is_instance_valid(e) and e.is_alive()):
+			continue
+		others_alive += 1
+		live_hp += e.hp
+	if others_alive == 0:
+		return true
+	if _enemy_army_start_hp > 0 and float(live_hp) / float(_enemy_army_start_hp) < VILLAIN_FLEE_HP_FRAC:
+		return true
+	return false
 
 func _villain_do_escape() -> void:
 	var v := _villain_unit
@@ -1181,6 +1202,13 @@ func _start_campaign_fight() -> void:
 			u.move_speed_px = float(u.move_speed_px) * float(m.get("speed", 1.0))
 			if u.has_method("_refresh_hp_bar"):
 				u.call("_refresh_hp_bar")
+
+	# Starting HP of the (non-villain) enemy host — the villain flees once the host
+	# is routed (see _villain_should_flee). The villain is appended below, so at this
+	# point enemy_units holds the regular host only.
+	_enemy_army_start_hp = 0
+	for u: RTUnit in enemy_units:
+		_enemy_army_start_hp += u.max_hp
 
 	# The recurring villain joins every campaign battle. On the final tier it IS the
 	# boss and fights to the death; on every other node it lurks at the back and

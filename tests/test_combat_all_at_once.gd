@@ -107,3 +107,41 @@ func test_flat_unit_always_hits_full(t) -> void:
 	u.take_damage(60)
 	t.eq(u.regiment_damage(), 20, "single-sprite hero still hits full when wounded")
 	u.free()
+
+func _villain_node() -> RTUnit:
+	var v := _unit(200); v.is_villain = true
+	return v
+
+func test_villain_flees_as_last_enemy(t) -> void:
+	var ab = AB.new()
+	var v := _villain_node(); var e := _unit(50)
+	ab.enemy_units = [e, v]
+	ab._villain_unit = v
+	ab._villain_boss = false
+	ab._enemy_army_start_hp = 50
+	t.eq(ab._villain_should_flee(), false, "host alive -> villain stays")
+	e.hp = 0
+	t.eq(ab._villain_should_flee(), true, "last enemy standing -> villain flees")
+	ab.free(); v.free(); e.free()
+
+func test_villain_flees_on_low_host_hp(t) -> void:
+	var ab = AB.new()
+	var v := _villain_node(); var e0 := _unit(100); var e1 := _unit(100)
+	ab.enemy_units = [e0, e1, v]
+	ab._villain_unit = v
+	ab._villain_boss = false
+	ab._enemy_army_start_hp = 200
+	t.eq(ab._villain_should_flee(), false, "host healthy -> villain stays")
+	e0.hp = 10; e1.hp = 30   # 40/200 = 0.20 < 0.25
+	t.eq(ab._villain_should_flee(), true, "host routed -> villain flees")
+	ab.free(); v.free(); e0.free(); e1.free()
+
+func test_boss_villain_never_flees(t) -> void:
+	var ab = AB.new()
+	var v := _villain_node()
+	ab.enemy_units = [v]
+	ab._villain_unit = v
+	ab._villain_boss = true
+	ab._enemy_army_start_hp = 0
+	t.eq(ab._villain_should_flee(), false, "boss villain holds even when alone")
+	ab.free(); v.free()
