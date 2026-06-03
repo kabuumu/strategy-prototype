@@ -153,65 +153,6 @@ func _ready() -> void:
 			_show_toast("%s won the pit and earned its place!" % pname, Color(0.95, 0.82, 0.40))
 		else:
 			_show_toast("Your champion won the pit — %s was cut down." % pname, Color(0.62, 0.90, 0.62))
-	# Offer the hero perk pick on a level-up. Battle rewards (gold/relic, deck card,
-	# unit upgrade) are all resolved on the in-battle VICTORY screen now.
-	call_deferred("_show_pending_rewards")
-
-# The hero level-up perk pick is the only popup chained on map arrival now.
-func _show_pending_rewards() -> void:
-	if _popup != null:
-		return
-	if GameManager.pending_hero_perk and GameManager.has_hero():
-		GameManager.pending_hero_perk = false
-		_show_hero_perk_popup()
-
-# ---------------------------------------------------------------------------
-# Hero level-up perk pick. Mirrors the upgrade reward popup's card layout.
-# ---------------------------------------------------------------------------
-func _show_hero_perk_popup() -> void:
-	if _popup != null:
-		return
-	var choices := GameManager.random_hero_perk_choices(3)
-	if choices.is_empty():
-		call_deferred("_show_pending_rewards")
-		return
-	_popup = UITheme.panel(self, Vector2(220.0, 200.0), Vector2(840.0, 300.0),
-		Color(0.08, 0.10, 0.14, 0.99), Color(0.45, 0.60, 0.85))
-	_popup.add_child(UITheme.label("Hero Level %d! Choose a Perk" % GameManager.hero_level,
-		26, Color(0.78, 0.90, 1.0), Vector2(28.0, 18.0), Vector2(784.0, 32.0)))
-	_popup.add_child(UITheme.label("Pick a perk for your hero.",
-		14, UITheme.TEXT_MUTED, Vector2(28.0, 54.0), Vector2(784.0, 22.0)))
-	for i in range(choices.size()):
-		var id: String = choices[i]
-		var data: Dictionary = GameManager.HERO_PERKS[id]
-		var btn := Button.new()
-		btn.position = Vector2(40.0 + i * 260.0, 92.0)
-		btn.size = Vector2(240.0, 120.0)
-		btn.text = "%s\n\n%s" % [String(data["name"]), String(data["desc"])]
-		btn.add_theme_font_size_override("font_size", 15)
-		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		var col := Color(0.20, 0.30, 0.45)
-		btn.add_theme_stylebox_override("normal",  _circle_style(col, 8))
-		btn.add_theme_stylebox_override("hover",   _circle_style(col.lightened(0.18), 8))
-		btn.add_theme_stylebox_override("pressed", _circle_style(col.darkened(0.2), 8))
-		btn.pressed.connect(_on_hero_perk_pick.bind(id))
-		_popup.add_child(btn)
-	var skip := UITheme.button("Skip", Vector2(360.0, 236.0), Vector2(200.0, 44.0),
-		Color(0.30, 0.30, 0.34), _on_hero_perk_pick.bind(""))
-	_popup.add_child(skip)
-
-func _on_hero_perk_pick(id: String) -> void:
-	if id != "":
-		GameManager.grant_hero_perk(id)
-	if _popup != null:
-		_popup.queue_free()
-		_popup = null
-	GameManager.save_run()
-	if id != "":
-		var data: Dictionary = GameManager.HERO_PERKS[id]
-		_show_toast("%s — %s" % [String(data["name"]), String(data["desc"])], Color(0.75, 0.9, 1.0))
-	_refresh()
-	call_deferred("_show_pending_rewards")
 
 func _on_exit_to_menu() -> void:
 	if GameManager.current_tier < GameManager.MAP_TIERS:

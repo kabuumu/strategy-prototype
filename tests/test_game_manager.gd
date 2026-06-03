@@ -30,22 +30,13 @@ func test_recruit_candidates_deterministic_and_shaped(t) -> void:
 
 # --- hero progression (current model; refactor must keep level-up working) --
 
-func test_hero_levels_up_and_scales(t) -> void:
+func test_hero_sway_aptitude_is_base(t) -> void:
+	# Per-run perk/level system removed; sway aptitude is the hero's base block
+	# (progression is the permanent skill tree — see test_hero_tree.gd).
 	var gm := _fresh()
 	gm.select_hero("knight_captain")
-	t.eq(gm.hero_level, 1, "hero starts level 1")
-	t.approx(gm.hero_fight_mult(), 1.0, 0.0001, "level-1 fight mult is 1.0")
-	for i in range(GM.HERO_XP_PER_LEVEL):
-		gm.hero_gain_xp()
-	t.eq(gm.hero_level, 2, "levels up after HERO_XP_PER_LEVEL wins")
-	t.gt(gm.hero_fight_mult(), 1.0, "fight mult grows with level")
-
-func test_hero_perk_helpers(t) -> void:
-	var gm := _fresh()
-	gm.select_hero("knight_captain")
-	t.ok(not gm.has_perk("thrifty"), "no perk before granting")
-	gm.grant_hero_perk("thrifty")
-	t.ok(gm.has_perk("thrifty"), "thrifty granted")
+	var base: int = int(GM.HEROES["knight_captain"]["sway_aptitudes"].get("duel", 0))
+	t.eq(gm.hero_sway_aptitude("duel"), base, "sway aptitude equals the hero's base value")
 
 # --- events / roster -------------------------------------------------------
 
