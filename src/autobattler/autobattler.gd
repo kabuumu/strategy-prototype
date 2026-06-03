@@ -26,11 +26,13 @@ var _card_reward_offer: Array = []     # 3-card draft shown on a campaign win (S
 var _upgrade_offer: Array = []         # 3 unit-upgrade choices on a campaign win
 var _upgrade_pick: String = ""         # chosen upgrade awaiting unit assignment ("" = none)
 var _reward_taken: bool = false        # a campaign-win reward (card OR upgrade) was claimed
-# Campaign PREP (#10): step 0 = pick a lineup from the pool; step 1 = draw 3, play 1.
+# Campaign PREP (#10): step 0 = pick + ORDER a troop lineup; step 1 = draw 3, play 1.
 const LINEUP_CAP: int = 5
 var _prep_step: int = 0
-var _pool: Array = []                  # [{card, entry, hero}] — hero + roster candidates
-var _lineup_sel: Array = []            # bool per pool index (deployed?)
+var _pool: Array = []                  # [{card, entry}] — roster troops (NOT the hero)
+var _lineup_sel: Array = []            # bool per pool index (deployed?); pool order = deploy order
+var _prep_sel: int = -1                # pool index selected for reorder/bench in PREP step 0
+var _hero_unit: RTUnit = null          # the deployed hero (campaign); its death ends the run
 var _prep_draw: Array = []             # up to 3 drawn card ids for the play step
 var _prep_equip_id: String = ""        # a drawn Equip card awaiting a unit tap
 
@@ -289,21 +291,28 @@ func _rebuild_ui() -> void:
 			for s in _lineup_sel:
 				if bool(s):
 					count += 1
-			_add_label("PREP — choose your lineup  (%d / %d)" % [count, LINEUP_CAP], 18, UITheme.GOLD,
+			_add_label("PREP — set lineup & order  (%d / %d troops)" % [count, LINEUP_CAP], 18, UITheme.GOLD,
 					Vector2(300.0, 46.0), Vector2(700.0, 24.0))
-			_add_label("Tap allies to add/remove them from the lineup. The hero always deploys. Then Deploy.",
-					13, UITheme.TEXT_MUTED, Vector2(40.0, 552.0), Vector2(900.0, 20.0))
+			_add_label("Tap a troop to select · ◀ ▶ orders them (left = front) · In/Out benches · the hero deploys at the back. Then Deploy.",
+					13, UITheme.TEXT_MUTED, Vector2(40.0, 494.0), Vector2(1100.0, 20.0))
+			_add_label("FRONT →", 12, UITheme.GOLD.darkened(0.1), Vector2(46.0, 540.0), Vector2(90.0, 18.0))
 			for i in range(_pool.size()):
-				var bx: float = 40.0 + float(i) * 130.0
-				if bx > 900.0:
+				var bx: float = 138.0 + float(i) * 128.0
+				if bx > 1180.0:
 					break
 				var pcard: Dictionary = _pool[i]["card"]
 				var inlineup: bool = bool(_lineup_sel[i])
+				var selected: bool = (i == _prep_sel)
 				var bc: Color = UITheme.GREEN.darkened(0.1) if inlineup else Color(0.20, 0.22, 0.28)
-				_add_button("%s\nLv%d · %s" % [_unit_name(_card_id(pcard)),
+				if selected:
+					bc = bc.lightened(0.30)
+				_add_button("%s%s\nLv%d · %s" % ["▸ " if selected else "", _unit_name(_card_id(pcard)),
 						int(pcard.get("level", 1)), "in" if inlineup else "bench"],
-						Vector2(bx, 574.0), Vector2(120.0, 72.0), bc, Callable(self, "_on_lineup_toggle").bind(i), 12)
-			_add_button("Deploy", Vector2(946.0, 640.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_deploy)
+						Vector2(bx, 516.0), Vector2(120.0, 72.0), bc, Callable(self, "_on_prep_select").bind(i), 12)
+			_add_button("◀", Vector2(560.0, 600.0), Vector2(58.0, 42.0), Color(0.22, 0.28, 0.40), _on_prep_reorder.bind(-1))
+			_add_button("▶", Vector2(624.0, 600.0), Vector2(58.0, 42.0), Color(0.22, 0.28, 0.40), _on_prep_reorder.bind(1))
+			_add_button("In / Out", Vector2(690.0, 600.0), Vector2(112.0, 42.0), Color(0.30, 0.34, 0.28), _on_prep_toggle)
+			_add_button("Deploy", Vector2(946.0, 600.0), Vector2(130.0, 42.0), UITheme.GREEN, _on_deploy)
 		else:
 			var hint := "Drew 3 — play one. Equip → tap a unit · Spell → front enemy · Trap arms. Or Fight to skip."
 			if _prep_equip_id != "":
@@ -1002,10 +1011,12 @@ func _start_campaign_fight() -> void:
 	# player chooses a lineup (hotbar) from this pool in PREP (#10).
 	# The POOL is the roster troops only. The hero always deploys on TOP of the
 	# chosen lineup (it is not one of the selectable slots), so picking N troops
-	# fields N troops + the hero.
+	# fields N troops + the hero. Pool order = front-to-back deploy order.
+	_hero_unit = null
+	_prep_sel = -1
 	_pool = []
 	for entry: Dictionary in GameManager.player_roster:
-		_pool.append({"card": _campaign_card(String(entry["type"])), "entry": entry, "hero": false})
+		_pool.append({"card": _campaign_card(String(entry["type"])), "entry": entry})
 	# Default lineup: the first LINEUP_CAP troops.
 	_lineup_sel = []
 	for i in range(_pool.size()):
@@ -1051,37 +1062,60 @@ func _build_hero_card() -> Dictionary:
 # Spawn the chosen lineup (hero + chosen troops), apply mults + aura, then draw 3
 # cards for the play step.
 func _deploy_lineup() -> void:
-	var sel_cards: Array = []
-	var sel_entries: Array = []
-	# The hero always deploys at the front, in addition to the chosen troops.
-	if GameManager.has_hero():
-		sel_cards.append(_build_hero_card())
-		sel_entries.append(null)
+	# Chosen troops in player order (pool order), then the hero appended LAST so it
+	# engages last (front-vs-front steps up by array order) — the general fights
+	# only once its screen of troops has fallen.
+	var deploy_cards: Array = []
+	var deploy_entries: Array = []
 	for i in range(_pool.size()):
 		if bool(_lineup_sel[i]):
-			sel_cards.append(_pool[i]["card"])
-			sel_entries.append(_pool[i]["entry"])
-	if sel_cards.is_empty():
+			deploy_cards.append(_pool[i]["card"])
+			deploy_entries.append(_pool[i]["entry"])
+	var troop_count := deploy_cards.size()
+	if GameManager.has_hero():
+		deploy_cards.append(_build_hero_card())
+		deploy_entries.append(null)
+	if deploy_cards.is_empty():
 		return
-	var p_counts := _unit_counts(sel_cards)
-	var p_pos := _formation_positions(sel_cards.size(), 0)
-	for i in range(sel_cards.size()):
-		var u := _spawn_unit(sel_cards[i], 0, p_pos[i], 1.0, p_counts)
-		_unit_state[u.get_instance_id()]["roster_entry"] = sel_entries[i]
+	# Defensive formation: troops form a forward wedge, the hero sits centred behind
+	# them like a general.
+	var pos := _player_deploy_positions(troop_count, GameManager.has_hero())
+	var p_counts := _unit_counts(deploy_cards)
+	for i in range(deploy_cards.size()):
+		var u := _spawn_unit(deploy_cards[i], 0, pos[i], 1.0, p_counts)
+		_unit_state[u.get_instance_id()]["roster_entry"] = deploy_entries[i]
 		u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.rt_player_damage_mult())))
 		u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.rt_player_hp_mult())))
 		u.hp = u.max_hp
-		if bool(sel_cards[i].get("hero", false)):
+		if bool(deploy_cards[i].get("hero", false)):
 			u.max_hp = maxi(1, int(round(float(u.max_hp) * GameManager.hero_hp_mult_tree())))
 			u.hp = u.max_hp
 			u.damage_per_attack = maxi(1, int(round(float(u.damage_per_attack) * GameManager.hero_damage_mult_tree())))
 			u.attack_cooldown = maxf(0.2, u.attack_cooldown * GameManager.hero_attack_cooldown_mult())
+			_hero_unit = u
 		player_units.append(u)
 	if GameManager.has_hero():
 		_apply_hero_aura()
 	_prep_draw = GameManager.cards_draw(3)
 	_prep_step = 1
 	_rebuild_ui()
+
+# Player team start positions: `troop_count` troops in a forward defensive wedge
+# (front-of-order troop is the spearhead), then the hero centred well behind them.
+# Returns one Vector2 per deployed unit, troops first then the hero (if any).
+func _player_deploy_positions(troop_count: int, has_hero: bool) -> Array:
+	var cy := FIELD_RECT.position.y + FIELD_RECT.size.y * 0.5
+	var front_x := 500.0
+	var out: Array = []
+	for i in range(troop_count):
+		# lane: 0, +1, -1, +2, -2, … — front-of-order troop spearheads, flanks recede.
+		var lane := int((i + 1) / 2)
+		if i % 2 == 0:
+			lane = -lane
+		out.append(Vector2(front_x - absf(float(lane)) * 36.0, cy + float(lane) * 80.0))
+	if has_hero:
+		out.append(Vector2(front_x - 140.0, cy))   # general, centred behind the screen
+	return out
 
 # Start the actual fight (after PREP, or directly when there's nothing to play).
 func _begin_fight() -> void:
@@ -1103,17 +1137,40 @@ func _begin_fight() -> void:
 	_speed_scale = 2.0
 	_rebuild_ui()
 
-func _on_lineup_toggle(i: int) -> void:
-	if _prep_step != 0 or i < 0 or i >= _lineup_sel.size():
+func _on_prep_select(i: int) -> void:
+	if _prep_step != 0 or i < 0 or i >= _pool.size():
 		return
-	if not bool(_lineup_sel[i]):
+	_prep_sel = i
+	_rebuild_ui()
+
+func _on_prep_toggle() -> void:
+	if _prep_step != 0 or _prep_sel < 0 or _prep_sel >= _lineup_sel.size():
+		return
+	if not bool(_lineup_sel[_prep_sel]):
 		var count := 0
 		for s in _lineup_sel:
 			if bool(s):
 				count += 1
 		if count >= LINEUP_CAP:
 			return   # lineup is full
-	_lineup_sel[i] = not bool(_lineup_sel[i])
+	_lineup_sel[_prep_sel] = not bool(_lineup_sel[_prep_sel])
+	_rebuild_ui()
+
+# Move the selected troop one slot toward the front (dir -1) or back (dir +1).
+# Reorders the pool AND its parallel selection so deploy order follows.
+func _on_prep_reorder(dir: int) -> void:
+	if _prep_step != 0 or _prep_sel < 0:
+		return
+	var j := _prep_sel + dir
+	if j < 0 or j >= _pool.size():
+		return
+	var tmp_card = _pool[_prep_sel]
+	_pool[_prep_sel] = _pool[j]
+	_pool[j] = tmp_card
+	var tmp_sel = _lineup_sel[_prep_sel]
+	_lineup_sel[_prep_sel] = _lineup_sel[j]
+	_lineup_sel[j] = tmp_sel
+	_prep_sel = j
 	_rebuild_ui()
 
 func _on_deploy() -> void:
@@ -1651,6 +1708,10 @@ func _age_feedback(delta: float) -> void:
 func _check_fight_end() -> bool:
 	var p_alive := _any_alive(player_units)
 	var e_alive := _any_alive(enemy_units)
+	# Protect the general: in a campaign the hero dying ends the run immediately,
+	# even if troops are still standing (enemy archers can reach the backline).
+	if _campaign and _hero_unit != null and not (is_instance_valid(_hero_unit) and _hero_unit.is_alive()):
+		p_alive = false
 	if p_alive and e_alive:
 		return false
 	_build_recap(p_alive, e_alive)
